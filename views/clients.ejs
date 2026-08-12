@@ -208,6 +208,7 @@
       <button type="button" class="btn-main" onclick="openModalById('<%= clientType === 'xray' ? 'createClientModal' : 'createVpnClientModal' %>')">Создать клиента</button>
       <% if (clientType === 'xray') { %>
         <button type="button" class="btn-secondary" onclick="openModalById('importSyncModal')">Импорт и синхронизация</button>
+        <button type="button" class="btn-secondary" onclick="openModalById('clientTransferModal')">Перенос клиентов</button>
         <button type="button" class="btn-secondary" id="applySelectedToolbarButton" onclick="return openApplySelectedModal()" disabled>Применить к выбранным</button>
       <% } %>
     </div>
@@ -678,6 +679,97 @@
     </form>
   </div>
 </div>
+
+<% if (clientType === 'xray') { %>
+<style>
+  .client-transfer-grid { display: grid; gap: 14px; }
+  .client-transfer-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .client-transfer-file { border: 1px dashed var(--border-color, #667085); border-radius: 12px; padding: 14px; }
+  .client-transfer-file input { width: 100%; }
+  .client-transfer-node-list[hidden], .client-transfer-result[hidden] { display: none !important; }
+  .client-transfer-result { margin: 0; max-height: 320px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+  .client-transfer-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+  @media (max-width: 720px) { .client-transfer-controls { grid-template-columns: 1fr; } }
+</style>
+
+<div id="clientTransferModal" class="modal hidden" onclick="closeModalById(event, 'clientTransferModal')">
+  <div class="modal-card editor-modal" onclick="event.stopPropagation()">
+    <button type="button" class="modal-close" onclick="event.preventDefault(); event.stopPropagation(); hideModalById('clientTransferModal'); return false;">×</button>
+    <h2>Перенос клиентов между серверами</h2>
+    <div class="client-transfer-grid">
+      <div class="alert ok">
+        Переносятся логины, UUID, <code>sub_slug</code>, сроки, лимиты и статистика. При сохранении прежнего домена действующие ссылки подписок продолжат работать после смены DNS. Пароли и API-токены узлов в файл не попадают.
+      </div>
+      <div class="alert warning">
+        JSON содержит клиентские UUID и идентификаторы подписок. Храни его как пароль и удали после переноса. Импорт меняет только локальную базу Nexus Panel: удалённые 3x-ui/Remnawave узлы не вызываются и не перезаписываются.
+      </div>
+
+      <div class="modal-section-box">
+        <h3>1. Экспорт</h3>
+        <p class="muted">Скачивает всех Reality/Xray-клиентов и безопасные описания их локальных связей с узлами.</p>
+        <a class="link-btn btn-secondary" href="/clients/transfer/export" download>Скачать JSON клиентов</a>
+      </div>
+
+      <div class="modal-section-box">
+        <h3>2. Проверка и импорт</h3>
+        <label class="client-transfer-file">
+          <span>JSON-файл со старого сервера</span>
+          <input id="clientTransferFile" type="file" accept="application/json,.json" />
+          <small class="hint" id="clientTransferFileInfo">Файл не выбран</small>
+        </label>
+
+        <div class="client-transfer-controls">
+          <label>
+            <span>Если клиент уже существует</span>
+            <select id="clientTransferMode">
+              <option value="update" selected>Обновить только при том же UUID и sub_slug</option>
+              <option value="skip">Пропустить существующего</option>
+              <option value="replace">Заменить UUID и sub_slug — опасно</option>
+            </select>
+          </label>
+          <label>
+            <span>Связи с узлами новой панели</span>
+            <select id="clientTransferNodeMode">
+              <option value="none" selected>Не привязывать — самый безопасный режим</option>
+              <option value="match">Сопоставить уже созданные узлы по URL и Inbound ID</option>
+              <option value="selected">Привязать всех к выбранным узлам</option>
+            </select>
+          </label>
+        </div>
+
+        <div id="clientTransferSelectedNodes" class="client-transfer-node-list" hidden>
+          <div class="nodes-head node-bulk-head">
+            <div>
+              <label>Узлы новой панели</label>
+              <small class="hint">Будут созданы только локальные связи с нулевой новой статистикой. Затем запусти «Добавить отсутствующих клиентов на один узел».</small>
+            </div>
+          </div>
+          <div class="checkbox-list node-list operation-node-list">
+            <% nodes.forEach(node => { %>
+              <label class="node-item">
+                <input class="node-check" type="checkbox" data-client-transfer-node value="<%= node.id %>" />
+                <span class="node-info">
+                  <strong><%- flagIcon(node.country_code, node.country_flag, node.country_name_ru || node.name, node.node_type) %><span><%= nodeName(node) %></span></strong>
+                  <small>ID <%= node.id %> · Inbound <%= node.inbound_id %> · <%= nodeEndpointLabel(node) %></small>
+                </span>
+              </label>
+            <% }) %>
+          </div>
+        </div>
+
+        <div class="client-transfer-actions">
+          <button type="button" class="btn-secondary" id="clientTransferDryRun">Проверить без записи</button>
+          <button type="button" class="btn-main" id="clientTransferImport">Импортировать в Nexus</button>
+        </div>
+        <div id="clientTransferStatus" class="alert" hidden></div>
+        <pre id="clientTransferResult" class="client-transfer-result alert" hidden></pre>
+      </div>
+
+      <p class="muted">Перед настоящим импортом автоматически создаётся копия <code>data/backups/client-import-before-*.db</code>. Для очень большого файла используй SSH-команды <code>agg clients export</code> и <code>agg clients import</code>.</p>
+    </div>
+  </div>
+</div>
+<% } %>
 
 <div id="importSyncModal" class="modal hidden" onclick="closeModalById(event, 'importSyncModal')">
   <div class="modal-card editor-modal" onclick="event.stopPropagation()">
@@ -1930,9 +2022,11 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 document.addEventListener('keydown', (event) => {
   if (event.key !== 'Escape') return;
-  const openModal = Array.from(document.querySelectorAll('#createClientModal, #createVpnClientModal, [id^="clientEditor-"], [id^="vpnClientEditor-"]')).find(modal => !modal.classList.contains('hidden'));
+  const openModal = Array.from(document.querySelectorAll('#createClientModal, #createVpnClientModal, #clientTransferModal, [id^="clientEditor-"], [id^="vpnClientEditor-"]')).find(modal => !modal.classList.contains('hidden'));
   if (openModal) { openModal.classList.add('hidden'); syncClientModalScrollLock(); }
 });
 </script>
+
+<% if (clientType === 'xray') { %><script src="/js/client-transfer.js?v=1"></script><% } %>
 
 <%- include('partials_footer') %>

@@ -13,7 +13,7 @@ const { HttpsProxyAgent } = require('https-proxy-agent');
 const { SocksProxyAgent } = require('socks-proxy-agent');
 const fs = require('fs');
 const path = require('path');
-const { execFileSync } = require('child_process');
+const { execFileSync, spawn } = require('child_process');
 const os = require('os');
 const net = require('net');
 const tls = require('tls');
@@ -577,6 +577,97 @@ function setAttachmentDispositionHeader(res, unicodeFileName, fallbackBaseName =
     'Content-Disposition',
     `attachment; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(original)}`
   );
+}
+
+const CLIENT_TRANSFER_SCRIPT = path.join(__dirname, 'scripts', 'client-transfer.py');
+const CLIENT_TRANSFER_BODY_LIMIT = '25mb';
+const CLIENT_TRANSFER_OUTPUT_LIMIT = 60 * 1024 * 1024;
+
+function runClientTransferTool(args, options = {}) {
+  const maxStdoutBytes = Number(options.maxStdoutBytes || CLIENT_TRANSFER_OUTPUT_LIMIT);
+  const timeoutMs = Number(options.timeoutMs || 120000);
+
+  return new Promise((resolve, reject) => {
+    const child = spawn('python3', [CLIENT_TRANSFER_SCRIPT, ...args], {
+      cwd: __dirname,
+      env: process.env,
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    const stdout = [];
+    const stderr = [];
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
+    let finished = false;
+
+    const stopWithError = message => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      try { child.kill('SIGKILL'); } catch (_) {}
+      reject(new Error(message));
+    };
+
+    const timer = setTimeout(() => {
+      stopWithError('Операция переноса клиентов превысила лимит времени 120 секунд. Используй SSH-команду agg clients для большого файла.');
+    }, timeoutMs);
+
+    child.on('error', err => {
+      stopWithError(`Не удалось запустить python3: ${String(err.message || err)}`);
+    });
+    child.stdout.on('data', chunk => {
+      stdoutBytes += chunk.length;
+      if (stdoutBytes > maxStdoutBytes) {
+        stopWithError('Результат переноса превышает допустимый размер для веб-интерфейса. Используй SSH-команду agg clients.');
+        return;
+      }
+      stdout.push(chunk);
+    });
+    child.stderr.on('data', chunk => {
+      stderrBytes += chunk.length;
+      if (stderrBytes <= 1024 * 1024) stderr.push(chunk);
+    });
+    child.on('close', code => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      const out = Buffer.concat(stdout);
+      const errorText = Buffer.concat(stderr).toString('utf8').trim();
+      if (code === 0) return resolve(out);
+
+      let message = errorText || `Утилита переноса завершилась с кодом ${code}`;
+      try {
+        const parsed = JSON.parse(errorText);
+        message = String(parsed.error || parsed.message || message);
+      } catch (_) {}
+      const err = new Error(message);
+      err.exitCode = code;
+      reject(err);
+    });
+  });
+}
+
+function parseClientTransferToolJson(buffer) {
+  try {
+    const value = JSON.parse(Buffer.from(buffer).toString('utf8'));
+    if (!value || typeof value !== 'object') throw new Error('пустой ответ');
+    return value;
+  } catch (err) {
+    throw new Error(`Утилита переноса вернула некорректный ответ: ${String(err.message || err)}`);
+  }
+}
+
+async function withClientTransferUpload(req, callback) {
+  if (!Buffer.isBuffer(req.body) || !req.body.length) {
+    throw new Error('Выбери непустой JSON-файл экспорта клиентов.');
+  }
+  const temporaryDir = fs.mkdtempSync(path.join(DATA_DIR, 'client-transfer-'));
+  const inputPath = path.join(temporaryDir, 'clients.json');
+  try {
+    fs.writeFileSync(inputPath, req.body, { flag: 'wx', mode: 0o600 });
+    return await callback(inputPath);
+  } finally {
+    fs.rmSync(temporaryDir, { recursive: true, force: true });
+  }
 }
 
 function setSubscriptionNoCacheHeaders(res, subscriptionName = 'VPN', ext = 'txt') {
@@ -13511,6 +13602,74 @@ app.post('/nodes/:id/h1cloud-transport', requireAuth, (req, res) => {
 app.post('/nodes/:id/delete', requireAuth, (req, res) => {
   db.prepare('DELETE FROM nodes WHERE id = ?').run(Number(req.params.id));
   res.redirect('/nodes?tab=list&message=' + encodeURIComponent('Узел удалён'));
+});
+
+const parseClientTransferJsonBody = express.raw({
+  type: ['application/json', 'application/octet-stream'],
+  limit: CLIENT_TRANSFER_BODY_LIMIT
+});
+
+app.get('/clients/transfer/export', requireAuth, async (req, res) => {
+  try {
+    const output = await runClientTransferTool([
+      'export',
+      '--db', path.join(DATA_DIR, 'app.db'),
+      '--output', '-'
+    ]);
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.type('application/json');
+    setAttachmentDispositionHeader(res, `nexus-clients-${stamp}.json`, 'nexus-clients');
+    res.send(output);
+  } catch (err) {
+    res.status(500).json({ ok: false, error: String(err.message || err) });
+  }
+});
+
+app.post('/clients/transfer/inspect', requireAuth, parseClientTransferJsonBody, async (req, res) => {
+  try {
+    const result = await withClientTransferUpload(req, async inputPath => {
+      const output = await runClientTransferTool(['inspect', '--input', inputPath], { maxStdoutBytes: 2 * 1024 * 1024 });
+      return parseClientTransferToolJson(output);
+    });
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ ok: false, error: String(err.message || err) });
+  }
+});
+
+app.post('/clients/transfer/import', requireAuth, parseClientTransferJsonBody, async (req, res) => {
+  try {
+    const mode = String(req.query.mode || 'update').trim().toLowerCase();
+    const nodeMode = String(req.query.node_mode || 'none').trim().toLowerCase();
+    const dryRun = String(req.query.dry_run || '') === '1';
+    const targetNodeIds = String(req.query.target_node_ids || '').trim();
+    if (!['skip', 'update', 'replace'].includes(mode)) throw new Error('Неизвестный режим конфликта.');
+    if (!['none', 'match', 'selected'].includes(nodeMode)) throw new Error('Неизвестный режим связей с узлами.');
+    if (targetNodeIds && !/^\d+(,\d+)*$/.test(targetNodeIds)) throw new Error('Некорректный список ID узлов.');
+
+    const result = await withClientTransferUpload(req, async inputPath => {
+      const args = [
+        'import',
+        '--db', path.join(DATA_DIR, 'app.db'),
+        '--input', inputPath,
+        '--mode', mode,
+        '--node-mode', nodeMode
+      ];
+      if (targetNodeIds) args.push('--target-node-ids', targetNodeIds);
+      if (dryRun) args.push('--dry-run');
+      const output = await runClientTransferTool(args, { maxStdoutBytes: 4 * 1024 * 1024 });
+      return parseClientTransferToolJson(output);
+    });
+
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ ok: false, error: String(err.message || err) });
+  }
 });
 
 app.get('/clients', requireAuth, (req, res) => {

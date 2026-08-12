@@ -1,14 +1,14 @@
 {
-  "version": "stage111-safe-legacy-update-1.0.7-2026-08-12",
-  "name": "Nexus Panel 1.0.7 — Safe Legacy Update",
+  "version": "stage112-client-transfer-1.0.8-2026-08-12",
+  "name": "Nexus Panel 1.0.8 — Client Transfer",
   "repository": "https://github.com/dagmagnat/Nexus-Panel",
   "archive_url": "https://github.com/dagmagnat/Nexus-Panel/archive/refs/heads/main.zip",
   "archive": "Nexus-Panel-main.zip",
   "filename": "Nexus-Panel-main.zip",
   "notes": [
-    "Старый origin dagmagnat/3xui-Aggregator автоматически переключается на dagmagnat/Nexus-Panel без запроса логина GitHub.",
-    "Новый источник скачивается и проверяется до остановки контейнеров; при ошибке панель продолжает работать.",
-    "База data/app.db, .env и настройки установки сохраняются при обновлении поверх прежней установки.",
-    "Сохранены фирменный логотип, точная синхронизация Inbound ID, параметры транспорта и трафик inbound."
+    "Экспорт клиентов работает напрямую из data/app.db даже при остановленной или недоступной старой веб-панели.",
+    "SSH-команды agg clients export/inspect/import и новый интерфейс используют единый проверенный формат JSON.",
+    "UUID и sub_slug сохраняются, поэтому после переноса прежнего домена существующие ссылки подписок продолжают работать.",
+    "Импорт поддерживает dry-run, безопасные режимы конфликтов, сопоставление узлов и автоматическую резервную копию SQLite."
   ]
 }

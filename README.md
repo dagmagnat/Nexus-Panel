@@ -6,7 +6,7 @@
 
 Nexus Panel — панель агрегации и управления узлами **3x-ui** и **Remnawave**: клиенты, SUB/JSON-подписки, маршрутизация, трафик, Telegram и синхронизация выбранного inbound.
 
-[![Version](https://img.shields.io/badge/version-1.0.7-gray)](https://github.com/dagmagnat/Nexus-Panel)
+[![Version](https://img.shields.io/badge/version-1.0.8-gray)](https://github.com/dagmagnat/Nexus-Panel)
 ![Node.js](https://img.shields.io/badge/node-%3E%3D22-gray)
 ![License](https://img.shields.io/badge/license-MIT-gray)
 
@@ -17,6 +17,7 @@ Nexus Panel — панель агрегации и управления узла
 - поддержка VLESS, XHTTP, Reality/TLS/NONE и параметров выбранного транспорта;
 - отображение upload, download и общего расхода трафика выбранного inbound;
 - управление клиентами и синхронизация клиентов с выбранными узлами;
+- перенос клиентов между серверами через JSON, веб-интерфейс или SSH с сохранением UUID и ссылок подписок;
 - генерация SUB и JSON-подписок;
 - собственный логотип в панели, favicon, Apple Touch Icon и фирменная публичная страница подписки;
 - маршрутизация, перенаправление трафика, Telegram-бот и резервные копии;
@@ -65,6 +66,56 @@ bash /tmp/nexus-panel-install.sh update
 Если прежняя попытка уже остановилась на `Username for 'https://github.com':`, нажмите `Ctrl+C`, восстановите работу командой `cd /opt/3xui-aggregator && docker compose up -d`, загрузите файлы Nexus Panel в GitHub и повторите команду выше.
 
 Внутренний каталог `/opt/3xui-aggregator`, имена контейнеров и команда `agg` сохранены для совместимости с уже установленными версиями.
+
+## Перенос клиентов на новый сервер
+
+Экспорт читает SQLite напрямую, поэтому старая веб-панель и Docker-контейнеры могут быть остановлены. В файл попадают Reality/Xray-клиенты, их UUID, `sub_slug`, сроки, лимиты, комментарии, статистика и безопасные описания связей с узлами. Пароли панелей и API-токены не экспортируются.
+
+На старом сервере:
+
+```bash
+# Панель может быть недоступна
+agg clients export /root/nexus-clients.json
+agg clients inspect /root/nexus-clients.json
+```
+
+Если старый `install.sh` ещё не знает команду `agg clients`, скопируйте на сервер только `scripts/client-transfer.py` из этого релиза и выполните:
+
+```bash
+python3 /opt/3xui-aggregator/scripts/client-transfer.py export \
+  --db /opt/3xui-aggregator/data/app.db \
+  --output /root/nexus-clients.json
+```
+
+Передайте `/root/nexus-clients.json` на новый сервер по SCP/SFTP. Этот файл содержит клиентские идентификаторы и должен храниться как пароль.
+
+После установки Nexus Panel на новом сервере сначала выполните пробный импорт, который полностью откатывает транзакцию:
+
+```bash
+agg clients import /root/nexus-clients.json --dry-run
+```
+
+Затем запустите безопасный импорт только клиентов:
+
+```bash
+agg clients import /root/nexus-clients.json --mode update --node-mode none
+```
+
+Другие варианты привязки:
+
+```bash
+# Узлы уже созданы в Nexus: сопоставить по типу, Panel URL, Panel Path и Inbound ID
+agg clients import /root/nexus-clients.json --mode update --node-mode match
+
+# Привязать всех импортируемых клиентов к конкретным локальным ID узлов
+agg clients import /root/nexus-clients.json --mode update --node-mode selected --target-node-ids 1,2
+```
+
+Режим `update` обновляет существующего клиента только при совпадении UUID и `sub_slug`; подозрительное совпадение логина становится конфликтом. `replace` разрешает смену идентификаторов и должен использоваться только после проверки `--dry-run`. Перед настоящим импортом автоматически создаётся `data/backups/client-import-before-*.db`.
+
+Импорт не подключается к удалённым 3x-ui/Remnawave-серверам. После переноса при необходимости откройте «Клиенты → Импорт и синхронизация → Добавить отсутствующих клиентов на один узел» для каждого нового узла.
+
+Те же операции доступны кнопкой «Перенос клиентов» на странице клиентов. Если новый сервер использует прежний домен, сначала перенесите и проверьте клиентов, затем измените DNS. Сохранённые UUID и `sub_slug` оставляют прежние пути подписок действующими. После завершения удалите JSON с обоих серверов.
 
 ## Логотип и Happ
 
