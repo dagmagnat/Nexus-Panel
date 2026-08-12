@@ -1,0 +1,7 @@
+{
+  "watch": ["app.js", "lib_crypto.js", "lib_vpn_manager.js", "views"],
+  "ext": "js,ejs,json",
+  "ignore": ["data/**", "data-dev/**", "public/**", "node_modules/**"],
+  "delay": "150",
+  "exec": "node app.js"
+}

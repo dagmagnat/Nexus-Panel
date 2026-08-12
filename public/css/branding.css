@@ -1,0 +1,83 @@
+/* Nexus Panel brand assets shared by the admin, login and public pages. */
+.brand-shield {
+  overflow: visible;
+  background: transparent;
+  box-shadow: none;
+}
+
+.brand-shield img {
+  display: block;
+  width: 42px;
+  height: 42px;
+  object-fit: contain;
+}
+
+.mobile-brand-logo {
+  display: none;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  object-fit: contain;
+}
+
+.login-brand-logo {
+  display: block;
+  width: 92px;
+  height: 92px;
+  margin: 0 auto 14px;
+  object-fit: contain;
+  filter: drop-shadow(0 14px 24px rgba(31, 118, 255, .24));
+}
+
+.public-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 auto 20px;
+  text-align: left;
+}
+
+.public-brand img {
+  width: 54px;
+  height: 54px;
+  object-fit: contain;
+  filter: drop-shadow(0 10px 20px rgba(31, 118, 255, .22));
+}
+
+.public-brand span {
+  display: flex;
+  flex-direction: column;
+}
+
+.public-brand strong {
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.public-brand small {
+  margin-top: 3px;
+  color: var(--muted, #8b96aa);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+@media (max-width: 900px) {
+  .mobile-brand-logo {
+    display: block;
+  }
+}
+
+@media (max-width: 420px) {
+  .mobile-brand-logo {
+    width: 30px;
+    height: 30px;
+    flex-basis: 30px;
+  }
+
+  .login-brand-logo {
+    width: 82px;
+    height: 82px;
+  }
+}

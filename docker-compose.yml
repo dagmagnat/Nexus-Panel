@@ -1,0 +1,21 @@
+services:
+  aggregator:
+    build:
+      context: .
+      network: host
+      args:
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org/}
+        NPM_FALLBACK_REGISTRY: ${NPM_FALLBACK_REGISTRY:-https://registry.yarnpkg.com/}
+        NPM_INSTALL_TIMEOUT: ${NPM_INSTALL_TIMEOUT:-420}
+        NPM_FETCH_TIMEOUT: ${NPM_FETCH_TIMEOUT:-60000}
+        NPM_FETCH_RETRIES: ${NPM_FETCH_RETRIES:-1}
+    container_name: 3xui-aggregator
+    restart: always
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./data:/app/data

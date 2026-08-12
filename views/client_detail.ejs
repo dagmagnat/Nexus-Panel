@@ -1,0 +1,214 @@
+<%- include('partials_header', { pageTitle: 'Детали клиента', pageSubtitle: 'Редактирование, продление и управление доступом', activePage: 'clients' }) %>
+<%
+
+  function flagEmojiFromCode(code) {
+    const cc = String(code || '').trim().toUpperCase();
+    if (!/^[A-Z]{2}$/.test(cc) || ['ZZ','XX'].includes(cc)) return '';
+    return Array.from(cc).map(ch => String.fromCodePoint(0x1F1E6 + ch.charCodeAt(0) - 65)).join('');
+  }
+  function flagIcon(code, fallback, name) {
+    const rawCode = String(code || '').trim().toUpperCase();
+    const fb = String(fallback || '').trim();
+    const nameText = String(name || '').trim();
+    const emoji = (typeof countryFlagText === 'function')
+      ? countryFlagText(rawCode, fb, nameText)
+      : ((fb && fb !== '🌐' && !/^[a-z]{2}$/i.test(fb)) ? fb : flagEmojiFromCode(rawCode || fb));
+    const cc2 = String(rawCode || (/^[a-z]{2}$/i.test(fb) ? fb : '')).trim().toLowerCase();
+    if (/^[a-z]{2}$/.test(cc2) && !['zz','xx'].includes(cc2)) {
+      return '<img class="node-flag flag-img" src="/flags/' + cc2 + '.svg" alt="' + cc2.toUpperCase() + '" loading="lazy" onerror="this.style.display=\'none\'">';
+    }
+    return emoji ? '<span class="node-flag emoji-fallback" aria-label="' + rawCode + '">' + emoji + '</span>' : '';
+  }
+  function nodeName(node) {
+    const suffix = String(node.label_suffix || '').trim();
+    const baseName = node.country_name_ru || node.node_name || node.name || 'Узел';
+    return suffix ? (/^\d+$/.test(suffix) ? `${baseName}-${suffix}` : `${baseName} / ${suffix}`) : baseName;
+  }
+  const expiryText = client.expiry_time && Number(client.expiry_time) > 0 ? new Date(Number(client.expiry_time)).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '∞';
+  function daysLeftShort(ts) {
+    const n = Number(ts || 0);
+    if (!Number.isFinite(n) || n <= 0) return '∞';
+    const diff = n - Date.now();
+    if (diff <= 0) return '0';
+    return String(Math.ceil(diff / (24 * 60 * 60 * 1000)));
+  }
+  const clientEnabled = client.enabled !== 0;
+%>
+
+<% if (message) { %><div class="alert ok"><%= message %></div><% } %>
+<% if (error) { %><div class="alert err"><%= error %></div><% } %>
+
+<div id="toast" class="toast">Скопировано</div>
+
+<div class="card detail-hero">
+  <div>
+    <h2><%= client.display_name %></h2>
+    <p class="muted">Логин: <strong><%= client.login %></strong></p>
+    <p class="muted">UUID: <code><%= client.uuid %></code></p>
+    <p class="muted">SubId: <code><%= client.sub_slug %></code></p>
+    <p>
+      <span class="badge <%= clientEnabled ? 'online' : 'offline' %>"><%= clientEnabled ? 'Включён' : 'Отключён' %></span>
+      <span class="muted">Лимит: <%= client.traffic_gb && client.traffic_gb > 0 ? client.traffic_gb + ' ГБ' : '∞' %> / <%= daysLeftShort(client.expiry_time) %> дн.</span>
+    </p>
+    <p class="muted">Дата окончания: <strong><%= expiryText %></strong></p>
+  </div>
+
+  <div class="detail-actions">
+    <form method="post" action="/clients/<%= client.id %>/toggle">
+      <input type="hidden" name="back" value="/clients/<%= client.id %>" />
+      <button class="<%= clientEnabled ? 'danger' : '' %>" type="submit"><%= clientEnabled ? 'Отключить клиента' : 'Включить клиента' %></button>
+    </form>
+    <a class="link-btn secondary" href="/clients">Назад к клиентам</a>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Ссылки</h2>
+  <div class="link-grid">
+    <div>
+      <label>SUB подписка</label>
+      <div class="copy-row">
+        <input readonly value="<%= baseUrl %>/sub/<%= client.sub_slug %>" />
+        <button type="button" class="link-btn" onclick="copySubLink('<%= baseUrl %>/sub/<%= client.sub_slug %>', this)">Копировать</button>
+        <button type="button" class="link-btn secondary" onclick="showQr('<%= baseUrl %>/sub/<%= client.sub_slug %>', '<%= client.login %> · SUB')">QR</button>
+      </div>
+    </div>
+    <div>
+      <label>JSON подписка</label>
+      <div class="copy-row">
+        <input readonly value="<%= baseUrl %>/json/<%= client.sub_slug %>" />
+        <button type="button" class="link-btn" onclick="copySubLink('<%= baseUrl %>/json/<%= client.sub_slug %>', this)">Копировать</button>
+        <button type="button" class="link-btn secondary" onclick="showQr('<%= baseUrl %>/json/<%= client.sub_slug %>', '<%= client.login %> · JSON')">QR</button>
+      </div>
+    </div>
+  </div>
+  <div class="actions" style="margin-top:14px;">
+    <a class="link-btn secondary" href="/open/<%= client.sub_slug %>" target="_blank">Страница подключения</a>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Редактировать клиента</h2>
+  <form method="post" action="/clients/<%= client.id %>/edit">
+    <div class="form-grid clean-form">
+      <div class="field half">
+        <label>Имя клиента</label>
+        <input name="display_name" value="<%= client.display_name %>" required />
+        <small class="hint">Отображается только в панели агрегатора.</small>
+      </div>
+      <div class="field half">
+        <label>Логин / Email в 3x-ui</label>
+        <input name="login" value="<%= client.login %>" required />
+        <small class="hint">Будет обновлён на узлах, где это поддерживается API.</small>
+      </div>
+      <div class="field half">
+        <label>Лимит IP</label>
+        <input name="limit_ip" type="number" min="0" value="<%= client.limit_ip ?? 1 %>" />
+      </div>
+      <div class="field half">
+        <label>Новый срок в днях</label>
+        <input name="duration_days" type="number" min="0" value="<%= client.duration_days && client.duration_days > 0 ? client.duration_days : '' %>" placeholder="не менять" />
+        <small class="hint">Пусто = не менять текущую дату. 0 = убрать срок. Число = новый срок от текущего момента.</small>
+      </div>
+      <div class="field half">
+        <label>Общий лимит трафика, ГБ</label>
+        <input name="traffic_gb" type="number" min="0" step="1" value="<%= client.traffic_gb || 0 %>" />
+        <small class="hint">0 = без лимита.</small>
+      </div>
+    </div>
+
+    <h3>Лимиты по узлам</h3>
+    <p class="muted">Пустое поле = использовать общий лимит. Число возле узла имеет приоритет.</p>
+    <div class="checkbox-list node-list">
+      <% mappings.forEach(row => { %>
+        <label class="node-item node-edit-row">
+          <input class="inline" type="checkbox" name="node_enabled_<%= row.node_id %>" value="1" <%= row.enabled !== 0 ? 'checked' : '' %> />
+          <span class="node-info"><strong><%- flagIcon(row.country_code, row.country_flag, row.country_name_ru || row.node_name || row.name) %><span><%= nodeName(row) %></span></strong><small>inbound <%= row.inbound_id %> · <%= row.enabled !== 0 ? 'включён' : 'отключён для клиента' %></small></span>
+          <input class="node-gb-input" name="node_traffic_gb_<%= row.node_id %>" type="number" min="0" step="1" value="<%= row.traffic_gb || '' %>" placeholder="ГБ" />
+        </label>
+      <% }) %>
+    </div>
+
+    <div class="actions">
+      <button type="submit">Сохранить изменения</button>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Быстро продлить</h2>
+  <form class="extend-form" method="post" action="/clients/<%= client.id %>/extend">
+    <input name="days" type="number" min="1" value="30" />
+    <button type="submit">Продлить на дней</button>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Добавить клиента на другие узлы</h2>
+  <% if (!nodes.length) { %>
+    <p class="muted">Все активные узлы уже добавлены этому клиенту.</p>
+  <% } else { %>
+    <form method="post" action="/clients/<%= client.id %>/sync">
+      <div class="checkbox-list node-list">
+        <% nodes.forEach(node => { %>
+          <label class="node-item">
+            <input class="node-check" type="checkbox" name="node_ids" value="<%= node.id %>" />
+            <span class="node-info"><strong><%= nodeName(node) %></strong><small>inbound <%= node.inbound_id %></small></span>
+            <span></span>
+          </label>
+        <% }) %>
+      </div>
+      <button type="submit" style="margin-top:10px;">Добавить на выбранные узлы</button>
+    </form>
+  <% } %>
+</div>
+
+<div class="card">
+  <h2>Узлы клиента</h2>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Узел</th><th>Статус</th><th>Email в 3x-ui</th><th>UUID</th><th>Лимит узла</th></tr>
+      <% mappings.forEach(row => { %>
+        <tr>
+          <td><%= nodeName(row) %></td>
+          <td><span class="badge <%= row.last_status || 'unknown' %>"><%= row.last_status || 'unknown' %></span></td>
+          <td><%= row.remote_email %></td>
+          <td><code><%= row.remote_uuid %></code></td>
+          <td><%= row.traffic_gb && row.traffic_gb > 0 ? row.traffic_gb + ' ГБ' : 'общий/∞' %></td>
+        </tr>
+      <% }) %>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Удаление клиента</h2>
+  <form method="post" action="/clients/<%= client.id %>/delete" onsubmit="return confirm('Удалить клиента выбранным способом?')">
+    <label>Режим удаления</label>
+    <select name="delete_mode">
+      <option value="aggregator">Только из агрегатора</option>
+      <option value="secondary">Из агрегатора и вторичных узлов</option>
+      <option value="all">Из агрегатора и всех узлов</option>
+    </select>
+    <button class="danger" type="submit">Удалить клиента</button>
+  </form>
+</div>
+
+<div id="qrModal" class="modal hidden" onclick="hideQr(event)">
+  <div class="modal-card" onclick="event.stopPropagation()">
+    <button class="modal-close" onclick="closeQr()">×</button>
+    <h2 id="qrTitle">QR</h2>
+    <img id="qrImg" alt="QR" />
+    <p class="muted" id="qrText"></p>
+  </div>
+</div>
+
+<script>
+function showToast(text) { const el = document.getElementById('toast'); if (!el) return; el.textContent = text || 'Скопировано'; el.classList.add('show'); setTimeout(() => el.classList.remove('show'), 1300); }
+function copySubLink(text, btn) { const done = () => { if (!btn) return; btn.classList.remove('copy-success'); void btn.offsetWidth; btn.classList.add('copy-success'); clearTimeout(btn.__copySuccessTimer); btn.__copySuccessTimer = setTimeout(() => btn.classList.remove('copy-success'), 900); }; const fallback = () => { const input = document.createElement('textarea'); input.value = String(text || ''); input.setAttribute('readonly', ''); input.style.cssText = 'position:fixed;opacity:0;pointer-events:none'; document.body.appendChild(input); input.select(); const ok = document.execCommand('copy'); input.remove(); if (!ok) throw new Error('copy failed'); }; Promise.resolve().then(() => navigator.clipboard && window.isSecureContext ? navigator.clipboard.writeText(text) : fallback()).then(done).catch(() => showToast('Не удалось скопировать')); }
+function showQr(text, title) { document.getElementById('qrTitle').textContent = title || 'QR'; document.getElementById('qrText').textContent = text; document.getElementById('qrImg').src = '/qr?text=' + encodeURIComponent(text); document.getElementById('qrModal').classList.remove('hidden'); }
+function closeQr() { document.getElementById('qrModal').classList.add('hidden'); }
+function hideQr(e) { if (e.target.id === 'qrModal') closeQr(); }
+</script>
+
+<%- include('partials_footer') %>

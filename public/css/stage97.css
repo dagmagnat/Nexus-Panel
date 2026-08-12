@@ -1,0 +1,44 @@
+/* Stage 97: clients page reliability fixes. */
+body.redesign-stage52.page-clients .modern-comment-cell {
+  min-width: 170px !important;
+  max-width: 260px !important;
+  color: #cbd5e1 !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+body.redesign-stage52.page-clients .modern-traffic-cell.is-unlimited .modern-traffic-track i {
+  background: linear-gradient(90deg, #2563eb, #38bdf8) !important;
+}
+
+body.redesign-stage52.page-clients .modern-speed-cell {
+  min-width: 112px !important;
+  color: #8091a7 !important;
+}
+
+body.redesign-stage52.page-clients .modern-speed-cell.is-active {
+  color: #77b7ff !important;
+  font-weight: 800 !important;
+}
+
+body.redesign-stage52.page-clients .modern-speed-cell.is-active::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 5px;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, .12);
+  vertical-align: middle;
+}
+
+body.redesign-stage52.page-clients .client-overview-stat.is-selected {
+  outline: 2px solid rgba(96, 165, 250, .85) !important;
+  outline-offset: -2px !important;
+}
+
+html[data-color-theme="light"] body.redesign-stage52.page-clients .modern-comment-cell {
+  color: #475467 !important;
+}

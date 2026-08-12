@@ -1,0 +1,69 @@
+<%- include('partials_header', { pageTitle: 'Ещё', pageSubtitle: 'Дополнительные разделы и управление панелью', activePage: 'more' }) %>
+
+<% if (message) { %><div class="alert ok"><%= message %></div><% } %>
+<% if (error) { %><div class="alert err"><%= error %></div><% } %>
+
+<section class="stage11-more-hero card mobile-never-collapse">
+  <div>
+    <span class="stage11-kicker">Nexus Panel</span>
+    <h2>Дополнительные разделы</h2>
+    <p class="muted">Основные вкладки вынесены вниз. Всё, что используется реже, собрано здесь — чтобы на телефоне не открывать боковое меню.</p>
+  </div>
+</section>
+
+<div class="stage11-more-grid">
+  <a class="stage11-more-card" href="/vpn">
+    <span class="stage11-more-icon"><svg class="agg-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 2.7v5.4c0 4.7-3 7.9-7 9.9-4-2-7-5.2-7-9.9V5.7L12 3z"/><rect x="9.6" y="10.6" width="4.8" height="4" rx="1"/><path d="M10.8 10.6V9.4a1.2 1.2 0 0 1 2.4 0v1.2"/></svg></span>
+    <strong>VPN-сервисы</strong>
+    <small>WireGuard, AmneziaWG и Outline на отдельных VPS</small>
+  </a>
+  <a class="stage11-more-card" href="/settings">
+    <span class="stage11-more-icon"><svg class="agg-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7h-7.6M7.6 7H4"/><circle cx="10" cy="7" r="2.4"/><path d="M20 17h-3.6M11.6 17H4"/><circle cx="14" cy="17" r="2.4"/></svg></span>
+    <strong>Настройки панели</strong>
+    <small>Интерфейс, подписки, безопасность, резервные копии</small>
+  </a>
+  <a class="stage11-more-card" href="/redirects">
+    <span class="stage11-more-icon"><svg class="agg-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8H5"/><path d="M8 5 5 8l3 3"/><path d="M6 16h13"/><path d="m16 13 3 3-3 3"/></svg></span>
+    <strong>Перенаправление</strong>
+    <small>Правила, helper и активные цепочки</small>
+  </a>
+  <a class="stage11-more-card" href="/diagnostics">
+    <span class="stage11-more-icon"><svg class="agg-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l2.5 6L14 6l2.5 6H21"/></svg></span>
+    <strong>Диагностика</strong>
+    <small>Health Check, проверки узлов и проекта</small>
+  </a>
+  <a class="stage11-more-card" href="/telegram-bot">
+    <span class="stage11-more-icon"><svg class="agg-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 3 10.4 13.6"/><path d="M21 3 14 21l-3.6-7.4L3 10z"/></svg></span>
+    <strong>TG-бот</strong>
+    <small>Пользователи, заявки и поддержка</small>
+  </a>
+</div>
+
+<section class="card stage11-panel-mini mobile-never-collapse">
+  <h2>Быстрая настройка мобильной панели</h2>
+  <form method="post" action="/settings/panel-ui" class="stage11-panel-mini-form">
+    <input type="hidden" name="panel_interface_theme" value="mobile_lite" />
+    <label>
+      <span>Размер интерфейса</span>
+      <select name="panel_mobile_ui_scale">
+        <option value="compact" <%= panelMobileUiScale === 'compact' ? 'selected' : '' %>>Компактный</option>
+        <option value="normal" <%= panelMobileUiScale === 'normal' ? 'selected' : '' %>>Обычный</option>
+        <option value="large" <%= panelMobileUiScale === 'large' ? 'selected' : '' %>>Крупный</option>
+      </select>
+    </label>
+    <label>
+      <span>Навигация на телефоне</span>
+      <select name="panel_mobile_nav_mode">
+        <option value="bottom" <%= panelMobileNavMode === 'bottom' ? 'selected' : '' %>>Нижнее меню</option>
+        <option value="side" <%= panelMobileNavMode === 'side' ? 'selected' : '' %>>Боковое меню</option>
+      </select>
+    </label>
+    <label class="switch-row compact">
+      <input type="checkbox" name="panel_mobile_client_compact" value="1" <%= panelMobileClientCompact ? 'checked' : '' %> />
+      <span><strong>Компактные карточки клиентов</strong><small>Меньше высота карточек на телефоне.</small></span>
+    </label>
+    <button type="submit" class="btn-main">💾 Сохранить</button>
+  </form>
+</section>
+
+<%- include('partials_footer') %>

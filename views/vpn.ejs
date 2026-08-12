@@ -1,0 +1,445 @@
+<%- include('partials_header', { pageTitle: 'VPN-сервисы', pageSubtitle: 'WireGuard, AmneziaWG и Outline отдельно от 3x-ui', activePage: 'vpn' }) %>
+
+<% if (message) { %><div class="alert ok"><%= message %></div><% } %>
+<% if (error) { %><div class="alert err"><%= error %></div><% } %>
+
+<div class="card vpn-safety-note mobile-never-collapse">
+  <div>
+    <h2>Отдельный контур VPN</h2>
+    <p>3x-ui продолжает обслуживать существующие Xray/VLESS-подписки. WireGuard, AmneziaWG и Outline устанавливаются отдельно и не меняют работающие inbound 3x-ui.</p>
+  </div>
+  <div class="vpn-note-actions">
+    <a class="link-btn secondary" href="/clients?type=wireguard">Открыть VPN-клиентов</a>
+  </div>
+</div>
+
+<nav class="vpn-tabs" aria-label="Разделы VPN">
+  <a href="/vpn?tab=hosts" class="<%= tab === 'hosts' ? 'active' : '' %>">VPS <span><%= hosts.length %></span></a>
+  <a href="/vpn?tab=services" class="<%= tab === 'services' ? 'active' : '' %>">Сервисы <span><%= services.length %></span></a>
+  <a href="/clients?type=wireguard">Клиенты <span><%= clients.length %></span></a>
+  <a href="/vpn?tab=jobs" class="<%= tab === 'jobs' ? 'active' : '' %>">Задания <span><%= jobs.length %></span></a>
+</nav>
+
+<% if (tab === 'hosts') { %>
+<section class="card vpn-hosts-shell">
+  <div class="section-title-row vpn-section-heading">
+    <div>
+      <h2>Добавить VPS</h2>
+      <p class="muted">Сервер агрегатора подключается автоматически через локальный защищённый SSH-ключ. Для стороннего VPS выберите пароль или приватный ключ.</p>
+    </div>
+  </div>
+
+  <div class="vpn-host-create-layout">
+    <form method="post" action="/vpn/hosts" class="vpn-host-form" id="vpnHostForm" data-global-floating-save="off">
+      <label>Название
+        <input name="name" id="vpnHostName" required placeholder="Например: Germany VPN" />
+      </label>
+
+      <label>Размещение
+        <select name="placement" id="vpnPlacement">
+          <option value="remote">Сторонний VPS</option>
+          <option value="aggregator">Сервер агрегатора</option>
+        </select>
+      </label>
+
+      <label>Публичный IP VPS
+        <input name="public_host" id="vpnPublicHost" required placeholder="203.0.113.10" autocomplete="off" />
+        <small>Используется для проверки доменов сервисов. У клиента можно указать отдельный домен.</small>
+      </label>
+
+      <div class="vpn-aggregator-access" id="vpnAggregatorAccess" hidden>
+        <strong>Доступ к серверу агрегатора настроен автоматически</strong>
+        <span>Логин, пароль и SSH-ключ вводить не нужно. Панель использует локальный служебный ключ.</span>
+      </div>
+
+      <label class="vpn-remote-field">SSH IP или домен
+        <input name="hostname" id="vpnSshHostname" required placeholder="203.0.113.10" autocomplete="off" />
+      </label>
+
+      <label class="vpn-remote-field">SSH-порт
+        <input name="ssh_port" type="number" min="1" max="65535" value="22" required />
+      </label>
+
+      <label class="vpn-remote-field">SSH-пользователь
+        <input name="ssh_username" value="root" required autocomplete="username" />
+      </label>
+
+      <label class="vpn-remote-field">Способ входа
+        <select name="auth_type" id="vpnAuthType">
+          <option value="password">Логин и пароль</option>
+          <option value="key">Приватный SSH-ключ</option>
+        </select>
+      </label>
+
+      <label class="vpn-remote-field vpn-auth-password">SSH-пароль
+        <input name="password" type="password" autocomplete="new-password" />
+      </label>
+
+      <label class="vpn-remote-field">Пароль sudo, если отличается
+        <input name="sudo_password" type="password" autocomplete="new-password" placeholder="Можно оставить пустым" />
+      </label>
+
+      <label class="vpn-remote-field vpn-auth-key vpn-host-wide" hidden>Приватный SSH-ключ
+        <textarea name="private_key" rows="6" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea>
+      </label>
+
+      <label class="vpn-remote-field vpn-auth-key" hidden>Passphrase ключа
+        <input name="private_key_passphrase" type="password" autocomplete="new-password" />
+      </label>
+
+      <div class="vpn-host-wide button-row vpn-host-submit">
+        <button type="submit" class="btn-main">Добавить VPS</button>
+      </div>
+    </form>
+
+    <aside class="vpn-requirements-panel">
+      <h3>Требования</h3>
+      <p><strong>WireGuard:</strong> Linux, root/sudo и свободный UDP-порт.</p>
+      <p><strong>AmneziaWG:</strong> совместимое ядро и актуальные заголовки.</p>
+      <p><strong>Outline:</strong> Linux с Docker либо возможностью его установки.</p>
+      <p><strong>Безопасность:</strong> при первой проверке сохраняется SSH fingerprint. Его неожиданная замена блокирует команды.</p>
+    </aside>
+  </div>
+</section>
+
+<section class="card vpn-host-list-card">
+  <div class="section-title-row"><h2>Подключённые VPS</h2><span class="count-chip"><%= hosts.length %></span></div>
+  <% if (!hosts.length) { %><p class="muted">VPS пока не добавлены.</p><% } %>
+  <div class="vpn-card-list vpn-host-card-list">
+    <% hosts.forEach(host => { %>
+      <article class="vpn-item vpn-host-item">
+        <div class="vpn-item-head">
+          <div>
+            <strong><%= host.name %></strong>
+            <small class="vpn-placement-label <%= host.placement === 'aggregator' ? 'aggregator' : 'remote' %>"><%= host.placement === 'aggregator' ? 'Сервер агрегатора' : 'Сторонний VPS' %></small>
+          </div>
+          <span class="vpn-status <%= host.last_status %>"><%= host.last_status === 'online' ? 'Доступен' : host.last_status === 'offline' ? 'Ошибка' : 'Не проверен' %></span>
+        </div>
+        <dl class="vpn-kv">
+          <div><dt>Публичный адрес</dt><dd><code><%= host.public_host || host.hostname %></code></dd></div>
+          <div><dt>SSH</dt><dd><code><%= host.ssh_username %>@<%= host.hostname %>:<%= host.ssh_port %></code></dd></div>
+          <div><dt>Авторизация</dt><dd><%= host.placement === 'aggregator' && host.ssh_username === 'aggvpn' ? 'Локальный служебный ключ' : host.auth_type === 'key' ? 'SSH-ключ' : 'Пароль' %></dd></div>
+          <div><dt>Сервисы</dt><dd><%= host.service_count %></dd></div>
+          <div class="vpn-kv-wide"><dt>Fingerprint</dt><dd><%= host.host_key_fingerprint || 'Сохранится после проверки' %></dd></div>
+        </dl>
+        <% if (host.os_info) { %><pre class="vpn-os-info"><%= host.os_info %></pre><% } %>
+        <% if (host.last_error) { %><div class="vpn-error"><%= host.last_error %></div><% } %>
+        <div class="button-row">
+          <form method="post" action="/vpn/hosts/<%= host.id %>/test" class="js-long-action" data-loading-title="Проверяю SSH"><button type="submit" class="btn-secondary">Проверить SSH</button></form>
+          <form method="post" action="/vpn/hosts/<%= host.id %>/delete" onsubmit="return confirm('Удалить VPS из агрегатора?')"><button type="submit" class="danger">Удалить</button></form>
+        </div>
+      </article>
+    <% }) %>
+  </div>
+</section>
+<% } %>
+
+<% if (tab === 'services') { %>
+<section class="card vpn-service-create-card">
+  <div class="section-title-row vpn-section-heading">
+    <div>
+      <h2>Создать VPN-сервис</h2>
+      <p class="muted">Общие параметры сервиса применяются ко всем его клиентам. Клиенты создаются в разделе «Клиенты».</p>
+    </div>
+    <a class="link-btn secondary" href="/clients?type=wireguard">Перейти к клиентам</a>
+  </div>
+  <% if (!hosts.length) { %>
+    <div class="alert err">Сначала добавьте и проверьте VPS.</div>
+  <% } else { %>
+  <form method="post" action="/vpn/services" class="form-grid vpn-form vpn-service-create-form" id="vpnServiceForm" data-global-floating-save="off">
+    <label>VPS
+      <select name="host_id" id="vpnServiceHost" required>
+        <% hosts.forEach(host => { %><option value="<%= host.id %>" data-public-host="<%= host.public_host || host.hostname %>"><%= host.name %> — <%= host.placement === 'aggregator' ? 'сервер агрегатора' : 'сторонний VPS' %></option><% }) %>
+      </select>
+    </label>
+    <label>Протокол
+      <select name="protocol" id="vpnProtocol" required>
+        <option value="wireguard">WireGuard</option>
+        <option value="amneziawg_legacy">AmneziaWG Legacy</option>
+        <option value="amneziawg2">AmneziaWG 2.0</option>
+        <option value="outline">Outline</option>
+      </select>
+    </label>
+    <label>Название сервиса
+      <input name="name" placeholder="Например: Germany AWG 2.0" required />
+    </label>
+    <label>Домен или IP для клиентов
+      <input name="endpoint_host" id="vpnEndpointHost" placeholder="vpn.example.com" />
+      <small>В конфигурации клиента используется этот адрес, а не SSH-адрес VPS.</small>
+    </label>
+    <label>UDP/TCP-порт
+      <input name="listen_port" id="vpnListenPort" type="number" min="1" max="65535" value="51820" required />
+    </label>
+    <label class="vpn-tunnel-field">Имя интерфейса
+      <input name="interface_name" id="vpnInterfaceName" value="wg0" maxlength="15" />
+    </label>
+    <label class="vpn-tunnel-field">VPN-подсеть
+      <input name="subnet_cidr" id="vpnSubnet" value="10.77.0.0/24" />
+    </label>
+    <label class="vpn-tunnel-field">DNS клиента
+      <input name="dns_servers" value="1.1.1.1, 1.0.0.1" />
+    </label>
+    <label class="vpn-tunnel-field">MTU клиента
+      <input name="client_mtu" type="number" min="0" max="9000" value="0" />
+      <small>0 — не добавлять MTU в конфигурацию.</small>
+    </label>
+    <div class="vpn-wide vpn-protocol-hint" id="vpnProtocolHint">Обычный системный WireGuard. Он не связан с WireGuard inbound внутри Xray.</div>
+    <div class="vpn-wide button-row"><button type="submit" class="btn-main">Создать сервис</button></div>
+  </form>
+  <% } %>
+</section>
+
+<section class="card vpn-services-list-card">
+  <div class="section-title-row"><h2>VPN-сервисы</h2><span class="count-chip"><%= services.length %></span></div>
+  <% if (!services.length) { %><p class="muted">Сервисы пока не созданы.</p><% } %>
+  <div class="vpn-card-list vpn-service-card-list">
+    <% services.forEach(service => { let legacyPorts = []; try { legacyPorts = JSON.parse(service.legacy_ports_json || '[]'); } catch (_) {} %>
+      <article class="vpn-item vpn-service-item">
+        <div class="vpn-item-head">
+          <div>
+            <strong><%= service.name %></strong>
+            <small><%= protocolLabels[service.protocol] || service.protocol %> · <%= service.host_name %></small>
+          </div>
+          <span class="vpn-status <%= service.last_status %>"><%= service.install_status === 'installing' ? 'Установка' : service.last_status === 'online' ? 'Работает' : service.install_status === 'error' ? 'Ошибка' : service.install_status === 'installed' ? 'Установлен' : 'Не установлен' %></span>
+        </div>
+
+        <div class="vpn-service-summary">
+          <div><span>Endpoint</span><strong><%= service.endpoint_host %>:<%= service.listen_port %></strong></div>
+          <div><span>VPS</span><strong><%= service.host_name %></strong></div>
+          <div><span>Клиенты</span><strong><%= service.client_count %></strong></div>
+          <div><span>Копия</span><strong><%= service.backup_enc ? 'Сохранена' : 'Нет' %></strong></div>
+        </div>
+
+        <form method="post" action="/vpn/services/<%= service.id %>/edit" class="vpn-service-editor" data-global-floating-save="off">
+          <label>Название
+            <input name="name" value="<%= service.name %>" required />
+          </label>
+          <label>Домен или IP клиентов
+            <input name="endpoint_host" value="<%= service.endpoint_host %>" required <%= service.protocol === 'outline' && service.install_status === 'installed' ? 'readonly' : '' %> />
+          </label>
+          <label>Порт
+            <input name="listen_port" type="number" min="1" max="65535" value="<%= service.listen_port %>" required <%= service.protocol === 'outline' && service.install_status === 'installed' ? 'readonly' : '' %> />
+          </label>
+          <label>DNS клиента
+            <input name="dns_servers" value="<%= service.dns_servers || '' %>" <%= service.protocol === 'outline' ? 'disabled' : '' %> />
+          </label>
+          <label>MTU клиента
+            <input name="client_mtu" type="number" min="0" max="9000" value="<%= service.client_mtu || 0 %>" <%= service.protocol === 'outline' ? 'disabled' : '' %> />
+          </label>
+          <div class="vpn-service-editor-actions">
+            <button type="submit" class="btn-main">Сохранить параметры</button>
+          </div>
+        </form>
+
+        <div class="vpn-domain-row">
+          <div class="vpn-domain-result <%= service.domain_status || 'unchecked' %>">
+            <strong>Проверка домена:</strong>
+            <% if (service.domain_status === 'match') { %>
+              <span>Совпадает с IP VPS</span>
+            <% } else if (service.domain_status === 'mismatch') { %>
+              <span>Не совпадает с IP VPS</span>
+            <% } else if (service.domain_status === 'error') { %>
+              <span>Ошибка проверки</span>
+            <% } else { %>
+              <span>Ещё не проверен</span>
+            <% } %>
+            <% if (service.domain_resolved_ips) { %><small>DNS: <%= service.domain_resolved_ips %></small><% } %>
+            <% if (service.domain_error) { %><small><%= service.domain_error %></small><% } %>
+          </div>
+          <form method="post" action="/vpn/services/<%= service.id %>/domain-check"><button type="submit" class="btn-secondary">Проверить домен</button></form>
+        </div>
+
+        <% if (Array.isArray(legacyPorts) && legacyPorts.length) { %>
+          <div class="vpn-compat-note">Старые UDP-порты продолжают перенаправляться: <strong><%= legacyPorts.join(', ') %></strong></div>
+        <% } %>
+
+        <% if (service.protocol.startsWith('amneziawg')) { let cfg = {}; try { cfg = JSON.parse(service.config_json || '{}'); } catch (_) {} %>
+          <details class="vpn-details"><summary>Параметры маскировки AmneziaWG</summary><pre class="vpn-os-info"><%= JSON.stringify(cfg, null, 2) %></pre></details>
+        <% } %>
+
+        <% const migrationTargets = hosts.filter(host => Number(host.id) !== Number(service.host_id)); %>
+        <% if (service.install_status === 'installed' && migrationTargets.length) { %>
+          <details class="vpn-details vpn-migration-details">
+            <summary>Перенести сервис и клиентов на другой VPS</summary>
+            <form method="post" action="/vpn/services/<%= service.id %>/migrate" class="vpn-migration-form js-long-action" data-loading-title="Переношу <%= service.name %>" data-loading-text="Устанавливаю сервис на новый VPS и восстанавливаю клиентов из агрегатора." onsubmit="return confirm('Установить сервис на новом VPS и импортировать туда всех клиентов?')">
+              <label>Новый VPS
+                <select name="target_host_id" required>
+                  <% migrationTargets.forEach(host => { %><option value="<%= host.id %>"><%= host.name %> — <%= host.placement === 'aggregator' ? 'сервер агрегатора' : 'сторонний VPS' %></option><% }) %>
+                </select>
+              </label>
+              <label>Новый домен/IP, необязательно
+                <input name="endpoint_host" placeholder="Оставьте пустым, чтобы сохранить <%= service.endpoint_host %>" />
+              </label>
+              <button type="submit" class="btn-secondary">Перенести и импортировать клиентов</button>
+            </form>
+          </details>
+        <% } %>
+
+        <% if (service.last_error) { %><div class="vpn-error"><%= service.last_error %></div><% } %>
+        <div class="button-row vpn-service-actions">
+          <% if (!(service.install_status === 'installed' && Number(service.client_count || 0) > 0)) { %>
+            <form method="post" action="/vpn/services/<%= service.id %>/install" class="js-long-action" data-loading-title="Устанавливаю <%= service.name %>" data-loading-text="Панель подключается к VPS по SSH и устанавливает сервис."><button type="submit" class="btn-main"><%= service.install_status === 'installed' ? 'Переустановить' : 'Установить' %></button></form>
+          <% } else { %>
+            <button type="button" class="btn-secondary" disabled title="Переустановка с активными клиентами заблокирована">Переустановка заблокирована</button>
+          <% } %>
+          <% if (service.install_status === 'installed') { %><form method="post" action="/vpn/services/<%= service.id %>/check"><button type="submit" class="btn-secondary">Проверить сервис</button></form><% } %>
+          <form method="post" action="/vpn/services/<%= service.id %>/delete" onsubmit="return confirm('Удалить сервис из агрегатора? Файлы на VPS останутся.')"><button type="submit" class="danger">Удалить</button></form>
+        </div>
+      </article>
+    <% }) %>
+  </div>
+</section>
+<% } %>
+
+<% if (tab === 'clients') { %>
+<section class="card">
+  <h2>VPN-клиенты перенесены в общий раздел «Клиенты»</h2>
+  <p class="muted">Там доступны отдельные вкладки WireGuard, AmneziaWG и Outline с созданием, QR-кодом, скачиванием, продлением и отключением.</p>
+  <div class="button-row"><a class="link-btn" href="/clients?type=wireguard">Открыть VPN-клиентов</a></div>
+</section>
+<% } %>
+
+<% if (tab === 'jobs') { %>
+<section class="card">
+  <div class="section-title-row"><h2>История установки и операций</h2><span class="count-chip"><%= jobs.length %></span></div>
+  <% if (!jobs.length) { %><p class="muted">Заданий пока нет.</p><% } %>
+  <div class="vpn-card-list">
+    <% jobs.forEach(job => { %>
+      <article class="vpn-item">
+        <div class="vpn-item-head"><div><strong>#<%= job.id %> · <%= job.job_type %></strong><small><%= job.created_at %></small></div><span class="vpn-status <%= job.status === 'done' ? 'online' : job.status === 'error' ? 'offline' : 'checking' %>"><%= job.status %></span></div>
+        <p><%= job.message || '—' %></p>
+        <% if (job.log_text) { %><details><summary>Журнал ошибки</summary><pre class="vpn-os-info"><%= job.log_text %></pre></details><% } %>
+      </article>
+    <% }) %>
+  </div>
+</section>
+<% } %>
+
+<script>
+(function(){
+  const hostForm = document.getElementById('vpnHostForm');
+  const placement = document.getElementById('vpnPlacement');
+  const auth = document.getElementById('vpnAuthType');
+  const publicHost = document.getElementById('vpnPublicHost');
+  const sshHostname = document.getElementById('vpnSshHostname');
+  const hostName = document.getElementById('vpnHostName');
+  const aggregatorAccess = document.getElementById('vpnAggregatorAccess');
+  const aggregatorPublicHost = <%- JSON.stringify(aggregatorPublicHost || '') %>;
+  let publicHostAutoValue = '';
+
+  function setVpnFieldVisible(el, visible){
+    if (!el) return;
+    el.hidden = !visible;
+    el.classList.toggle('vpn-field-hidden', !visible);
+    el.setAttribute('aria-hidden', visible ? 'false' : 'true');
+    if (visible) el.style.removeProperty('display');
+    else el.style.setProperty('display', 'none', 'important');
+
+    el.querySelectorAll('input,select,textarea,button').forEach(input => {
+      input.disabled = !visible;
+      if (input.name === 'password') input.required = visible;
+      if (input.name === 'private_key') input.required = visible;
+    });
+  }
+
+  function syncHostAccessFields(){
+    if (!placement) return;
+    const local = placement.value === 'aggregator';
+    const keyMode = !local && auth && auth.value === 'key';
+
+    document.querySelectorAll('.vpn-remote-field').forEach(el => {
+      let visible = !local;
+      if (el.classList.contains('vpn-auth-password')) visible = visible && !keyMode;
+      if (el.classList.contains('vpn-auth-key')) visible = visible && keyMode;
+      setVpnFieldVisible(el, visible);
+    });
+
+    if (aggregatorAccess) {
+      aggregatorAccess.hidden = !local;
+      aggregatorAccess.classList.toggle('vpn-field-hidden', !local);
+      if (local) aggregatorAccess.style.removeProperty('display');
+      else aggregatorAccess.style.setProperty('display', 'none', 'important');
+    }
+
+    if (local) {
+      if (hostName && !hostName.value.trim()) hostName.value = 'Сервер агрегатора';
+      if (publicHost && (!publicHost.value.trim() || publicHost.value === publicHostAutoValue)) {
+        publicHost.value = aggregatorPublicHost || location.hostname || '';
+        publicHostAutoValue = publicHost.value;
+      }
+    } else {
+      if (hostName && hostName.value === 'Сервер агрегатора') hostName.value = '';
+      if (publicHost && publicHostAutoValue && publicHost.value === publicHostAutoValue) {
+        publicHost.value = '';
+        publicHostAutoValue = '';
+      }
+    }
+  }
+
+  if (placement) { placement.addEventListener('change', syncHostAccessFields); }
+  if (auth) { auth.addEventListener('change', syncHostAccessFields); }
+  if (hostForm) { hostForm.addEventListener('submit', syncHostAccessFields); }
+  syncHostAccessFields();
+  if (sshHostname && publicHost) {
+    sshHostname.addEventListener('blur', function(){
+      if (!publicHost.value.trim()) publicHost.value = sshHostname.value.trim();
+    });
+  }
+
+  const protocol = document.getElementById('vpnProtocol');
+  const serviceHost = document.getElementById('vpnServiceHost');
+  const endpoint = document.getElementById('vpnEndpointHost');
+  let endpointAutoValue = '';
+
+  function syncServiceEndpoint(){
+    if (!serviceHost || !endpoint) return;
+    const selected = serviceHost.options[serviceHost.selectedIndex];
+    const next = selected ? String(selected.dataset.publicHost || '') : '';
+    if (!endpoint.value.trim() || endpoint.value === endpointAutoValue) {
+      endpoint.value = next;
+      endpointAutoValue = next;
+    }
+  }
+
+  function syncProtocol(){
+    if (!protocol) return;
+    const outline = protocol.value === 'outline';
+    document.querySelectorAll('.vpn-tunnel-field').forEach(el => {
+      el.hidden = outline;
+      el.querySelectorAll('input,select,textarea').forEach(input => { input.disabled = outline; });
+    });
+    const iface = document.getElementById('vpnInterfaceName');
+    const port = document.getElementById('vpnListenPort');
+    const subnet = document.getElementById('vpnSubnet');
+    const hint = document.getElementById('vpnProtocolHint');
+    if (outline) {
+      if (port) port.value = '443';
+      if (iface) iface.value = 'outline';
+    } else if (protocol.value === 'wireguard') {
+      if (port) port.value = '51820';
+      if (iface) iface.value = 'wg0';
+      if (subnet) subnet.value = '10.77.0.0/24';
+    } else if (protocol.value === 'amneziawg_legacy') {
+      if (port) port.value = '585';
+      if (iface) iface.value = 'awg0';
+      if (subnet) subnet.value = '10.78.0.0/24';
+    } else {
+      if (port) port.value = '1234';
+      if (iface) iface.value = 'awg2';
+      if (subnet) subnet.value = '10.79.0.0/24';
+    }
+    if (hint) hint.textContent = outline
+      ? 'Outline устанавливается официальным серверным скриптом и управляется через Management API.'
+      : protocol.value === 'wireguard'
+        ? 'Обычный системный WireGuard. Он не связан с WireGuard inbound внутри Xray.'
+        : protocol.value === 'amneziawg_legacy'
+          ? 'Отдельный интерфейс AmneziaWG Legacy для старых устройств и клиентов.'
+          : 'Отдельный интерфейс AmneziaWG 2.0. Legacy и 2.0 не смешиваются.';
+  }
+
+  if (serviceHost) { serviceHost.addEventListener('change', syncServiceEndpoint); syncServiceEndpoint(); }
+  if (protocol) { protocol.addEventListener('change', syncProtocol); syncProtocol(); }
+})();
+</script>
+
+<%- include('partials_footer') %>

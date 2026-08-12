@@ -1,0 +1,521 @@
+<%
+  function flagEmojiFromCode(code) {
+    const cc = String(code || '').trim().toUpperCase();
+    if (!/^[A-Z]{2}$/.test(cc) || ['ZZ','XX'].includes(cc)) return '';
+    return Array.from(cc).map(ch => String.fromCodePoint(0x1F1E6 + ch.charCodeAt(0) - 65)).join('');
+  }
+  function escapeFlagAttr(value) {
+    return String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+  function flagHtml(code, fallback, name) {
+    const rawCode = String(code || '').trim().toLowerCase();
+    const flagValue = String(fallback || '').trim();
+    const nameText = String(name || '').trim();
+    const codeFromName = (typeof countryCodeByName === 'function') ? String(countryCodeByName(nameText) || '').trim().toLowerCase() : '';
+    const code2 = (/^[a-z]{2}$/i.test(rawCode) ? rawCode : (/^[a-z]{2}$/i.test(flagValue) ? flagValue.toLowerCase() : codeFromName));
+    if (code2 && !['zz','xx'].includes(code2)) {
+      return `<img class="flag-badge flag-img" src="/flags/${code2}.svg" alt="${escapeFlagAttr(name || code2)}" loading="lazy" onerror="this.style.display='none'">`;
+    }
+    const emoji = (typeof countryFlagText === 'function')
+      ? countryFlagText(code, flagValue, nameText)
+      : ((flagValue && flagValue !== '🌐' && !/^[a-z]{2}$/i.test(flagValue)) ? flagValue : flagEmojiFromCode(code || flagValue));
+    return emoji ? `<span class="flag-badge emoji-fallback" aria-label="${escapeFlagAttr(String(code || '').toUpperCase())}">${emoji}</span>` : '';
+  }
+  function nodeEndpointLabel(node) {
+    return 'inbound ' + (node.inbound_id || '—');
+  }
+%>
+
+<%- include('partials_header', { pageTitle: 'Перенаправление', pageSubtitle: 'DNAT/SNAT перенаправление с IP сервера панели на выбранные 3x-ui узлы', activePage: 'redirects' }) %>
+
+<% if (message) { %><div class="alert ok"><%= message %></div><% } %>
+<% if (error) { %><div class="alert err"><%= error %></div><% } %>
+
+<div class="grid">
+  <section class="card span-7">
+    <h2>Создать перенаправление</h2>
+    <p class="muted">Выбери IP текущего сервера панели и узлы. После применения адрес выбранных узлов в JSON/SUB будет заменяться на IP панели, а host-helper на сервере сделает перенаправление на настоящий IP узла и его порт.</p>
+    <form method="post" action="/redirects/apply" class="js-long-action" data-loading-title="Сохраняю перенаправление" data-loading-text="Готовлю правила для helper. Применение iptables на хосте занимает несколько секунд.">
+      <div class="form-grid">
+        <div class="field half">
+          <label>Источник IP</label>
+          <select name="bind_ip_mode" id="bindIpMode">
+            <option value="detected" selected>IP панели / найденный IP</option>
+            <option value="custom">Свой IP редирект-сервера</option>
+          </select>
+          <small class="hint">Если редирект стоит на отдельном сервере, выбери «Свой IP» и впиши его ниже.</small>
+        </div>
+
+        <div class="field half" id="detectedBindIpField">
+          <label>IP панели / найденный IP</label>
+          <select name="bind_ip" id="detectedBindIpSelect">
+            <% if (hostIps.length) { %>
+              <% hostIps.forEach(ip => { %><option value="<%= ip %>"><%= ip %></option><% }) %>
+            <% } else { %>
+              <option value="">IP не найден</option>
+            <% } %>
+          </select>
+        </div>
+
+        <div class="field half" id="customBindIpField">
+          <label>Свой IP редирект-сервера</label>
+          <input name="bind_ip_custom" id="customBindIpInput" placeholder="например: 109.10.20.30" />
+          <small class="hint">В подписке будет заменён только IP. Порт останется портом оригинального inbound узла. Порты 80/443 и уже занятые порты запрещены.</small>
+        </div>
+
+        <div class="field half">
+          <label>Название входной точки</label>
+          <input name="bind_label" placeholder="например: РФ Новосибирск" />
+          <small class="hint">Нужно только для понятного отображения в правилах и диагностике.</small>
+        </div>
+
+        <div class="field half">
+          <label>Протокол</label>
+          <select name="protocol">
+            <option value="tcp" selected>TCP</option>
+            <option value="udp">UDP</option>
+            <option value="both">TCP + UDP</option>
+          </select>
+          <small class="hint">Для VLESS/TCP/REALITY обычно нужен только TCP.</small>
+        </div>
+      </div>
+
+      <label class="switch-row compact">
+        <input type="checkbox" name="rewrite_enabled" value="1" checked />
+        <span><strong>Менять адрес узла в подписке</strong><small>В JSON/SUB вместо IP настоящего узла будет выдаваться выбранный IP панели. Reality/SNI/publicKey/shortId остаются от настоящего узла.</small></span>
+      </label>
+
+      <h3>Узлы для перенаправления</h3>
+      <% if (!nodes.length) { %>
+        <p class="muted">Сначала добавь узлы.</p>
+      <% } else { %>
+        <div class="checkbox-grid redirect-node-list">
+          <% nodes.forEach(node => { %>
+            <label class="check-card">
+              <input type="checkbox" name="node_ids" value="<%= node.id %>" />
+              <span>
+                <strong><%- flagHtml(node.country_code, node.country_flag, node.country_name_ru || node.name) %><%= node.country_name_ru || node.name %><%= node.label_suffix ? ' ' + String(node.label_suffix).replace(/^\/+\s*/, '') : '' %></strong>
+                <small><%= node.panel_url %> · <%= nodeEndpointLabel(node) %><% if (node.redirect_target_port) { %> · порт <%= node.redirect_target_port %><% } else { %> · порт inbound не загружен<% } %> · <%= node.transport_label || 'не загружено' %></small>
+              </span>
+            </label>
+          <% }) %>
+        </div>
+      <% } %>
+
+      <div class="actions redirect-actions">
+        <button type="button" class="secondary" onclick="document.querySelectorAll('input[name=node_ids]').forEach(cb => cb.checked = true)">Выбрать все</button>
+        <button type="button" class="secondary" onclick="document.querySelectorAll('input[name=node_ids]').forEach(cb => cb.checked = false)">Снять все</button>
+        <button type="submit" class="secondary" formaction="/redirects/check">Проверить выбранные</button>
+        <button type="submit">Применить перенаправление</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="card span-5">
+    <div class="section-title-row redirect-refresh-title">
+      <h2>Статус helper</h2>
+      <div class="redirect-refresh-controls" aria-label="Автообновление страницы перенаправления">
+        <button type="button" class="secondary small" id="redirectRefreshNow" title="Обновить сейчас">↻</button>
+        <label class="redirect-refresh-toggle">
+          <input type="checkbox" id="redirectAutoRefreshToggle" />
+          <span>Автообновление</span>
+        </label>
+        <select id="redirectRefreshInterval" title="Интервал автообновления">
+          <option value="5">5s</option>
+          <option value="10">10s</option>
+          <option value="30">30s</option>
+          <option value="60">60s</option>
+        </select>
+      </div>
+    </div>
+    <div class="kv-list">
+      <div class="kv-item"><strong>Состояние</strong><div class="muted" id="redirectHelperState"><%= status.ok ? 'OK' : 'Нет подтверждения / ошибка' %></div></div>
+      <div class="kv-item"><strong>Последнее обновление</strong><div class="muted" id="redirectHelperUpdated"><%= status.updatedAt || status.generatedAt || 'нет данных' %></div></div>
+      <div class="kv-item"><strong>Сообщение</strong><div class="muted" id="redirectHelperMessage"><%= status.message || status.error || 'helper ещё не применял правила' %></div></div>
+      <div class="kv-item <%= status.stale ? '' : 'hidden-soft' %>" id="redirectHelperStaleBox"><strong>Внимание</strong><div class="muted" id="redirectHelperStale"><%= status.stale ? status.staleMessage : '' %></div></div>
+      <div class="kv-item"><strong>Файл правил</strong><div class="muted"><code>data/redirect_rules.json</code></div></div>
+    </div>
+    <% const net = status.systemNetwork || {}; %>
+    <div class="network-load-box <%= net.state === 'critical' ? 'critical' : (net.state === 'warn' ? 'warn' : '') %>" id="redirectNetworkBox">
+      <div class="section-title-row">
+        <h3>Нагрузка сети</h3>
+        <span class="status <%= net.state === 'critical' ? 'off' : 'ok' %>" id="redirectNetStatus"><%= net.state === 'critical' ? 'Критично' : (net.state === 'warn' ? 'Высокая' : 'OK') %></span>
+      </div>
+      <div class="redirect-metrics-grid">
+        <div><strong id="redirectNetRx"><%= net.rxMbps ?? 0 %> Мбит/с</strong><small>Вход</small></div>
+        <div><strong id="redirectNetTx"><%= net.txMbps ?? 0 %> Мбит/с</strong><small>Выход</small></div>
+        <div><strong id="redirectNetTotal"><%= net.totalMbps ?? 0 %> Мбит/с</strong><small>Всего</small></div>
+      </div>
+      <small class="hint">Показатель обновляет host-helper. Лимит не показывается, потому что у каждого хостера и тарифа он разный.</small>
+    </div>
+    <div class="alert ok" style="margin-top:14px;">
+      Для применения iptables нужен host-service <code>3xui-aggregator-forwarder</code>. В новой версии установщик запускает его в режиме <code>loop</code>, поэтому после сохранения правил он должен применить их автоматически.
+    </div>
+  </section>
+
+  <% if (checkReport && checkReport.results && checkReport.results.length) { %>
+  <section class="card span-12" id="redirect-check-results">
+    <div class="section-title-row redirect-refresh-title">
+      <div>
+        <h2>Результат проверки соединения</h2>
+        <p class="muted">Проверка показывает, доступен ли настоящий узел с сервера панели. Если здесь timeout/refused, перенаправление на этот узел не заработает, пока целевой порт не станет доступен.</p>
+        <small class="hint" id="redirectCheckUpdated">Последняя проверка: <%= checkReport.generatedAt || 'нет данных' %></small>
+      </div>
+      <div class="redirect-refresh-controls" aria-label="Автообновление проверки соединения">
+        <button type="button" class="secondary small" id="redirectCheckRefreshNow" title="Проверить сейчас">↻</button>
+        <label class="redirect-refresh-toggle">
+          <input type="checkbox" id="redirectCheckAutoRefreshToggle" />
+          <span>Автообновление проверки</span>
+        </label>
+        <select id="redirectCheckRefreshInterval" title="Интервал автообновления проверки">
+          <option value="5">5s</option>
+          <option value="10">10s</option>
+          <option value="30">30s</option>
+          <option value="60">60s</option>
+        </select>
+      </div>
+    </div>
+    <div class="table-wrap redirect-check-table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Узел</th>
+            <th>Цель</th>
+            <th>Статус</th>
+            <th>Время</th>
+            <th>Сообщение</th>
+          </tr>
+        </thead>
+        <tbody id="redirectCheckBody">
+          <% checkReport.results.forEach(r => { %>
+            <tr>
+              <td><strong class="node-name-inline"><%- flagHtml(r.countryCode, r.countryFlag, r.nodeLabel || r.nodeName) %><span><%= r.nodeLabel || r.nodeName %></span></strong></td>
+              <td><code><%= r.targetHost || '—' %>:<%= r.targetPort || '—' %></code></td>
+              <td><span class="status <%= r.ok ? 'ok' : 'off' %>"><%= r.ok ? 'OK' : 'Ошибка' %></span></td>
+              <td><%= r.latencyMs || 0 %> мс</td>
+              <td><%= r.message || '' %></td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+    <div class="mobile-redirect-card-list" id="redirectCheckCards">
+      <% checkReport.results.forEach(r => { %>
+        <div class="mobile-redirect-card">
+          <div class="mobile-redirect-head">
+            <strong><%- flagHtml(r.countryCode, r.countryFlag, r.nodeLabel || r.nodeName) %><%= r.nodeLabel || r.nodeName %></strong>
+            <span class="status <%= r.ok ? 'ok' : 'off' %>"><%= r.ok ? 'OK' : 'Ошибка' %></span>
+          </div>
+          <div class="mobile-redirect-grid">
+            <div><span>Цель</span><code><%= r.targetHost || '—' %>:<%= r.targetPort || '—' %></code></div>
+            <div><span>Время</span><strong><%= r.latencyMs || 0 %> мс</strong></div>
+            <div class="span-2"><span>Сообщение</span><small><%= r.message || '' %></small></div>
+          </div>
+        </div>
+      <% }) %>
+    </div>
+  </section>
+  <% } %>
+
+  <section class="card span-12">
+    <h2>Активные правила</h2>
+    <% if (!rules.length) { %>
+      <p class="muted">Правил перенаправления пока нет.</p>
+    <% } else { %>
+      <div class="table-wrap redirect-active-table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Entry IP</th>
+              <th>Узел</th>
+              <th>Цель</th>
+              <th>Протокол</th>
+              <th>Подмена в подписке</th>
+              <th>Статус</th>
+              <th>Статистика</th>
+              <th>Действия</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% rules.forEach(rule => { %>
+              <tr>
+                <td><%= rule.id %></td>
+                <td><code><%= rule.bind_ip %></code><% if (rule.bind_label) { %><br><small><%= rule.bind_label %></small><% } %></td>
+                <td><strong class="node-name-inline"><%- flagHtml(rule.country_code, rule.country_flag, rule.country_name_ru || rule.name) %><span><%= rule.country_name_ru || rule.name %><%= rule.label_suffix ? ' ' + String(rule.label_suffix).replace(/^\/+\s*/, '') : '' %></span></strong></td>
+                <td><code><%= rule.target_host %>:<%= rule.target_port %></code></td>
+                <td><%= rule.protocol.toUpperCase() %></td>
+                <td><%= rule.rewrite_enabled ? 'Включена' : 'Нет' %></td>
+                <td><span class="status <%= rule.enabled ? 'ok' : 'off' %>"><%= rule.enabled ? (rule.last_status || 'pending') : 'disabled' %></span><% if (rule.last_error) { %><div class="muted"><%= rule.last_error %></div><% } %></td>
+                <td>
+                  <div class="muted">iptables cmd: <%= rule.metrics && rule.metrics.iptablesCommands ? rule.metrics.iptablesCommands : '—' %></div>
+                  <div class="muted">packets: <%= rule.metrics && rule.metrics.packets ? rule.metrics.packets : '—' %></div>
+                  <div class="muted">bytes: <%= rule.metrics && rule.metrics.bytes ? rule.metrics.bytes : '—' %></div>
+                </td>
+                <td>
+                  <div class="row-actions">
+                    <form method="post" action="/redirects/<%= rule.id %>/toggle"><button class="secondary" type="submit"><%= rule.enabled ? 'Отключить' : 'Включить' %></button></form>
+                    <form method="post" action="/redirects/<%= rule.id %>/delete" onsubmit="return confirm('Удалить правило перенаправления?')"><button class="danger" type="submit">Удалить</button></form>
+                  </div>
+                </td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+      <div class="mobile-redirect-card-list active-rules-mobile-list">
+        <% rules.forEach(rule => { %>
+          <div class="mobile-redirect-card">
+            <div class="mobile-redirect-head">
+              <strong><%- flagHtml(rule.country_code, rule.country_flag, rule.country_name_ru || rule.name) %><%= rule.country_name_ru || rule.name %><%= rule.label_suffix ? ' ' + String(rule.label_suffix).replace(/^\/+\s*/, '') : '' %></strong>
+              <span class="status <%= rule.enabled ? 'ok' : 'off' %>"><%= rule.enabled ? (rule.last_status || 'pending') : 'disabled' %></span>
+            </div>
+            <div class="mobile-redirect-grid">
+              <div><span>Entry IP</span><code><%= rule.bind_ip %></code><% if (rule.bind_label) { %><small><%= rule.bind_label %></small><% } %></div>
+              <div><span>Цель</span><code><%= rule.target_host %>:<%= rule.target_port %></code></div>
+              <div><span>Протокол</span><strong><%= rule.protocol.toUpperCase() %></strong></div>
+              <div><span>Подмена</span><strong><%= rule.rewrite_enabled ? 'Включена' : 'Нет' %></strong></div>
+              <% if (rule.last_error) { %><div class="span-2"><span>Ошибка</span><small><%= rule.last_error %></small></div><% } %>
+            </div>
+            <div class="mobile-redirect-actions">
+              <form method="post" action="/redirects/<%= rule.id %>/toggle"><button class="secondary" type="submit"><%= rule.enabled ? 'Отключить' : 'Включить' %></button></form>
+              <form method="post" action="/redirects/<%= rule.id %>/delete" onsubmit="return confirm('Удалить правило перенаправления?')"><button class="danger" type="submit">Удалить</button></form>
+            </div>
+          </div>
+        <% }) %>
+      </div>
+    <% } %>
+  </section>
+
+  <section class="card span-12 danger-zone-card mobile-never-collapse">
+    <h2>Опасная зона</h2>
+    <p class="muted">Удаление всех правил очистит только правила агрегатора. Helper при следующем применении удалит managed-цепочки iptables агрегатора.</p>
+    <form method="post" action="/redirects/delete-all" onsubmit="return confirm('Удалить все правила перенаправления?')">
+      <button type="submit" class="danger">Удалить все правила перенаправления</button>
+    </form>
+  </section>
+</div>
+
+<script>
+
+(function() {
+  const mode = document.getElementById('bindIpMode');
+  const detectedField = document.getElementById('detectedBindIpField');
+  const detectedSelect = document.getElementById('detectedBindIpSelect');
+  const customField = document.getElementById('customBindIpField');
+  const customInput = document.getElementById('customBindIpInput');
+  if (!mode || !detectedField || !detectedSelect || !customField || !customInput) return;
+
+  function setFieldDisabled(field, controls, disabled) {
+    field.classList.toggle('field-disabled', disabled);
+    field.setAttribute('aria-disabled', disabled ? 'true' : 'false');
+    controls.forEach((control) => {
+      control.disabled = disabled;
+      control.tabIndex = disabled ? -1 : 0;
+    });
+  }
+
+  function syncBindIpMode() {
+    const useCustom = mode.value === 'custom';
+    setFieldDisabled(detectedField, [detectedSelect], useCustom);
+    setFieldDisabled(customField, [customInput], !useCustom);
+    if (useCustom) {
+      customInput.placeholder = 'введите IP редирект-сервера, например: 109.10.20.30';
+    } else {
+      customInput.placeholder = 'сначала выберите «Свой IP редирект-сервера»';
+    }
+  }
+
+  mode.addEventListener('change', syncBindIpMode);
+  syncBindIpMode();
+})();
+
+(function() {
+  const enabledKey = 'agg_redirect_auto_refresh_enabled';
+  const intervalKey = 'agg_redirect_auto_refresh_interval';
+  const toggle = document.getElementById('redirectAutoRefreshToggle');
+  const interval = document.getElementById('redirectRefreshInterval');
+  const refreshNow = document.getElementById('redirectRefreshNow');
+  const stateEl = document.getElementById('redirectHelperState');
+  const updatedEl = document.getElementById('redirectHelperUpdated');
+  const messageEl = document.getElementById('redirectHelperMessage');
+  const staleBox = document.getElementById('redirectHelperStaleBox');
+  const staleEl = document.getElementById('redirectHelperStale');
+  const netBox = document.getElementById('redirectNetworkBox');
+  const netStatus = document.getElementById('redirectNetStatus');
+  const netRx = document.getElementById('redirectNetRx');
+  const netTx = document.getElementById('redirectNetTx');
+  const netTotal = document.getElementById('redirectNetTotal');
+  if (!toggle || !interval) return;
+
+  const allowed = ['5', '10', '30', '60'];
+  const savedInterval = localStorage.getItem(intervalKey);
+  interval.value = allowed.includes(savedInterval) ? savedInterval : '5';
+  toggle.checked = localStorage.getItem(enabledKey) === '1';
+
+  function setText(el, value) {
+    if (el) el.textContent = value == null || value === '' ? 'нет данных' : String(value);
+  }
+  function renderStatus(status) {
+    const net = status && status.systemNetwork ? status.systemNetwork : {};
+    setText(stateEl, status && status.ok ? 'OK' : 'Нет подтверждения / ошибка');
+    setText(updatedEl, (status && (status.updatedAt || status.generatedAt)) || 'нет данных');
+    setText(messageEl, (status && (status.message || status.error)) || 'helper ещё не применял правила');
+    if (staleBox && staleEl) {
+      const stale = Boolean(status && status.stale);
+      staleBox.classList.toggle('hidden-soft', !stale);
+      staleEl.textContent = stale ? (status.staleMessage || 'Правила ожидают применения helper.') : '';
+    }
+    if (netBox) {
+      netBox.classList.toggle('critical', net.state === 'critical');
+      netBox.classList.toggle('warn', net.state === 'warn');
+    }
+    if (netStatus) {
+      netStatus.textContent = net.state === 'critical' ? 'Критично' : (net.state === 'warn' ? 'Высокая' : 'OK');
+      netStatus.classList.toggle('off', net.state === 'critical');
+      netStatus.classList.toggle('ok', net.state !== 'critical');
+    }
+    setText(netRx, `${net.rxMbps ?? 0} Мбит/с`);
+    setText(netTx, `${net.txMbps ?? 0} Мбит/с`);
+    setText(netTotal, `${net.totalMbps ?? 0} Мбит/с`);
+  }
+  async function refreshHelperStatus() {
+    if (document.hidden) return;
+    if (refreshNow) refreshNow.disabled = true;
+    try {
+      const response = await fetch('/redirects/helper/refresh.json', {
+        method: 'POST',
+        headers: { 'Accept': 'application/json' }
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.error || 'Ошибка обновления helper');
+      renderStatus(data.status || {});
+    } catch (err) {
+      setText(messageEl, 'Ошибка ручного обновления: ' + (err.message || err));
+    } finally {
+      if (refreshNow) refreshNow.disabled = false;
+    }
+  }
+
+  let timer = null;
+  function startTimer() {
+    if (timer) clearInterval(timer);
+    if (!toggle.checked) return;
+    const seconds = Number(interval.value || 5);
+    timer = setInterval(refreshHelperStatus, Math.max(5, seconds) * 1000);
+  }
+
+  toggle.addEventListener('change', () => {
+    localStorage.setItem(enabledKey, toggle.checked ? '1' : '0');
+    startTimer();
+  });
+  interval.addEventListener('change', () => {
+    localStorage.setItem(intervalKey, interval.value);
+    startTimer();
+  });
+  if (refreshNow) refreshNow.addEventListener('click', refreshHelperStatus);
+  startTimer();
+})();
+
+(function() {
+  const enabledKey = 'agg_redirect_check_auto_refresh_enabled';
+  const intervalKey = 'agg_redirect_check_auto_refresh_interval';
+  const toggle = document.getElementById('redirectCheckAutoRefreshToggle');
+  const interval = document.getElementById('redirectCheckRefreshInterval');
+  const refreshNow = document.getElementById('redirectCheckRefreshNow');
+  const body = document.getElementById('redirectCheckBody');
+  const cards = document.getElementById('redirectCheckCards');
+  const updated = document.getElementById('redirectCheckUpdated');
+  if (!toggle || !interval || !body) return;
+  const allowed = ['5', '10', '30', '60'];
+  const savedInterval = localStorage.getItem(intervalKey);
+  interval.value = allowed.includes(savedInterval) ? savedInterval : '10';
+  toggle.checked = localStorage.getItem(enabledKey) === '1';
+  let timer = null;
+
+  function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+  }
+
+  function renderFlag(code, fallback) {
+    const fb = String(fallback || '').trim();
+    function emojiFromCode(value) {
+      const cc = String(value || '').trim().toUpperCase();
+      if (!/^[A-Z]{2}$/.test(cc) || ['ZZ','XX'].includes(cc)) return '';
+      return Array.from(cc).map(ch => String.fromCodePoint(0x1F1E6 + ch.charCodeAt(0) - 65)).join('');
+    }
+    const cc = String(code || (/^[a-z]{2}$/i.test(fb) ? fb : '')).trim().toLowerCase();
+    if (/^[a-z]{2}$/.test(cc) && !['zz','xx'].includes(cc)) {
+      return `<img class="flag-badge flag-img" src="/flags/${cc}.svg" alt="${cc.toUpperCase()}" loading="lazy" onerror="this.style.display='none'">`;
+    }
+    const emoji = (fb && fb !== '🌐' && !/^[a-z]{2}$/i.test(fb)) ? fb : emojiFromCode(code || fb);
+    return emoji ? `<span class="flag-badge emoji-fallback">${escapeHtml(emoji)}</span>` : '';
+  }
+
+  function renderRedirectCheckCard(r) {
+    return `
+      <div class="mobile-redirect-card">
+        <div class="mobile-redirect-head">
+          <strong>${renderFlag(r.countryCode, r.countryFlag)}${escapeHtml(r.nodeLabel || r.nodeName || '')}</strong>
+          <span class="status ${r.ok ? 'ok' : 'off'}">${r.ok ? 'OK' : 'Ошибка'}</span>
+        </div>
+        <div class="mobile-redirect-grid">
+          <div><span>Цель</span><code>${escapeHtml(r.targetHost || '—')}:${escapeHtml(r.targetPort || '—')}</code></div>
+          <div><span>Время</span><strong>${escapeHtml(r.latencyMs || 0)} мс</strong></div>
+          <div class="span-2"><span>Сообщение</span><small>${escapeHtml(r.message || '')}</small></div>
+        </div>
+      </div>`;
+  }
+
+  async function refreshCheck() {
+    if (document.hidden) return;
+    if (refreshNow) refreshNow.disabled = true;
+    try {
+      const response = await fetch('/redirects/check/refresh.json', { headers: { 'Accept': 'application/json' } });
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.error || 'Ошибка проверки');
+      const results = data.results || [];
+      if (body) body.innerHTML = results.map(r => `
+        <tr>
+          <td><strong class="node-name-inline">${renderFlag(r.countryCode, r.countryFlag)}<span>${escapeHtml(r.nodeLabel || r.nodeName || '')}</span></strong></td>
+          <td><code>${escapeHtml(r.targetHost || '—')}:${escapeHtml(r.targetPort || '—')}</code></td>
+          <td><span class="status ${r.ok ? 'ok' : 'off'}">${r.ok ? 'OK' : 'Ошибка'}</span></td>
+          <td>${escapeHtml(r.latencyMs || 0)} мс</td>
+          <td>${escapeHtml(r.message || '')}</td>
+        </tr>
+      `).join('');
+      if (cards) cards.innerHTML = results.map(renderRedirectCheckCard).join('');
+      if (updated) updated.textContent = 'Последняя проверка: ' + (data.generatedAt || new Date().toISOString());
+    } catch (err) {
+      if (updated) updated.textContent = 'Ошибка автообновления проверки: ' + (err.message || err);
+    } finally {
+      if (refreshNow) refreshNow.disabled = false;
+    }
+  }
+
+  function startTimer() {
+    if (timer) clearInterval(timer);
+    if (!toggle.checked) return;
+    const seconds = Number(interval.value || 10);
+    timer = setInterval(refreshCheck, Math.max(5, seconds) * 1000);
+  }
+
+  toggle.addEventListener('change', () => {
+    localStorage.setItem(enabledKey, toggle.checked ? '1' : '0');
+    startTimer();
+  });
+  interval.addEventListener('change', () => {
+    localStorage.setItem(intervalKey, interval.value);
+    startTimer();
+  });
+  if (refreshNow) refreshNow.addEventListener('click', refreshCheck);
+  startTimer();
+})();
+</script>
+
+<%- include('partials_footer') %>

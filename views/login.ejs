@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="csrf-token" content="<%= csrfToken %>">
+  <meta name="theme-color" content="#07173a">
+  <title>Вход — Nexus Panel</title>
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" sizes="192x192" href="/img/nexus-logo-192.png">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="manifest" href="/site.webmanifest">
+  <script>
+  (function(){
+    try {
+      const saved = localStorage.getItem('agg.color-theme.v1');
+      const mode = saved === 'dark' ? 'dark' : 'light';
+      document.documentElement.dataset.colorMode = mode;
+      document.documentElement.dataset.colorTheme = mode;
+    } catch (_) {}
+  })();
+  </script>
+  <link rel="stylesheet" href="/css/style.css?v=169" />
+  <link rel="stylesheet" href="/css/redesign.css?v=185" />
+  <link rel="stylesheet" href="/css/stage87.css?v=2" />
+  <link rel="stylesheet" href="/css/stage90.css?v=1" />
+  <link rel="stylesheet" href="/css/stage92.css?v=1" />
+  <link rel="stylesheet" href="/css/nexus-ui.css?v=2" />
+  <link rel="stylesheet" href="/css/branding.css?v=1" />
+  <script src="/js/security.js?v=1"></script>
+  <% if (typeof isDevelopment !== 'undefined' && isDevelopment) { %><script src="/js/dev-inspector.js?v=1" defer></script><% } %>
+</head>
+<body class="login-page redesign-stage52">
+  <main class="login-wrap">
+    <section class="card login-card">
+      <div class="login-brand"><img class="login-brand-logo" src="/img/nexus-logo.png" alt="Логотип Nexus Panel">Nexus <span>Panel</span><small>Network control center</small></div>
+      <h1>Вход в панель</h1>
+
+      <% if (error) { %>
+        <div class="alert err"><%= error %></div>
+      <% } %>
+
+      <form method="post" action="/login" class="login-form">
+        <label>Логин</label>
+        <input name="username" required autocomplete="username" />
+
+        <label>Пароль</label>
+        <input name="password" type="password" required autocomplete="current-password" />
+
+        <button type="submit" class="login-submit">Войти</button>
+      </form>
+    </section>
+  </main>
+</body>
+</html>

@@ -1,0 +1,444 @@
+/* stage87 — UI polish: rebuilt light theme, unified modals + mobile bottom sheets,
+   toast notifications, SVG icons, mobile fixes (16px inputs, save bar above nav),
+   dashboard node pulse strip and daily traffic chart.
+   This file loads AFTER style.css and redesign.css and wins by source order. */
+
+/* ============ 1. SVG icons ============ */
+.agg-ico{width:18px;height:18px;display:block;flex:0 0 auto;}
+body.redesign-stage52 .nav-icon .agg-ico{width:18px;height:18px;}
+body.redesign-stage52 .brand-shield .agg-ico{width:22px;height:22px;}
+body.redesign-stage52 .theme-toggle .agg-ico{width:16px;height:16px;}
+body.redesign-stage52 .logout-icon{display:inline-grid;place-items:center;vertical-align:-3px;}
+body.redesign-stage52 .logout-icon .agg-ico{width:16px;height:16px;}
+body.redesign-stage52 .mobile-bottom-nav a .bn-ico{display:grid!important;place-items:center!important;line-height:1!important;}
+body.redesign-stage52 .mobile-bottom-nav a .bn-ico .agg-ico{width:21px;height:21px;}
+body.redesign-stage52 .theme-toggle .agg-ico-sun{display:none;}
+html[data-color-theme="light"] body.redesign-stage52 .theme-toggle .agg-ico-sun{display:block;}
+html[data-color-theme="light"] body.redesign-stage52 .theme-toggle .agg-ico-moon{display:none;}
+body.redesign-stage52 .desktop-page-tabs .agg-tab-ico{display:inline-grid;place-items:center;vertical-align:-4px;margin-right:6px;}
+body.redesign-stage52 .desktop-page-tabs .agg-tab-ico .agg-ico{width:16px;height:16px;}
+body.redesign-stage52 .mobile-dashboard-tab-icon .agg-ico{width:19px;height:19px;margin:0 auto;}
+body.redesign-stage52 .stage11-more-icon{display:grid!important;place-items:center!important;}
+body.redesign-stage52 .stage11-more-icon .agg-ico{width:22px;height:22px;}
+
+/* ============ 2. Focus visibility ============ */
+body.redesign-stage52 a:focus-visible,
+body.redesign-stage52 button:focus-visible,
+body.redesign-stage52 input:focus-visible,
+body.redesign-stage52 select:focus-visible,
+body.redesign-stage52 textarea:focus-visible{outline:2px solid rgba(96,150,250,.85)!important;outline-offset:2px!important;}
+
+/* ============ 3. Unified modals ============ */
+body.redesign-stage52 .modal{padding:18px!important;}
+body.redesign-stage52 .modal-card{
+  text-align:left!important;
+  padding:20px!important;
+  border-radius:16px!important;
+  max-height:min(88vh,880px)!important;
+  overflow:auto!important;
+  -webkit-overflow-scrolling:touch;
+}
+body.redesign-stage52 .modal-card > h2:first-of-type,
+body.redesign-stage52 .modal-card .section-title-row h2{padding-right:44px!important;}
+body.redesign-stage52 .modal-close{
+  position:absolute!important;top:12px!important;right:12px!important;
+  width:34px!important;height:34px!important;min-height:34px!important;
+  display:grid!important;place-items:center!important;
+  border-radius:10px!important;
+  background:rgba(148,163,184,.10)!important;
+  border:1px solid rgba(148,163,184,.24)!important;
+  color:#dbe4ef!important;font-size:17px!important;line-height:1!important;
+  padding:0!important;z-index:6!important;box-shadow:none!important;
+}
+body.redesign-stage52 .modal-close:hover{background:rgba(148,163,184,.18)!important;color:#fff!important;}
+
+/* ============ 4. Toast notifications ============ */
+.agg-toast-stack{
+  position:fixed;top:16px;right:16px;z-index:120000;
+  display:flex;flex-direction:column;gap:10px;
+  width:min(380px,calc(100vw - 24px));
+  pointer-events:none;
+}
+.agg-toast-stack .alert{
+  pointer-events:auto;
+  display:flex!important;align-items:flex-start!important;gap:10px!important;
+  margin:0!important;padding:12px 14px!important;
+  border-radius:12px!important;
+  background:#29313d!important;
+  border:1px solid rgba(148,163,184,.24)!important;
+  color:#eef3fa!important;
+  box-shadow:0 16px 40px rgba(0,0,0,.35)!important;
+  font-size:13px!important;line-height:1.4!important;
+  animation:aggToastIn .22s ease;
+}
+.agg-toast-stack .alert.ok{border-left:3px solid #3ade9e!important;border-radius:0 12px 12px 0!important;}
+.agg-toast-stack .alert.err{border-left:3px solid #f87171!important;border-radius:0 12px 12px 0!important;}
+.agg-toast-stack .alert .agg-toast-close{
+  flex:0 0 auto;margin-left:auto;width:24px;height:24px;min-height:24px;
+  display:grid;place-items:center;border-radius:8px;
+  background:transparent;border:0;color:#9fb0c4;cursor:pointer;
+  font-size:15px;line-height:1;padding:0;box-shadow:none;
+}
+.agg-toast-stack .alert .agg-toast-close:hover{color:#fff;background:rgba(148,163,184,.15);}
+.agg-toast-stack .alert.agg-toast-out{opacity:0;transform:translateY(-6px);transition:opacity .25s ease,transform .25s ease;}
+@keyframes aggToastIn{from{opacity:0;transform:translateY(-8px);}to{opacity:1;transform:none;}}
+@media (prefers-reduced-motion: reduce){
+  .agg-toast-stack .alert{animation:none;}
+  .agg-toast-stack .alert.agg-toast-out{transition:none;}
+}
+
+/* ============ 5. Dashboard: node pulse strip ============ */
+body.redesign-stage52 .agg-pulse-card{padding:14px 16px!important;}
+body.redesign-stage52 .agg-pulse-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;flex-wrap:wrap;}
+body.redesign-stage52 .agg-pulse-head h2{font-size:15px!important;}
+body.redesign-stage52 .agg-pulse-head .muted{font-size:12px!important;margin:2px 0 0!important;}
+body.redesign-stage52 .agg-pulse-list{display:flex;gap:8px;flex-wrap:wrap;}
+body.redesign-stage52 .agg-pulse-item{
+  display:flex;align-items:center;gap:8px;
+  min-height:40px;padding:7px 11px;border-radius:11px;
+  background:rgba(255,255,255,.035);border:1px solid rgba(148,163,184,.18);
+  max-width:100%;
+}
+body.redesign-stage52 .agg-pulse-item[data-state="offline"]{background:rgba(239,68,68,.08);border-color:rgba(239,68,68,.34);}
+body.redesign-stage52 .agg-pulse-flag{
+  font-size:11px;font-weight:800;letter-spacing:.02em;color:#c9d6e6;
+  background:rgba(148,163,184,.12);border:1px solid rgba(148,163,184,.22);
+  border-radius:6px;padding:2px 6px;flex:0 0 auto;
+}
+body.redesign-stage52 .agg-pulse-flag-img{display:inline-flex;align-items:center;flex:0 0 auto;font-size:15px;line-height:1;}
+body.redesign-stage52 .agg-pulse-flag-img .flag-badge{margin:0;}
+body.redesign-stage52 .agg-pulse-name{font-size:12.5px;font-weight:700;color:#eef3fa;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px;}
+body.redesign-stage52 .agg-pulse-ms{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px;color:#8b9aab;flex:0 0 auto;font-variant-numeric:tabular-nums;}
+body.redesign-stage52 .agg-pulse-dot{width:8px;height:8px;border-radius:50%;background:#64748b;flex:0 0 auto;}
+body.redesign-stage52 .agg-pulse-item[data-state="online"] .agg-pulse-dot{background:#3ade9e;box-shadow:0 0 0 3px rgba(58,222,158,.14);}
+body.redesign-stage52 .agg-pulse-item[data-state="offline"] .agg-pulse-dot{background:#f87171;box-shadow:0 0 0 3px rgba(248,113,113,.14);}
+body.redesign-stage52 .agg-pulse-item[data-state="checking"] .agg-pulse-dot{background:#eab308;}
+body.redesign-stage52 .agg-pulse-item[data-state="disabled"]{opacity:.55;}
+
+/* ============ 6. Dashboard: daily traffic chart ============ */
+body.redesign-stage52 .agg-chart-wrap{margin:4px 0 14px;padding:12px 12px 8px;border-radius:12px;background:rgba(29,36,44,.45);border:1px solid rgba(148,163,184,.14);}
+body.redesign-stage52 .agg-chart-top{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:2px;flex-wrap:wrap;}
+body.redesign-stage52 .agg-chart-top span{font-size:12px;color:#8b9aab;}
+body.redesign-stage52 .agg-chart-total{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:17px;font-weight:700;color:#eef3fa;font-variant-numeric:tabular-nums;}
+body.redesign-stage52 .agg-chart-wrap svg{display:block;width:100%;height:auto;}
+body.redesign-stage52 .agg-chart-wrap .agg-gline{stroke:rgba(148,163,184,.14);stroke-width:1;}
+body.redesign-stage52 .agg-chart-wrap .agg-area{fill:rgba(88,130,255,.16);}
+body.redesign-stage52 .agg-chart-wrap .agg-line{fill:none;stroke:#6fa0ff;stroke-width:2;stroke-linejoin:round;stroke-linecap:round;}
+body.redesign-stage52 .agg-chart-wrap .agg-dot{fill:#6fa0ff;}
+body.redesign-stage52 .agg-chart-wrap .agg-ax{font-size:10.5px;fill:#7e8aa0;}
+body.redesign-stage52 .agg-chart-empty{font-size:12px;color:#8b9aab;padding:6px 2px 4px;}
+
+/* ============ 7. Mobile fixes ============ */
+@media (max-width:860px){
+  body.redesign-stage52 input:not([type="checkbox"]):not([type="radio"]),
+  body.redesign-stage52 select,
+  body.redesign-stage52 textarea{font-size:16px!important;}
+  body.redesign-stage52 .btn-main,
+  body.redesign-stage52 .btn-secondary,
+  body.redesign-stage52 .btn-danger{min-height:42px!important;}
+  body.redesign-stage52 .table-wrap{overflow-x:auto!important;-webkit-overflow-scrolling:touch;}
+  body.redesign-stage52 .global-floating-save,
+  body.redesign-stage52 .mobile-floating-save{
+    position:fixed!important;left:10px!important;right:10px!important;
+    bottom:calc(94px + env(safe-area-inset-bottom,0px))!important;
+    z-index:2400!important;
+  }
+  body.redesign-stage52 .mobile-bottom-nav a{min-height:58px!important;gap:4px!important;}
+  body.redesign-stage52 .mobile-bottom-nav a em{font-size:10.5px!important;}
+  body.redesign-stage52 .modal{padding:0!important;align-items:flex-end!important;}
+  body.redesign-stage52 .modal-card{
+    width:100%!important;max-width:100%!important;
+    border-radius:20px 20px 0 0!important;
+    max-height:92vh!important;
+    padding:12px 16px calc(18px + env(safe-area-inset-bottom,0px))!important;
+  }
+  body.redesign-stage52 .modal-card::before{
+    content:"";display:block;width:44px;height:4px;border-radius:99px;
+    background:rgba(148,163,184,.4);margin:0 auto 12px;
+  }
+  body.redesign-stage52 .modal-close{top:16px!important;right:14px!important;}
+  body.redesign-stage52 .agg-pulse-list{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:4px;}
+  body.redesign-stage52 .agg-pulse-item{flex:0 0 auto;}
+  .agg-toast-stack{top:10px;right:10px;left:10px;width:auto;}
+}
+
+/* ============ 8. Light theme repaint ============ */
+html[data-color-theme="light"] body.redesign-stage52{
+  --ds-bg:#f3f5f9;--ds-bg-2:#f3f5f9;--ds-bg-3:#ffffff;
+  --ds-surface:#ffffff;--ds-surface-2:#ffffff;--ds-surface-3:#f6f8fb;
+  --ds-line:#e2e7ef;--ds-line-2:rgba(46,99,232,.4);
+  --ds-text:#1b2334;--ds-soft:#3a465c;--ds-muted:#5d6b82;
+  --ds-blue:#2e63e8;--ds-blue-2:#2452c8;--ds-blue-soft:rgba(46,99,232,.10);
+  --ds-shadow:0 1px 2px rgba(16,24,40,.05),0 8px 22px rgba(16,24,40,.06);
+  background:#f3f5f9!important;color:#1b2334!important;
+}
+html[data-color-theme="light"]{background:#f3f5f9!important;}
+html[data-color-theme="light"] body.redesign-stage52 a{color:#2450c9;}
+html[data-color-theme="light"] body.redesign-stage52 a:hover{color:#183a9e;}
+html[data-color-theme="light"] body.redesign-stage52 .sidebar{
+  background:#ffffff!important;border-right:1px solid #e2e7ef!important;box-shadow:none!important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .brand{border-bottom-color:#e9edf4!important;}
+html[data-color-theme="light"] body.redesign-stage52 .brand-shield{background:#e8eefc!important;border-color:#c8d7f8!important;color:#2452c8!important;}
+html[data-color-theme="light"] body.redesign-stage52 .brand-text strong,
+html[data-color-theme="light"] body.redesign-stage52 .page-intro h1,
+html[data-color-theme="light"] body.redesign-stage52 .main h1,
+html[data-color-theme="light"] body.redesign-stage52 .card h2,
+html[data-color-theme="light"] body.redesign-stage52 .card h3,
+html[data-color-theme="light"] body.redesign-stage52 .section-title-row h2,
+html[data-color-theme="light"] body.redesign-stage52 .section-title-row h3,
+html[data-color-theme="light"] body.redesign-stage52 .stats-number,
+html[data-color-theme="light"] body.redesign-stage52 .agg-chart-total{color:#1b2334!important;}
+html[data-color-theme="light"] body.redesign-stage52 .side-nav a,
+html[data-color-theme="light"] body.redesign-stage52 .side-nav button{color:#3f4c63!important;}
+html[data-color-theme="light"] body.redesign-stage52 .side-nav a:hover{background:#f3f6fb!important;border-color:#e2e7ef!important;color:#1b2334!important;}
+html[data-color-theme="light"] body.redesign-stage52 .side-nav a.active{
+  background:#e8eefc!important;border-color:#c8d7f8!important;color:#2247b8!important;
+  box-shadow:inset 3px 0 0 #2e63e8!important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .sidebar-user-card,
+html[data-color-theme="light"] body.redesign-stage52 .sidebar-order-button,
+html[data-color-theme="light"] body.redesign-stage52 .sidebar-logout button,
+html[data-color-theme="light"] body.redesign-stage52 .theme-toggle{
+  background:#f6f8fb!important;border-color:#dfe5ee!important;color:#3a465c!important;box-shadow:none!important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .sidebar-user-avatar{background:#eef2f8!important;border-color:#dfe5ee!important;color:#3a465c!important;}
+html[data-color-theme="light"] body.redesign-stage52 .sidebar-user-meta strong{color:#1b2334!important;}
+html[data-color-theme="light"] body.redesign-stage52 .card,
+html[data-color-theme="light"] body.redesign-stage52 .table-wrap,
+html[data-color-theme="light"] body.redesign-stage52 .modal-card,
+html[data-color-theme="light"] body.redesign-stage52 .stats-card,
+html[data-color-theme="light"] body.redesign-stage52 .kv-item,
+html[data-color-theme="light"] body.redesign-stage52 .nodes-list-panel,
+html[data-color-theme="light"] body.redesign-stage52 .nodes-detail-panel,
+html[data-color-theme="light"] body.redesign-stage52 .node-detail-section,
+html[data-color-theme="light"] body.redesign-stage52 .node-detail-kv,
+html[data-color-theme="light"] body.redesign-stage52 .diagnostic-card,
+html[data-color-theme="light"] body.redesign-stage52 .public-card,
+html[data-color-theme="light"] body.redesign-stage52 .geodata-catalog-card,
+html[data-color-theme="light"] body.redesign-stage52 .settings-panel,
+html[data-color-theme="light"] body.redesign-stage52 .happ-control-card{
+  background:#ffffff!important;border:1px solid #e2e7ef!important;color:#1b2334!important;
+  box-shadow:0 1px 2px rgba(16,24,40,.05),0 8px 22px rgba(16,24,40,.06)!important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .muted,
+html[data-color-theme="light"] body.redesign-stage52 .hint,
+html[data-color-theme="light"] body.redesign-stage52 small{color:#5d6b82!important;}
+html[data-color-theme="light"] body.redesign-stage52 label{color:#2a3648!important;}
+html[data-color-theme="light"] body.redesign-stage52 input:not([type="checkbox"]):not([type="radio"]),
+html[data-color-theme="light"] body.redesign-stage52 select,
+html[data-color-theme="light"] body.redesign-stage52 textarea{
+  background:#ffffff!important;border:1px solid #d7dee9!important;color:#1b2334!important;
+}
+html[data-color-theme="light"] body.redesign-stage52 input::placeholder,
+html[data-color-theme="light"] body.redesign-stage52 textarea::placeholder{color:#93a1b5!important;}
+html[data-color-theme="light"] body.redesign-stage52 input:focus,
+html[data-color-theme="light"] body.redesign-stage52 select:focus,
+html[data-color-theme="light"] body.redesign-stage52 textarea:focus{
+  border-color:#2e63e8!important;box-shadow:0 0 0 3px rgba(46,99,232,.14)!important;
+}
+html[data-color-theme="light"] body.redesign-stage52 code{
+  background:#eef2f8!important;border:1px solid #dde4ee!important;color:#24406b!important;
+}
+html[data-color-theme="light"] body.redesign-stage52 pre{
+  background:#f6f8fb!important;border:1px solid #e2e7ef!important;color:#1b2334!important;
+}
+html[data-color-theme="light"] body.redesign-stage52 th{color:#3a465c!important;}
+html[data-color-theme="light"] body.redesign-stage52 td,
+html[data-color-theme="light"] body.redesign-stage52 th{border-color:#e9edf4!important;}
+html[data-color-theme="light"] body.redesign-stage52 .btn-main{
+  background:#2e63e8!important;border-color:#2e63e8!important;color:#ffffff!important;box-shadow:none!important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .btn-main:hover{background:#2452c8!important;border-color:#2452c8!important;}
+html[data-color-theme="light"] body.redesign-stage52 .btn-secondary,
+html[data-color-theme="light"] body.redesign-stage52 .link-btn.secondary{
+  background:#ffffff!important;border:1px solid #cfd8e5!important;color:#2a3648!important;box-shadow:none!important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .btn-secondary:hover,
+html[data-color-theme="light"] body.redesign-stage52 .link-btn.secondary:hover{background:#f3f6fb!important;color:#1b2334!important;}
+html[data-color-theme="light"] body.redesign-stage52 .btn-danger{
+  background:#fdecec!important;border:1px solid #f3b9b9!important;color:#b42323!important;box-shadow:none!important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .btn-danger:hover{background:#fbdddd!important;}
+html[data-color-theme="light"] body.redesign-stage52 .count-chip{
+  background:#eef2f8!important;border:1px solid #dde4ee!important;color:#3a465c!important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .mobile-shellbar{
+  background:#ffffff!important;border-bottom:1px solid #e2e7ef!important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .mobile-shell-title strong{color:#1b2334!important;}
+html[data-color-theme="light"] body.redesign-stage52 .mobile-shell-title span{color:#5d6b82!important;}
+html[data-color-theme="light"] body.redesign-stage52 .mobile-menu-toggle{
+  background:#f6f8fb!important;border:1px solid #dfe5ee!important;color:#3a465c!important;box-shadow:none!important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .mobile-bottom-nav{
+  background:rgba(255,255,255,.97)!important;border:1px solid #dfe5ee!important;
+  box-shadow:0 14px 38px rgba(16,24,40,.16)!important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .mobile-bottom-nav a{color:#5d6b82!important;}
+html[data-color-theme="light"] body.redesign-stage52 .mobile-bottom-nav a.active{
+  background:#2e63e8!important;color:#ffffff!important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .desktop-page-tabs button{
+  background:#ffffff!important;border-color:#dfe5ee!important;color:#3a465c!important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .desktop-page-tabs button.is-active{
+  background:#e8eefc!important;border-color:#c8d7f8!important;color:#2247b8!important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .mobile-dashboard-tabs button{
+  background:#ffffff!important;border-color:#dfe5ee!important;color:#3a465c!important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .mobile-dashboard-tabs button.is-active,
+html[data-color-theme="light"] body.redesign-stage52 .mobile-dashboard-tabs button[aria-selected="true"]{
+  background:#e8eefc!important;border-color:#c8d7f8!important;color:#2247b8!important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .stage11-more-card{
+  background:#ffffff!important;border:1px solid #e2e7ef!important;color:#1b2334!important;box-shadow:0 1px 2px rgba(16,24,40,.05)!important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .stage11-more-card strong{color:#1b2334!important;}
+html[data-color-theme="light"] body.redesign-stage52 .stage11-more-icon{background:#e8eefc!important;color:#2452c8!important;border-color:#c8d7f8!important;}
+html[data-color-theme="light"] body.redesign-stage52 .global-floating-save,
+html[data-color-theme="light"] body.redesign-stage52 .mobile-floating-save{
+  background:#ffffff!important;border:1px solid #c8d7f8!important;
+  box-shadow:0 14px 38px rgba(16,24,40,.18)!important;color:#1b2334!important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .modal{background:rgba(42,51,70,.45)!important;}
+html[data-color-theme="light"] body.redesign-stage52 .modal-close{
+  background:#f3f6fb!important;border-color:#dfe5ee!important;color:#3a465c!important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .modal-close:hover{background:#e9eef6!important;color:#1b2334!important;}
+html[data-color-theme="light"] .agg-toast-stack .alert{
+  background:#ffffff!important;border-color:#dfe5ee!important;color:#1b2334!important;
+  box-shadow:0 14px 38px rgba(16,24,40,.16)!important;
+}
+html[data-color-theme="light"] .agg-toast-stack .alert .agg-toast-close{color:#5d6b82;}
+html[data-color-theme="light"] .agg-toast-stack .alert .agg-toast-close:hover{color:#1b2334;background:#eef2f8;}
+html[data-color-theme="light"] body.redesign-stage52 .agg-pulse-item{background:#f6f8fb;border-color:#e2e7ef;}
+html[data-color-theme="light"] body.redesign-stage52 .agg-pulse-item[data-state="offline"]{background:#fdf1f1;border-color:#f3c5c5;}
+html[data-color-theme="light"] body.redesign-stage52 .agg-pulse-flag{background:#eef2f8;border-color:#dde4ee;color:#3a465c;}
+html[data-color-theme="light"] body.redesign-stage52 .agg-pulse-name{color:#1b2334;}
+html[data-color-theme="light"] body.redesign-stage52 .agg-pulse-ms{color:#5d6b82;}
+html[data-color-theme="light"] body.redesign-stage52 .agg-chart-wrap{background:#f8fafd;border-color:#e2e7ef;}
+html[data-color-theme="light"] body.redesign-stage52 .agg-chart-wrap .agg-gline{stroke:#e5eaf2;}
+html[data-color-theme="light"] body.redesign-stage52 .agg-chart-wrap .agg-area{fill:rgba(46,99,232,.12);}
+html[data-color-theme="light"] body.redesign-stage52 .agg-chart-wrap .agg-line{stroke:#2e63e8;}
+html[data-color-theme="light"] body.redesign-stage52 .agg-chart-wrap .agg-dot{fill:#2e63e8;}
+html[data-color-theme="light"] body.redesign-stage52 .agg-chart-wrap .agg-ax{fill:#7c8aa0;}
+
+/* ============ 9. Country flags on Windows (stage89) ============
+   Windows deliberately ships no country-flag glyphs, so emoji flags fall back
+   to two letters. This bundled Twemoji subset is limited by unicode-range to
+   regional-indicator codepoints, so it only affects flags and nothing else. */
+@font-face{
+  font-family:"Twemoji Country Flags";
+  unicode-range:U+1F1E6-1F1FF,U+1F3F4,U+E0062-E007F;
+  src:url("/fonts/TwemojiCountryFlags.woff2") format("woff2");
+  font-display:swap;
+}
+html body{font-family:"Twemoji Country Flags",Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;}
+body .flag-badge,
+body .node-flag,
+body .flag-badge.emoji-fallback,
+body .node-flag.emoji-fallback,
+body .client-quick-node-flag,
+body .agg-pulse-flag-img{
+  font-family:"Twemoji Country Flags","Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif!important;
+}
+
+/* ============ 10. Mobile shellbar is a row, not a stack (stage89) ============
+   It was display:block, so the theme button fell out of the bar and floated
+   over the page content. */
+@media (max-width:860px){
+  body.redesign-stage52 .mobile-shellbar{
+    display:flex!important;align-items:center!important;gap:10px!important;
+    padding:12px 12px calc(12px)!important;
+  }
+  body.redesign-stage52 .mobile-shellbar .mobile-shell-title{min-width:0!important;flex:1 1 auto!important;}
+  body.redesign-stage52 .mobile-shellbar .mobile-shell-title strong{display:block!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important;}
+  body.redesign-stage52 .mobile-shellbar .mobile-shell-title span{display:block!important;font-size:11.5px!important;opacity:.75!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important;}
+  body.redesign-stage52 .mobile-shellbar .theme-toggle-mobile{
+    position:static!important;flex:0 0 auto!important;margin:0 0 0 auto!important;
+    width:38px!important;height:38px!important;border-radius:12px!important;
+  }
+  body.redesign-stage52 .mobile-menu-toggle{flex:0 0 auto!important;}
+}
+
+/* ============ 11. Mobile accordion for every theme (stage89) ============
+   The footer script collapses long cards on any theme, but the original styling
+   only existed for theme-mobile_lite. Without it the sections rendered as bare
+   unstyled blocks with collapsed widths. */
+@media (max-width:860px){
+  body.redesign-stage52 .card.mobile-collapsible{padding:10px!important;}
+  body.redesign-stage52 .mobile-collapse-toggle{
+    display:flex!important;align-items:center!important;gap:10px!important;
+    width:100%!important;min-height:56px!important;
+    padding:12px 14px!important;margin:0!important;
+    border-radius:14px!important;text-align:left!important;
+    background:linear-gradient(180deg,rgba(255,255,255,.055),rgba(255,255,255,.025))!important;
+    border:1px solid rgba(148,163,184,.20)!important;
+    color:#eef3fa!important;box-shadow:none!important;cursor:pointer!important;
+  }
+  body.redesign-stage52 .mobile-collapse-toggle::before{
+    content:"";flex:0 0 auto;width:3px;height:22px;border-radius:99px;
+    background:linear-gradient(180deg,#6fa0ff,#2e63e8);opacity:.85;
+  }
+  body.redesign-stage52 .mobile-collapse-title{
+    flex:1 1 auto!important;min-width:0!important;
+    font-size:14.5px!important;font-weight:700!important;line-height:1.25!important;
+    white-space:normal!important;word-break:normal!important;
+  }
+  body.redesign-stage52 .mobile-collapse-action{
+    flex:0 0 auto!important;font-size:11.5px!important;font-weight:600!important;
+    padding:5px 10px!important;border-radius:999px!important;
+    background:rgba(59,130,246,.18)!important;border:1px solid rgba(96,165,250,.34)!important;
+    color:#b9cdf8!important;
+  }
+  body.redesign-stage52 .mobile-collapsible:not(.is-collapsed) > .mobile-collapse-toggle{
+    border-color:rgba(96,165,250,.45)!important;
+    background:linear-gradient(180deg,rgba(59,130,246,.16),rgba(59,130,246,.07))!important;
+  }
+  body.redesign-stage52 .mobile-collapse-content[hidden],
+  body.redesign-stage52 .mobile-collapsible.is-collapsed > .mobile-collapse-content{display:none!important;}
+  body.redesign-stage52 .mobile-collapsible:not(.is-collapsed) > .mobile-collapse-content{
+    display:block!important;width:100%!important;min-width:0!important;
+    padding:12px 2px 2px!important;
+  }
+  body.redesign-stage52 .mobile-original-title-hidden{display:none!important;}
+}
+
+/* ============ 12. Settings forms must not collapse on phones (stage89) ============
+   .happ-control-layout kept a fixed 300px help column, which squeezed the form
+   column down to a sliver and wrapped labels one word per line. */
+@media (max-width:860px){
+  body.redesign-stage52 .happ-control-layout{display:block!important;}
+  body.redesign-stage52 .happ-control-main{width:auto!important;min-width:0!important;}
+  body.redesign-stage52 .happ-control-grid,
+  body.redesign-stage52 .settings-grid,
+  body.redesign-stage52 .form-grid{
+    display:grid!important;grid-template-columns:minmax(0,1fr)!important;gap:10px!important;
+  }
+  body.redesign-stage52 .happ-control-grid > .field,
+  body.redesign-stage52 .happ-control-grid > .switch-row,
+  body.redesign-stage52 .form-grid > .field{width:auto!important;min-width:0!important;}
+  body.redesign-stage52 .field label{white-space:normal!important;word-break:normal!important;overflow-wrap:break-word!important;}
+  body.redesign-stage52 .field input,
+  body.redesign-stage52 .field select,
+  body.redesign-stage52 .field textarea{width:100%!important;min-width:0!important;box-sizing:border-box!important;}
+  body.redesign-stage52 .happ-help-panel{
+    position:static!important;max-width:none!important;width:auto!important;margin:10px 0 0!important;
+  }
+  body.redesign-stage52 .main{overflow-x:hidden!important;}
+  body.redesign-stage52 .card{min-width:0!important;}
+}
+
+/* light theme variants for the accordion */
+html[data-color-theme="light"] body.redesign-stage52 .mobile-collapse-toggle{
+  background:#ffffff!important;border-color:#e2e7ef!important;color:#1b2334!important;
+  box-shadow:0 1px 2px rgba(16,24,40,.05)!important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .mobile-collapse-action{
+  background:#e8eefc!important;border-color:#c8d7f8!important;color:#2247b8!important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .mobile-collapsible:not(.is-collapsed) > .mobile-collapse-toggle{
+  background:#f2f6fd!important;border-color:#c8d7f8!important;
+}

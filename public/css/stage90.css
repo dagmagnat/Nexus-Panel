@@ -1,0 +1,511 @@
+/* Stage90 — dedicated UI override layer.
+ *
+ * Put new, narrowly scoped visual changes here first.
+ * Once a component stabilizes, move it into a named component/page stylesheet.
+ * Runtime templates live in views/. Legacy duplicate EJS/CSS files were removed from the repository root.
+ */
+
+:root {
+  /* New design tokens may be introduced here without changing the legacy theme files. */
+}
+
+/* =====================================================================
+   Stage90 — Light theme polish (v2)
+   Goals:
+     - Lighter, cleaner background tones (less grey, more airy white).
+     - Crisper text — kill the soft "geometricPrecision" blur.
+     - Sharper, more saturated accent colours.
+     - Tighter borders + shadows so cards read as defined, not washed out.
+     - Remove backdrop blur that muddied modals.
+   Scope: only html[data-color-theme="light"]. The dark theme is untouched.
+   Loads last, so these win over stage87/redesign by source order.
+   ===================================================================== */
+
+/* ---- 1. Text crispness (the "razmytie" fix) --------------------------
+   The base layer forces text-rendering:geometricPrecision, which disables
+   hinting and makes UI text look soft/thin. Restore legible, crisp text. */
+html[data-color-theme="light"] body.redesign-stage52,
+html[data-color-theme="light"] body.redesign-stage52 * {
+  text-rendering: optimizeLegibility !important;
+  -webkit-font-smoothing: auto !important;
+  -moz-osx-font-smoothing: auto !important;
+}
+
+/* ---- 2. Lighter, cleaner page background ----------------------------- */
+html[data-color-theme="light"] {
+  background: #f6f9ff !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 {
+  --ds-bg:#f6f9ff; --ds-bg-2:#fbfcff; --ds-bg-3:#ffffff;
+  --ds-surface:#ffffff; --ds-surface-2:#ffffff; --ds-surface-3:#f4f7fd;
+  --ds-line:#dbe3f0; --ds-line-2:rgba(37,99,235,.45);
+  --ds-text:#0f172a; --ds-soft:#293548; --ds-muted:#4f5d73;
+  --ds-blue:#2563eb; --ds-blue-2:#1d4ed8; --ds-blue-soft:rgba(37,99,235,.10);
+  --ds-shadow:0 1px 2px rgba(15,23,42,.06),0 3px 8px rgba(15,23,42,.05);
+  background:
+    radial-gradient(1200px 480px at 100% -10%, rgba(37,99,235,.06), transparent 60%),
+    linear-gradient(180deg, #fbfcff 0%, #f4f8ff 100%) !important;
+  color: #0f172a !important;
+}
+
+/* ---- 3. Text colours: darker = sharper ------------------------------ */
+html[data-color-theme="light"] body.redesign-stage52 .brand-text strong,
+html[data-color-theme="light"] body.redesign-stage52 .sidebar-user-meta strong,
+html[data-color-theme="light"] body.redesign-stage52 .page-intro h1,
+html[data-color-theme="light"] body.redesign-stage52 .main h1,
+html[data-color-theme="light"] body.redesign-stage52 .card h2,
+html[data-color-theme="light"] body.redesign-stage52 .card h3,
+html[data-color-theme="light"] body.redesign-stage52 .section-title-row h2,
+html[data-color-theme="light"] body.redesign-stage52 .section-title-row h3,
+html[data-color-theme="light"] body.redesign-stage52 .stats-number,
+html[data-color-theme="light"] body.redesign-stage52 .agg-chart-total,
+html[data-color-theme="light"] body.redesign-stage52 .mobile-shell-title strong {
+  color: #0b1220 !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .muted,
+html[data-color-theme="light"] body.redesign-stage52 .hint,
+html[data-color-theme="light"] body.redesign-stage52 small,
+html[data-color-theme="light"] body.redesign-stage52 .subtitle,
+html[data-color-theme="light"] body.redesign-stage52 .stats-label {
+  color: #4f5d73 !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 label {
+  color: #24314a !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 a { color: #1d4ed8 !important; }
+html[data-color-theme="light"] body.redesign-stage52 a:hover { color: #1536a8 !important; }
+
+/* ---- 4. Cards & surfaces: crisp edges, tighter shadows -------------- */
+html[data-color-theme="light"] body.redesign-stage52 .card,
+html[data-color-theme="light"] body.redesign-stage52 .table-wrap,
+html[data-color-theme="light"] body.redesign-stage52 .modal-card,
+html[data-color-theme="light"] body.redesign-stage52 .stats-card,
+html[data-color-theme="light"] body.redesign-stage52 .kv-item,
+html[data-color-theme="light"] body.redesign-stage52 .nodes-list-panel,
+html[data-color-theme="light"] body.redesign-stage52 .nodes-detail-panel,
+html[data-color-theme="light"] body.redesign-stage52 .node-detail-section,
+html[data-color-theme="light"] body.redesign-stage52 .node-detail-kv,
+html[data-color-theme="light"] body.redesign-stage52 .diagnostic-card,
+html[data-color-theme="light"] body.redesign-stage52 .public-card,
+html[data-color-theme="light"] body.redesign-stage52 .geodata-catalog-card,
+html[data-color-theme="light"] body.redesign-stage52 .settings-panel,
+html[data-color-theme="light"] body.redesign-stage52 .stage11-more-card,
+html[data-color-theme="light"] body.redesign-stage52 .happ-control-card {
+  background: #ffffff !important;
+  border: 1px solid #e2e8f2 !important;
+  color: #0f172a !important;
+  box-shadow: 0 1px 2px rgba(15,23,42,.05), 0 4px 12px rgba(15,23,42,.045) !important;
+}
+
+/* Sidebar — clean white with a defined hairline edge */
+html[data-color-theme="light"] body.redesign-stage52 .sidebar {
+  background: #ffffff !important;
+  border-right: 1px solid #e2e8f2 !important;
+  box-shadow: 1px 0 0 rgba(15,23,42,.02) !important;
+}
+
+/* ---- 5. Navigation & active states: crisper accent ----------------- */
+html[data-color-theme="light"] body.redesign-stage52 .side-nav a,
+html[data-color-theme="light"] body.redesign-stage52 .side-nav button {
+  color: #33415a !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .side-nav a:hover {
+  background: #eef3fc !important; border-color: #dbe3f0 !important; color: #0f172a !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .side-nav a.active {
+  background: #e6efff !important; border-color: #bcd3fb !important; color: #1747c4 !important;
+  box-shadow: inset 3px 0 0 #2563eb !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .brand-shield {
+  background: #e6efff !important; border-color: #bcd3fb !important; color: #1d4ed8 !important;
+}
+
+/* ---- 6. Buttons: solid, saturated, crisp --------------------------- */
+html[data-color-theme="light"] body.redesign-stage52 .btn-main {
+  background: #2563eb !important; border-color: #2563eb !important; color: #fff !important;
+  box-shadow: 0 1px 2px rgba(37,99,235,.28) !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .btn-main:hover {
+  background: #1d4ed8 !important; border-color: #1d4ed8 !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .btn-secondary,
+html[data-color-theme="light"] body.redesign-stage52 button.secondary,
+html[data-color-theme="light"] body.redesign-stage52 .link-btn.secondary {
+  background: #ffffff !important; border: 1px solid #cdd8ea !important; color: #24314a !important;
+  box-shadow: 0 1px 1px rgba(15,23,42,.04) !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .btn-secondary:hover,
+html[data-color-theme="light"] body.redesign-stage52 button.secondary:hover,
+html[data-color-theme="light"] body.redesign-stage52 .link-btn.secondary:hover {
+  background: #eef3fc !important; color: #0f172a !important; border-color: #a9c4f6 !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .btn-danger {
+  background: #fef2f2 !important; border: 1px solid #f3b4b4 !important; color: #c11d1d !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .btn-danger:hover { background: #fde3e3 !important; }
+
+/* Protocol / page tabs — cleaner active pill */
+html[data-color-theme="light"] body.redesign-stage52 .client-protocol-tabs a.is-active {
+  background: linear-gradient(180deg,#2f83f5,#1d6fe0) !important; color:#fff !important; border-color:#1d6fe0 !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .desktop-page-tabs button.is-active,
+html[data-color-theme="light"] body.redesign-stage52 .mobile-client-tabs button.is-active,
+html[data-color-theme="light"] body.redesign-stage52 .mobile-dashboard-tabs button.is-active {
+  background: #e6efff !important; border-color: #bcd3fb !important; color: #1747c4 !important;
+}
+
+/* ---- 7. Tables & rows: cleaner separation -------------------------- */
+html[data-color-theme="light"] body.redesign-stage52 thead th {
+  background: #f2f6fd !important; color: #435066 !important; border-color: #e6ebf3 !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 td,
+html[data-color-theme="light"] body.redesign-stage52 th { border-color: #eef2f8 !important; }
+html[data-color-theme="light"] body.redesign-stage52 tbody tr,
+html[data-color-theme="light"] body.redesign-stage52 .desktop-client-tile,
+html[data-color-theme="light"] body.redesign-stage52 .mobile-client-card,
+html[data-color-theme="light"] body.redesign-stage52 .dashboard-client-card,
+html[data-color-theme="light"] body.redesign-stage52 .vpn-panel-client-card,
+html[data-color-theme="light"] body.redesign-stage52 .node-item {
+  background: #ffffff !important; border-color: #e6ebf3 !important; color: #0f172a !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 tbody tr:hover { background: #f6f9ff !important; }
+
+/* ---- 8. Inputs: defined, crisp focus ------------------------------- */
+html[data-color-theme="light"] body.redesign-stage52 input:not([type="checkbox"]):not([type="radio"]),
+html[data-color-theme="light"] body.redesign-stage52 select,
+html[data-color-theme="light"] body.redesign-stage52 textarea {
+  background: #ffffff !important; border: 1px solid #cfdaea !important; color: #0f172a !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 input::placeholder,
+html[data-color-theme="light"] body.redesign-stage52 textarea::placeholder { color: #8a97ab !important; }
+html[data-color-theme="light"] body.redesign-stage52 input:focus,
+html[data-color-theme="light"] body.redesign-stage52 select:focus,
+html[data-color-theme="light"] body.redesign-stage52 textarea:focus {
+  border-color: #2563eb !important; box-shadow: 0 0 0 3px rgba(37,99,235,.16) !important;
+}
+
+/* ---- 9. Remove modal blur (a big source of the "mutnosti") --------- */
+html[data-color-theme="light"] body.redesign-stage52 .modal {
+  background: rgba(15,23,42,.42) !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+/* ---- 10. Misc surfaces: code, chips, toolbars ---------------------- */
+html[data-color-theme="light"] body.redesign-stage52 code {
+  background: #eef3fb !important; border: 1px solid #dbe3f0 !important; color: #1e3a6b !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 pre {
+  background: #f4f7fd !important; border: 1px solid #e2e8f2 !important; color: #0f172a !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .count-chip {
+  background: #eef3fb !important; border: 1px solid #dbe3f0 !important; color: #435066 !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .client-protocol-tabs,
+html[data-color-theme="light"] body.redesign-stage52 .client-directory-toolbar,
+html[data-color-theme="light"] body.redesign-stage52 .bulk-selection-panel,
+html[data-color-theme="light"] body.redesign-stage52 .dashboard-inline-search,
+html[data-color-theme="light"] body.redesign-stage52 .online-modal-controls {
+  background: #f4f7fd !important; border-color: #e2e8f2 !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .sidebar-user-card,
+html[data-color-theme="light"] body.redesign-stage52 .sidebar-order-button,
+html[data-color-theme="light"] body.redesign-stage52 .sidebar-logout button,
+html[data-color-theme="light"] body.redesign-stage52 .theme-toggle {
+  background: #f4f7fd !important; border-color: #dbe3f0 !important; color: #33415a !important;
+}
+
+/* ---- 11. Status pills / alerts: keep meaning, sharpen ------------- */
+html[data-color-theme="light"] body.redesign-stage52 .agg-pulse-item {
+  background: #f4f7fd !important; border-color: #e2e8f2 !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .agg-pulse-item[data-state="online"] {
+  background: #ecfdf3 !important; border-color: #bbead0 !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .agg-pulse-item[data-state="offline"] {
+  background: #fef2f2 !important; border-color: #f3c5c5 !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .agg-pulse-name { color: #0f172a !important; }
+html[data-color-theme="light"] body.redesign-stage52 .agg-chart-wrap {
+  background: #f8fbff !important; border-color: #e2e8f2 !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .agg-chart-wrap .agg-line,
+html[data-color-theme="light"] body.redesign-stage52 .agg-chart-wrap .agg-dot { stroke: #2563eb !important; fill: #2563eb !important; }
+html[data-color-theme="light"] body.redesign-stage52 .agg-chart-wrap .agg-area { fill: rgba(37,99,235,.12) !important; }
+
+/* ---- 12. Light theme: inset blocks that had no light override --------
+   (node status cells, bulk rows, toolbars, filter fields) — were grey. */
+html[data-color-theme="light"] body.redesign-stage52 .node-status-grid > div,
+html[data-color-theme="light"] body.redesign-stage52 .node-detail-kv,
+html[data-color-theme="light"] body.redesign-stage52 .node-detail-section,
+html[data-color-theme="light"] body.redesign-stage52 .nodes-filter-field,
+html[data-color-theme="light"] body.redesign-stage52 .clients-toolbar,
+html[data-color-theme="light"] body.redesign-stage52 .bulk-row,
+html[data-color-theme="light"] body.redesign-stage52 .check-card {
+  background: #f4f7fd !important;
+  border-color: #e2e8f2 !important;
+  color: #0f172a !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .node-tags span {
+  background: #eef3fb !important; border-color: #dbe3f0 !important; color: #33415a !important;
+}
+
+/* =====================================================================
+   Stage90 — Dark theme "Сланец" crispness touch-ups.
+   The bulk of the dark lightening is done at source (style/redesign/stage87);
+   this only sharpens a couple of things without re-darkening anything.
+   ===================================================================== */
+html[data-color-theme="dark"] body.redesign-stage52 {
+  --ds-text: #f0f5fc !important;
+  --ds-muted: #a9b8cc !important;
+}
+html[data-color-theme="dark"] body.redesign-stage52 thead th {
+  color: #b7c4d6 !important;
+}
+
+/* =====================================================================
+   Stage90 — Mobile dashboard cleanup ("единый стиль плиток").
+   • Stat cards -> compact 2x2 grid (was 4 huge stacked blocks).
+   • Action buttons -> one consistent 2-col tile grid, equal size,
+     only the primary action accented.
+   • Section tabs -> tidy equal 2-col tiles.
+   Scoped to the dashboard on phone widths; desktop is untouched.
+   ===================================================================== */
+@media (max-width: 860px) {
+  /* -- Stat cards: 2 x 2 compact grid -- */
+  body.redesign-stage52.page-dashboard .dashboard-grid {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr !important;
+    gap: 10px !important;
+  }
+  body.redesign-stage52.page-dashboard .dashboard-grid > * {
+    grid-column: 1 / -1 !important;   /* everything full width by default */
+    min-width: 0 !important;
+  }
+  body.redesign-stage52.page-dashboard .dashboard-grid > .stats-card {
+    grid-column: span 1 !important;   /* stat tiles: two per row */
+    min-height: 76px !important;
+    padding: 12px 14px !important;
+  }
+
+  /* -- Section tabs (Скачано / По узлам / …): equal 2-col tiles -- */
+  body.redesign-stage52.page-dashboard .desktop-page-tabs {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr !important;
+    gap: 10px !important;
+    background: transparent !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    overflow: visible !important;
+  }
+  body.redesign-stage52.page-dashboard .desktop-page-tabs button {
+    flex: none !important;
+    min-height: 60px !important;
+    border-radius: 14px !important;
+    padding: 12px !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 10px !important;
+    justify-content: flex-start !important;
+    font-size: 13px !important;
+    font-weight: 700 !important;
+    line-height: 1.2 !important;
+    text-align: left !important;
+  }
+
+  /* -- Action tiles: one consistent 2-col grid -- */
+  body.redesign-stage52.page-dashboard .dashboard-actions-card {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr !important;
+    gap: 10px !important;
+    align-items: stretch !important;
+  }
+  body.redesign-stage52.page-dashboard .dashboard-actions-card > button,
+  body.redesign-stage52.page-dashboard .dashboard-actions-card > a,
+  body.redesign-stage52.page-dashboard .dashboard-actions-card > form,
+  body.redesign-stage52.page-dashboard .dashboard-actions-card > form > button {
+    width: 100% !important;
+    margin: 0 !important;
+    min-height: 56px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    text-align: center !important;
+    border-radius: 14px !important;
+    font-size: 13.5px !important;
+    font-weight: 700 !important;
+    box-shadow: none !important;
+  }
+
+  /* Unify surface: all tiles look the same, primary gets a subtle accent */
+  html[data-color-theme="dark"] body.redesign-stage52.page-dashboard .desktop-page-tabs button,
+  html[data-color-theme="dark"] body.redesign-stage52.page-dashboard .dashboard-actions-card > button,
+  html[data-color-theme="dark"] body.redesign-stage52.page-dashboard .dashboard-actions-card > a {
+    background: rgba(255,255,255,.05) !important;
+    border: 1px solid rgba(148,163,184,.22) !important;
+    color: #eaf1fb !important;
+  }
+  html[data-color-theme="dark"] body.redesign-stage52.page-dashboard .desktop-page-tabs button.is-active,
+  html[data-color-theme="dark"] body.redesign-stage52.page-dashboard .dashboard-actions-card > .btn-main {
+    background: rgba(37,99,235,.20) !important;
+    border-color: rgba(96,165,250,.55) !important;
+    color: #eaf2ff !important;
+  }
+  html[data-color-theme="light"] body.redesign-stage52.page-dashboard .desktop-page-tabs button,
+  html[data-color-theme="light"] body.redesign-stage52.page-dashboard .dashboard-actions-card > button,
+  html[data-color-theme="light"] body.redesign-stage52.page-dashboard .dashboard-actions-card > a {
+    background: #ffffff !important;
+    border: 1px solid #e2e8f2 !important;
+    color: #24314a !important;
+  }
+  html[data-color-theme="light"] body.redesign-stage52.page-dashboard .desktop-page-tabs button.is-active,
+  html[data-color-theme="light"] body.redesign-stage52.page-dashboard .dashboard-actions-card > .btn-main {
+    background: #e6efff !important;
+    border-color: #bcd3fb !important;
+    color: #1747c4 !important;
+  }
+}
+
+/* =====================================================================
+   Stage90 — Mobile controls: bigger, clearer tap targets.
+   Fixes the cramped node-detail action row (Проверить/Изменить/Отключить)
+   and the Открыть/Скрыть toggles.
+   ===================================================================== */
+@media (max-width: 860px) {
+  /* Node detail actions: primary full-width, then two comfortable buttons */
+  body.redesign-stage52.page-nodes .node-detail-actions {
+    grid-template-columns: 1fr 1fr !important;
+    gap: 10px !important;
+    margin-top: 14px !important;
+  }
+  body.redesign-stage52.page-nodes .node-detail-actions > form:first-child {
+    grid-column: 1 / -1 !important;
+  }
+  body.redesign-stage52.page-nodes .node-detail-actions .btn-main,
+  body.redesign-stage52.page-nodes .node-detail-actions .link-btn,
+  body.redesign-stage52.page-nodes .node-detail-actions button,
+  body.redesign-stage52.page-nodes .node-detail-actions a {
+    min-height: 50px !important;
+    font-size: 14.5px !important;
+    font-weight: 700 !important;
+    border-radius: 13px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    padding: 10px 12px !important;
+    box-shadow: none !important;
+  }
+
+  /* Открыть / Скрыть toggle on collapsible cards: real button, easy to hit */
+  body.redesign-stage52 .mobile-collapse-toggle {
+    min-height: 62px !important;
+    padding: 14px 16px !important;
+  }
+  body.redesign-stage52 .mobile-collapse-action {
+    min-height: 38px !important;
+    padding: 8px 16px !important;
+    font-size: 13px !important;
+    font-weight: 700 !important;
+    border-radius: 11px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+  }
+  body.redesign-stage52 .mobile-collapse-title {
+    font-size: 15.5px !important;
+  }
+
+  /* Generic "Открыть …" secondary link-buttons inside settings sections */
+  body.redesign-stage52 .settings-panel .link-btn.secondary,
+  body.redesign-stage52 .happ-control-card .link-btn.secondary {
+    min-height: 46px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    font-size: 14px !important;
+    border-radius: 12px !important;
+  }
+}
+
+/* =====================================================================
+   Stage90 — Light theme: eliminate EVERY remaining dark/slate island
+   (nodes selected row & footer, VPN tabs/form/requirements/os-info,
+   clients bulk panels, misc panels). Light theme = white/soft only.
+   ===================================================================== */
+
+/* Container panels & cards -> white (attribute catch is safe: all are cards) */
+html[data-color-theme="light"] body.redesign-stage52 [class*="-panel"],
+html[data-color-theme="light"] body.redesign-stage52 [class*="-shell"],
+html[data-color-theme="light"] body.redesign-stage52 [class*="-list-card"],
+html[data-color-theme="light"] body.redesign-stage52 [class*="-create-card"],
+html[data-color-theme="light"] body.redesign-stage52 [class*="-detail-panel"],
+html[data-color-theme="light"] body.redesign-stage52 .vpn-item,
+html[data-color-theme="light"] body.redesign-stage52 .vpn-safety-note,
+html[data-color-theme="light"] body.redesign-stage52 .diagnostic-card,
+html[data-color-theme="light"] body.redesign-stage52 .redirect-card {
+  background: #ffffff !important;
+  border-color: #e2e8f2 !important;
+  color: #0f172a !important;
+}
+
+/* Insets, toolbars, key/value blocks, code dumps -> light inset */
+html[data-color-theme="light"] body.redesign-stage52 .bulk-selection-panel,
+html[data-color-theme="light"] body.redesign-stage52 .bulk-row,
+html[data-color-theme="light"] body.redesign-stage52 .compact-bulk-row,
+html[data-color-theme="light"] body.redesign-stage52 .nodes-modern-toolbar,
+html[data-color-theme="light"] body.redesign-stage52 .nodes-filter-field,
+html[data-color-theme="light"] body.redesign-stage52 .nodes-filter-group,
+html[data-color-theme="light"] body.redesign-stage52 .node-detail-kv,
+html[data-color-theme="light"] body.redesign-stage52 .node-detail-section,
+html[data-color-theme="light"] body.redesign-stage52 .node-status-grid > div,
+html[data-color-theme="light"] body.redesign-stage52 .vpn-kv,
+html[data-color-theme="light"] body.redesign-stage52 .vpn-os-info,
+html[data-color-theme="light"] body.redesign-stage52 .check-card {
+  background: #f4f7fd !important;
+  border-color: #e2e8f2 !important;
+  color: #0f172a !important;
+}
+
+/* Node list: selected row + row surface + footer */
+html[data-color-theme="light"] body.redesign-stage52 .node-list-row {
+  background: #ffffff !important;
+  border-color: #e6ebf3 !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .node-list-row.is-selected {
+  background: #e9f1ff !important;
+  border-color: #bcd3fb !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .node-list-row.is-selected .node-row-select {
+  background: transparent !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .node-row-select {
+  color: #0f172a !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .node-row-select:hover {
+  background: #eef3fc !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .nodes-list-footer {
+  background: transparent !important;
+  color: #4f5d73 !important;
+  border-top-color: #e6ebf3 !important;
+}
+
+/* VPN tabs (VPS / Сервисы / Клиенты / Задания) */
+html[data-color-theme="light"] body.redesign-stage52 .vpn-tabs {
+  background: transparent !important;
+  border-color: transparent !important;
+  padding: 0 !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .vpn-tabs a {
+  background: #ffffff !important;
+  border-color: #e2e8f2 !important;
+  color: #24314a !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .vpn-tabs a.active {
+  background: #e6efff !important;
+  border-color: #bcd3fb !important;
+  color: #1747c4 !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .vpn-os-info {
+  color: #1e3a5f !important;
+}

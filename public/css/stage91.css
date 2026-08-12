@@ -1,0 +1,408 @@
+/* Stage91 — 3x-ui inspired light theme.
+ *
+ * Keeps the Aggregator navigation and functionality, while making the light
+ * palette visually consistent with the current 3x-ui panel: neutral grey page,
+ * full-height white sidebar, Ant Design blue accent, flat white cards and
+ * compact controls. Dark mode and mobile behaviour remain unchanged.
+ */
+
+html[data-color-theme="light"] {
+  background: #f5f5f5 !important;
+  color-scheme: light;
+}
+
+html[data-color-theme="light"] body.redesign-stage52 {
+  --ds-bg: #f5f5f5;
+  --ds-bg-2: #f5f5f5;
+  --ds-bg-3: #ffffff;
+  --ds-surface: #ffffff;
+  --ds-surface-2: #ffffff;
+  --ds-surface-3: #fafafa;
+  --ds-line: #e5e7eb;
+  --ds-line-2: rgba(22, 119, 255, .42);
+  --ds-text: #262626;
+  --ds-soft: #434343;
+  --ds-muted: #737373;
+  --ds-blue: #1677ff;
+  --ds-blue-2: #0958d9;
+  --ds-blue-soft: #e6f4ff;
+  --ds-shadow: 0 1px 2px rgba(0, 0, 0, .03);
+  background: #f5f5f5 !important;
+  color: #262626 !important;
+}
+
+html[data-color-theme="light"] body.redesign-stage52 .layout,
+html[data-color-theme="light"] body.redesign-stage52 .main,
+html[data-color-theme="light"] body.redesign-stage52 .main::before,
+html[data-color-theme="light"] body.redesign-stage52 .main::after {
+  background: #f5f5f5 !important;
+  background-image: none !important;
+}
+
+/* Typography close to Ant Design / current 3x-ui. */
+html[data-color-theme="light"] body.redesign-stage52,
+html[data-color-theme="light"] body.redesign-stage52 button,
+html[data-color-theme="light"] body.redesign-stage52 input,
+html[data-color-theme="light"] body.redesign-stage52 select,
+html[data-color-theme="light"] body.redesign-stage52 textarea {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
+}
+
+html[data-color-theme="light"] body.redesign-stage52 h1,
+html[data-color-theme="light"] body.redesign-stage52 h2,
+html[data-color-theme="light"] body.redesign-stage52 h3,
+html[data-color-theme="light"] body.redesign-stage52 h4,
+html[data-color-theme="light"] body.redesign-stage52 .brand-text strong,
+html[data-color-theme="light"] body.redesign-stage52 .sidebar-user-meta strong {
+  color: #262626 !important;
+}
+
+html[data-color-theme="light"] body.redesign-stage52 .muted,
+html[data-color-theme="light"] body.redesign-stage52 .hint,
+html[data-color-theme="light"] body.redesign-stage52 small,
+html[data-color-theme="light"] body.redesign-stage52 .subtitle {
+  color: #737373 !important;
+}
+
+html[data-color-theme="light"] body.redesign-stage52 a {
+  color: #1677ff !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 a:hover {
+  color: #0958d9 !important;
+}
+
+/* Desktop shell: full-height white sidebar and a neutral main canvas. */
+@media (min-width: 901px) {
+  html[data-color-theme="light"] body.redesign-stage52 .layout {
+    grid-template-columns: 204px minmax(0, 1fr) !important;
+    min-height: 100vh !important;
+  }
+
+  html[data-color-theme="light"] body.redesign-stage52 .sidebar {
+    position: sticky !important;
+    top: 0 !important;
+    height: 100vh !important;
+    padding: 14px 4px 16px !important;
+    gap: 10px !important;
+    background: #ffffff !important;
+    border: 0 !important;
+    border-right: 1px solid #e5e7eb !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+
+  html[data-color-theme="light"] body.redesign-stage52 .main {
+    padding: 24px 24px 32px !important;
+  }
+
+  html[data-color-theme="light"] body.redesign-stage52 .desktop-modern-brand {
+    min-height: 50px !important;
+    margin: 0 !important;
+    padding: 4px 46px 12px 16px !important;
+    border-bottom: 1px solid #f0f0f0 !important;
+  }
+
+  html[data-color-theme="light"] body.redesign-stage52 .desktop-modern-brand > .theme-toggle {
+    right: 10px !important;
+    top: 5px !important;
+  }
+
+  html[data-color-theme="light"] body.redesign-stage52 .brand-shield {
+    width: 32px !important;
+    height: 32px !important;
+    border-radius: 8px !important;
+    background: #e6f4ff !important;
+    border: 1px solid #bae0ff !important;
+    color: #1677ff !important;
+    box-shadow: none !important;
+  }
+
+  html[data-color-theme="light"] body.redesign-stage52 .brand-text strong {
+    font-size: 14px !important;
+    font-weight: 650 !important;
+    letter-spacing: -.01em !important;
+  }
+
+  html[data-color-theme="light"] body.redesign-stage52 .side-nav {
+    gap: 3px !important;
+    padding: 0 !important;
+  }
+
+  html[data-color-theme="light"] body.redesign-stage52 .side-nav a,
+  html[data-color-theme="light"] body.redesign-stage52 .side-nav button {
+    min-height: 42px !important;
+    margin: 0 !important;
+    padding: 9px 16px !important;
+    gap: 10px !important;
+    border: 0 !important;
+    border-radius: 8px !important;
+    background: transparent !important;
+    color: #262626 !important;
+    font-size: 14px !important;
+    font-weight: 450 !important;
+    box-shadow: none !important;
+  }
+
+  html[data-color-theme="light"] body.redesign-stage52 .side-nav a:hover {
+    background: #f5f5f5 !important;
+    color: #1677ff !important;
+  }
+
+  html[data-color-theme="light"] body.redesign-stage52 .side-nav a.active {
+    background: #dbeafe !important;
+    color: #1677ff !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    font-weight: 550 !important;
+  }
+
+  html[data-color-theme="light"] body.redesign-stage52 .side-nav a.active .nav-icon,
+  html[data-color-theme="light"] body.redesign-stage52 .side-nav a:hover .nav-icon {
+    color: #1677ff !important;
+  }
+
+  html[data-color-theme="light"] body.redesign-stage52 .side-nav .nav-icon {
+    color: #595959 !important;
+  }
+
+  html[data-color-theme="light"] body.redesign-stage52 .sidebar-order-button,
+  html[data-color-theme="light"] body.redesign-stage52 .sidebar-user-card,
+  html[data-color-theme="light"] body.redesign-stage52 .sidebar-logout button,
+  html[data-color-theme="light"] body.redesign-stage52 .theme-toggle {
+    background: #ffffff !important;
+    border: 1px solid #d9d9d9 !important;
+    border-radius: 8px !important;
+    color: #434343 !important;
+    box-shadow: none !important;
+  }
+
+  html[data-color-theme="light"] body.redesign-stage52 .sidebar-order-button,
+  html[data-color-theme="light"] body.redesign-stage52 .sidebar-user-card,
+  html[data-color-theme="light"] body.redesign-stage52 .sidebar-logout {
+    margin-left: 8px !important;
+    margin-right: 8px !important;
+  }
+
+  html[data-color-theme="light"] body.redesign-stage52 .sidebar-order-button:hover,
+  html[data-color-theme="light"] body.redesign-stage52 .sidebar-logout button:hover,
+  html[data-color-theme="light"] body.redesign-stage52 .theme-toggle:hover {
+    background: #f5f5f5 !important;
+    border-color: #bfbfbf !important;
+    color: #1677ff !important;
+  }
+}
+
+/* Flat white 3x-ui-like surfaces. */
+html[data-color-theme="light"] body.redesign-stage52 .card,
+html[data-color-theme="light"] body.redesign-stage52 .table-wrap,
+html[data-color-theme="light"] body.redesign-stage52 .modal-card,
+html[data-color-theme="light"] body.redesign-stage52 .stats-card,
+html[data-color-theme="light"] body.redesign-stage52 .nodes-list-panel,
+html[data-color-theme="light"] body.redesign-stage52 .nodes-detail-panel,
+html[data-color-theme="light"] body.redesign-stage52 .diagnostic-card,
+html[data-color-theme="light"] body.redesign-stage52 .public-card,
+html[data-color-theme="light"] body.redesign-stage52 .settings-panel,
+html[data-color-theme="light"] body.redesign-stage52 .happ-control-card,
+html[data-color-theme="light"] body.redesign-stage52 [class*="-panel"],
+html[data-color-theme="light"] body.redesign-stage52 [class*="-card"] {
+  background: #ffffff !important;
+  border: 1px solid #e5e7eb !important;
+  border-radius: 8px !important;
+  color: #262626 !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .025) !important;
+}
+
+html[data-color-theme="light"] body.redesign-stage52 .card {
+  padding: 18px !important;
+}
+
+/* Page tabs: compact, simple and blue like Ant Design controls. */
+html[data-color-theme="light"] body.redesign-stage52 .desktop-page-tabs {
+  gap: 8px !important;
+  margin-bottom: 12px !important;
+  padding: 0 !important;
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .desktop-page-tabs button {
+  min-height: 34px !important;
+  padding: 6px 12px !important;
+  background: #ffffff !important;
+  border: 1px solid #d9d9d9 !important;
+  border-radius: 6px !important;
+  color: #434343 !important;
+  box-shadow: none !important;
+  font-weight: 500 !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .desktop-page-tabs button:hover {
+  border-color: #69b1ff !important;
+  color: #1677ff !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .desktop-page-tabs button.is-active {
+  background: #e6f4ff !important;
+  border-color: #91caff !important;
+  color: #1677ff !important;
+  box-shadow: none !important;
+}
+
+/* Inputs and buttons. */
+html[data-color-theme="light"] body.redesign-stage52 input:not([type="checkbox"]):not([type="radio"]),
+html[data-color-theme="light"] body.redesign-stage52 select,
+html[data-color-theme="light"] body.redesign-stage52 textarea {
+  background: #ffffff !important;
+  border: 1px solid #d9d9d9 !important;
+  border-radius: 6px !important;
+  color: #262626 !important;
+  box-shadow: none !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 input:focus,
+html[data-color-theme="light"] body.redesign-stage52 select:focus,
+html[data-color-theme="light"] body.redesign-stage52 textarea:focus {
+  border-color: #4096ff !important;
+  box-shadow: 0 0 0 2px rgba(5, 145, 255, .10) !important;
+}
+
+html[data-color-theme="light"] body.redesign-stage52 .btn-main,
+html[data-color-theme="light"] body.redesign-stage52 button.primary {
+  background: #1677ff !important;
+  border-color: #1677ff !important;
+  border-radius: 6px !important;
+  color: #ffffff !important;
+  box-shadow: 0 2px 0 rgba(5, 145, 255, .10) !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .btn-main:hover,
+html[data-color-theme="light"] body.redesign-stage52 button.primary:hover {
+  background: #4096ff !important;
+  border-color: #4096ff !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .btn-secondary,
+html[data-color-theme="light"] body.redesign-stage52 button.secondary,
+html[data-color-theme="light"] body.redesign-stage52 .link-btn.secondary {
+  background: #ffffff !important;
+  border: 1px solid #d9d9d9 !important;
+  border-radius: 6px !important;
+  color: #262626 !important;
+  box-shadow: none !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .btn-secondary:hover,
+html[data-color-theme="light"] body.redesign-stage52 button.secondary:hover,
+html[data-color-theme="light"] body.redesign-stage52 .link-btn.secondary:hover {
+  background: #ffffff !important;
+  border-color: #4096ff !important;
+  color: #1677ff !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .btn-danger,
+html[data-color-theme="light"] body.redesign-stage52 button.danger {
+  background: #ff4d4f !important;
+  border-color: #ff4d4f !important;
+  border-radius: 6px !important;
+  color: #ffffff !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .btn-danger:hover,
+html[data-color-theme="light"] body.redesign-stage52 button.danger:hover {
+  background: #ff7875 !important;
+  border-color: #ff7875 !important;
+}
+
+/* Tables and list rows. */
+html[data-color-theme="light"] body.redesign-stage52 thead th,
+html[data-color-theme="light"] body.redesign-stage52 .nodes-list-header {
+  background: #fafafa !important;
+  color: #595959 !important;
+  border-color: #f0f0f0 !important;
+  font-weight: 600 !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 td,
+html[data-color-theme="light"] body.redesign-stage52 th {
+  border-color: #f0f0f0 !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 tbody tr:hover {
+  background: #fafafa !important;
+}
+
+/* Nodes page — make the page look closer to a native 3x-ui table + details card. */
+html[data-color-theme="light"] body.redesign-stage52.page-nodes .nodes-modern-card {
+  padding: 16px !important;
+}
+html[data-color-theme="light"] body.redesign-stage52.page-nodes .nodes-modern-layout {
+  gap: 16px !important;
+}
+html[data-color-theme="light"] body.redesign-stage52.page-nodes .nodes-list-panel,
+html[data-color-theme="light"] body.redesign-stage52.page-nodes .nodes-detail-panel {
+  padding: 14px !important;
+  border-radius: 8px !important;
+  box-shadow: none !important;
+}
+html[data-color-theme="light"] body.redesign-stage52.page-nodes .nodes-modern-toolbar,
+html[data-color-theme="light"] body.redesign-stage52.page-nodes .nodes-filter-field,
+html[data-color-theme="light"] body.redesign-stage52.page-nodes .nodes-filter-group {
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+html[data-color-theme="light"] body.redesign-stage52.page-nodes .node-list-row {
+  background: #ffffff !important;
+  border-color: #f0f0f0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+html[data-color-theme="light"] body.redesign-stage52.page-nodes .node-list-row:hover,
+html[data-color-theme="light"] body.redesign-stage52.page-nodes .node-row-select:hover {
+  background: #fafafa !important;
+}
+html[data-color-theme="light"] body.redesign-stage52.page-nodes .node-list-row.is-selected,
+html[data-color-theme="light"] body.redesign-stage52.page-nodes .node-list-row.is-selected .node-row-select {
+  background: #e6f4ff !important;
+  border-color: #91caff !important;
+  box-shadow: none !important;
+}
+html[data-color-theme="light"] body.redesign-stage52.page-nodes .node-detail-kv,
+html[data-color-theme="light"] body.redesign-stage52.page-nodes .node-detail-section,
+html[data-color-theme="light"] body.redesign-stage52.page-nodes .node-status-grid > div,
+html[data-color-theme="light"] body.redesign-stage52 .kv-item,
+html[data-color-theme="light"] body.redesign-stage52 .bulk-row,
+html[data-color-theme="light"] body.redesign-stage52 .check-card {
+  background: #fafafa !important;
+  border: 1px solid #f0f0f0 !important;
+  border-radius: 6px !important;
+  box-shadow: none !important;
+}
+
+/* Ant Design-like status chips. */
+html[data-color-theme="light"] body.redesign-stage52 .badge.online,
+html[data-color-theme="light"] body.redesign-stage52 .badge.enabled {
+  background: #f6ffed !important;
+  border-color: #b7eb8f !important;
+  color: #389e0d !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .badge.offline,
+html[data-color-theme="light"] body.redesign-stage52 .badge.disabled {
+  background: #fff2f0 !important;
+  border-color: #ffccc7 !important;
+  color: #cf1322 !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .transport-chip,
+html[data-color-theme="light"] body.redesign-stage52 .count-chip,
+html[data-color-theme="light"] body.redesign-stage52 .node-tags span {
+  background: #f0f5ff !important;
+  border-color: #adc6ff !important;
+  color: #2f54eb !important;
+  box-shadow: none !important;
+}
+
+/* Modal overlay and mobile chrome remain clean in light mode. */
+html[data-color-theme="light"] body.redesign-stage52 .modal {
+  background: rgba(0, 0, 0, .45) !important;
+  backdrop-filter: none !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .mobile-shellbar,
+html[data-color-theme="light"] body.redesign-stage52 .mobile-bottom-nav {
+  background: #ffffff !important;
+  border-color: #e5e7eb !important;
+  box-shadow: none !important;
+}
+html[data-color-theme="light"] body.redesign-stage52 .mobile-bottom-nav a.active {
+  background: #e6f4ff !important;
+  color: #1677ff !important;
+}

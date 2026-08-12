@@ -1,0 +1,54 @@
+{
+  "name": "nexus-panel",
+  "version": "1.0.6",
+  "description": "Nexus Panel — 3x-ui and Remnawave aggregation panel with exact inbound sync, subscriptions and traffic monitoring",
+  "homepage": "https://github.com/dagmagnat/Nexus-Panel#readme",
+  "bugs": {
+    "url": "https://github.com/dagmagnat/Nexus-Panel/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dagmagnat/Nexus-Panel.git"
+  },
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "predev": "node scripts/setup-dev.js",
+    "dev": "cross-env DOTENV_CONFIG_PATH=.env.development NODE_ENV=development concurrently --kill-others --names SERVER,UI \"npm:dev:server\" \"npm:dev:ui\"",
+    "dev:server": "nodemon --config nodemon.json",
+    "dev:ui": "browser-sync start --config bs-config.cjs",
+    "check": "node --check app.js && node --check lib_crypto.js && node --check lib_vpn_manager.js && node --check public/js/security.js && node --check public/js/dev-inspector.js && node --check scripts/setup-dev.js && node --check scripts/print-panel-access-key.js && npm run check:views",
+    "check:views": "node scripts/check-views.js",
+    "test": "node --test tests/*.test.js",
+    "test:bulk-remove-node": "node --test tests/bulk-remove-node.test.js",
+    "test:panel-access": "node --test tests/panel-access-key.test.js",
+    "test:xhttp-external-proxy": "node --test tests/xhttp-external-proxy.test.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "11.10.0",
+    "bcryptjs": "^2.4.3",
+    "body-parser": "^1.20.3",
+    "connect-sqlite3": "0.9.15",
+    "dotenv": "^16.4.7",
+    "ejs": "^3.1.10",
+    "express": "^4.21.2",
+    "express-session": "^1.18.1",
+    "node-fetch": "^2.7.0",
+    "uuid": "^11.1.0",
+    "qrcode": "^1.5.4",
+    "node-telegram-bot-api": "^0.66.0",
+    "https-proxy-agent": "^7.0.5",
+    "socks-proxy-agent": "^8.0.5",
+    "ssh2": "^1.16.0"
+  },
+  "devDependencies": {
+    "browser-sync": "3.0.4",
+    "concurrently": "10.0.3",
+    "cross-env": "10.1.0",
+    "nodemon": "3.1.14"
+  },
+  "engines": {
+    "node": ">=22 <23",
+    "npm": ">=10"
+  }
+}

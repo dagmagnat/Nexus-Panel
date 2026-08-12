@@ -1,0 +1,199 @@
+<%- include('partials_header', { pageTitle: 'Диагностика', pageSubtitle: 'Health Check, узлы, клиенты и трафик', activePage: 'diagnostics' }) %>
+
+<% if (message) { %><div class="alert ok"><%= message %></div><% } %>
+<% if (error) { %><div class="alert err"><%= error %></div><% } %>
+
+<div class="desktop-page-tabs" data-page-tabs="diagnostics">
+  <button type="button" class="is-active" data-tab-target="health">🩺 Health Check</button>
+  <button type="button" data-tab-target="probe">📡 Узел и расхождения</button>
+  <button type="button" data-tab-target="suspicious">⚠️ Подозрительный трафик</button>
+  <button type="button" data-tab-target="ios">📱 iOS-safe JSON</button>
+</div>
+
+<div class="grid diagnostics-grid">
+  <section class="card span-12 tab-panel is-active" data-tab-panel="health">
+    <div class="section-title-row">
+      <div>
+        <h2>Health Check</h2>
+        <p class="muted">Быстрая проверка состояния агрегатора, узлов, клиентов и helper перенаправления.</p>
+      </div>
+      <span class="status <%= health.ok ? 'ok' : 'off' %>"><%= health.ok ? 'OK' : 'Нужна проверка' %></span>
+    </div>
+    <div class="diagnostic-cards">
+      <% health.checks.forEach(check => { %>
+        <div class="diagnostic-card <%= check.ok ? 'ok' : 'warn' %>">
+          <strong><%= check.name %></strong>
+          <span><%= check.ok ? 'OK' : 'Проверь' %></span>
+          <small><%= check.message %></small>
+        </div>
+      <% }) %>
+    </div>
+    <div class="actions">
+      <button type="button" class="secondary" onclick="runPanelCheck(this)">Запустить глубокую проверку</button>
+    </div>
+    <pre id="panelCheckResult" class="diagnostic-pre hidden"></pre>
+  </section>
+
+  <section class="card span-12 tab-panel" data-tab-panel="probe">
+    <div class="section-title-row">
+      <div>
+        <h2>Проверка узла: напрямую / через редирект</h2>
+        <p class="muted">Проверяет TCP-доступность оригинального узла, активного redirect IP и TLS/SNI. Это не заменяет полноценный VPN-тест, но быстро показывает, где ломается входная точка.</p>
+      </div>
+    </div>
+    <form method="get" action="/diagnostics" class="probe-form compact-probe-form">
+      <div class="probe-control-card">
+        <div class="field">
+          <label>Узел</label>
+          <select name="probe_node_id" required>
+            <option value="">Выбери узел</option>
+            <% (diagnosticNodes || []).forEach(node => { %>
+              <option value="<%= node.id %>" <%= Number(selectedProbeNodeId || 0) === Number(node.id) ? 'selected' : '' %>><%= countryFlagText(node.country_code, node.country_flag, node.country_name_ru || node.name) %> <%= node.country_name_ru || node.name %><%= node.label_suffix ? ' ' + node.label_suffix : '' %> · <%= node.transport_label || 'не загружено' %></option>
+            <% }) %>
+          </select>
+        </div>
+        <button type="submit" class="secondary probe-submit">Проверить</button>
+      </div>
+    </form>
+
+    <% if (nodeProbeResult) { %>
+      <div class="diagnostic-cards one-col">
+        <div class="diagnostic-card <%= nodeProbeResult.direct && nodeProbeResult.direct.ok ? 'ok' : 'warn' %>">
+          <strong>Напрямую к узлу</strong>
+          <span><%= nodeProbeResult.direct && nodeProbeResult.direct.ok ? 'OK' : 'Проблема' %></span>
+          <small><%= nodeProbeResult.direct ? ((nodeProbeResult.direct.host || '-') + ':' + (nodeProbeResult.direct.port || '-') + ' · ' + (nodeProbeResult.direct.message || '')) : 'нет данных' %></small>
+        </div>
+        <% if (nodeProbeResult.redirect) { %>
+          <div class="diagnostic-card <%= nodeProbeResult.redirect.ok ? 'ok' : 'warn' %>">
+            <strong>Через redirect IP</strong>
+            <span><%= nodeProbeResult.redirect.ok ? 'OK' : 'Проблема' %></span>
+            <small><%= (nodeProbeResult.redirect.host || '-') + ':' + (nodeProbeResult.redirect.port || '-') + ' · ' + (nodeProbeResult.redirect.message || '') %></small>
+          </div>
+        <% } %>
+        <% if (nodeProbeResult.sniCheck) { %>
+          <div class="diagnostic-card <%= nodeProbeResult.sniCheck.ok ? 'ok' : 'warn' %>">
+            <strong>TLS/SNI</strong>
+            <span><%= nodeProbeResult.sniCheck.ok ? 'OK' : 'Проблема' %></span>
+            <small><%= nodeProbeResult.sni || '-' %> · <%= nodeProbeResult.sniCheck.error || nodeProbeResult.sniCheck.message || 'проверено' %></small>
+          </div>
+        <% } %>
+      </div>
+      <% if (nodeProbeResult.warnings && nodeProbeResult.warnings.length) { %>
+        <div class="alert warn"><%= nodeProbeResult.warnings.join(' · ') %></div>
+      <% } %>
+    <% } else { %>
+      <p class="muted">Выбери узел и нажми «Проверить», чтобы увидеть доступность напрямую, через redirect и TLS/SNI.</p>
+    <% } %>
+  </section>
+
+  <section class="card span-12 tab-panel diagnostics-static-card diagnostics-discrepancy-card mobile-never-collapse" data-tab-panel="probe">
+    <div class="section-title-row">
+      <div>
+        <h2>Расхождения клиентов между агрегатором и узлами</h2>
+        <p class="muted">Агрегатор должен быть главным источником сроков, лимитов и UUID. Здесь видны клиенты, которых нет на узле, отключённые связи или несовпадение UUID.</p>
+      </div>
+    </div>
+    <span class="count-chip"><%= discrepancies.length %></span>
+    <% if (!discrepancies.length) { %>
+      <p class="muted">Критичных расхождений по локальной базе не найдено.</p>
+    <% } else { %>
+      <div class="diagnostic-table-wrap">
+        <table>
+          <thead><tr><th>Клиент</th><th>Узел</th><th>Проблема</th></tr></thead>
+          <tbody>
+          <% discrepancies.forEach(item => { %>
+            <tr><td><%= item.clientTitle || item.login || item.client_id %></td><td><%= item.nodeTitle || item.node_name || item.node_id %></td><td><%= item.message %></td></tr>
+          <% }) %>
+          </tbody>
+        </table>
+      </div>
+    <% } %>
+  </section>
+
+  <section class="card span-12 tab-panel" data-tab-panel="suspicious">
+    <div class="section-title-row">
+      <div>
+        <h2>Подозрительные клиенты по трафику</h2>
+        <p class="muted">Список клиентов с расходом выше порога. Порог настраивается в разделе TG-бот → Telegram-уведомления.</p>
+      </div>
+      <span class="count-chip"><%= suspicious.rows.filter(c => c.suspicious).length %></span>
+    </div>
+    <% if (!suspicious.rows.filter(c => c.suspicious).length) { %>
+      <p class="muted">Подозрительных клиентов не найдено.</p>
+    <% } else { %>
+      <div class="diagnostic-table-wrap">
+        <table>
+          <thead><tr><th>Клиент</th><th>Трафик</th><th>Средний расход</th><th>Узлы</th></tr></thead>
+          <tbody>
+          <% suspicious.rows.filter(c => c.suspicious).forEach(c => { %>
+            <tr><td><%= c.login || c.display_name || c.client_id %></td><td><%= c.usedText || c.totalText || c.used || "-" %></td><td><%= c.dailyText || c.thresholdText || "-" %></td><td><%= c.nodesText || c.nodes || "-" %></td></tr>
+          <% }) %>
+          </tbody>
+        </table>
+      </div>
+    <% } %>
+  </section>
+
+  <section class="card span-12 tab-panel" data-tab-panel="ios">
+    <div class="section-title-row">
+      <div>
+        <h2>iOS-safe routing / размер JSON</h2>
+        <p class="muted">Проверка JSON-подписки для iOS-клиентов. В безопасном режиме geosite:/geoip: не попадают в JSON, а RAW отдаётся как TCP.</p>
+      </div>
+      <span class="status <%= ios.risk === 'ok' ? 'ok' : 'warn' %>"><%= ios.enabled ? 'Включён' : 'Отключён' %></span>
+    </div>
+    <div class="diagnostic-cards">
+      <div class="diagnostic-card <%= ios.risk === 'ok' ? 'ok' : 'warn' %>">
+        <strong>Совместимость</strong>
+        <span><%= ios.risk === 'ok' ? 'OK' : 'Проверь' %></span>
+        <small><%= ios.riskText %></small>
+      </div>
+      <div class="diagnostic-card">
+        <strong>Routing rules</strong>
+        <span><%= ios.routingRulesCount %></span>
+        <small>domain: <%= ios.domainItems %>, ip: <%= ios.ipItems %>, размер: <%= ios.routingSizeText %></small>
+      </div>
+      <div class="diagnostic-card">
+        <strong>Очищено для iOS</strong>
+        <span><%= (ios.strippedDomains || 0) + (ios.strippedIps || 0) %></span>
+        <small>geosite/domain: <%= ios.strippedDomains || 0 %>, geoip/ip: <%= ios.strippedIps || 0 %></small>
+      </div>
+      <div class="diagnostic-card">
+        <strong>Пример JSON</strong>
+        <span><%= ios.sampleJsonSizeText %></span>
+        <small>узлов в примере: <%= ios.sampleNodes %></small>
+      </div>
+    </div>
+    <ul class="muted"><% ios.recommendations.forEach(r => { %><li><%= r %></li><% }) %></ul>
+    <% if (ios.sampleClient && ios.sampleClient.subSlug) { %>
+      <div class="actions">
+        <a class="link-btn secondary" href="/json/<%= encodeURIComponent(ios.sampleClient.subSlug) %>" target="_blank">Открыть пример JSON</a>
+        <a class="link-btn secondary" href="/json/<%= encodeURIComponent(ios.sampleClient.subSlug) %>?format=single" target="_blank">Открыть single JSON</a>
+      </div>
+    <% } %>
+  </section>
+
+</div>
+
+<script>
+async function runPanelCheck(btn) {
+  const box = document.getElementById('panelCheckResult');
+  const old = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Проверяю...';
+  box.classList.remove('hidden');
+  box.textContent = 'Идёт проверка...';
+  try {
+    const res = await fetch('/dashboard/panel-check.json', { headers: { Accept: 'application/json' } });
+    const data = await res.json();
+    box.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    box.textContent = String(err.message || err);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = old;
+  }
+}
+</script>
+
+<%- include('partials_footer') %>

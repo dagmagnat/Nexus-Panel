@@ -1,0 +1,35 @@
+/* Stage 94: targeted client creation/removal controls. */
+body.redesign-stage52.page-nodes .node-detail-actions,
+body.theme-mobile_lite.page-nodes .node-detail-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+}
+
+body.redesign-stage52.page-nodes .node-detail-actions > form,
+body.redesign-stage52.page-nodes .node-detail-actions > a,
+body.theme-mobile_lite.page-nodes .node-detail-actions > form,
+body.theme-mobile_lite.page-nodes .node-detail-actions > a {
+  min-width: 0 !important;
+}
+
+body.redesign-stage52.page-clients .bulk-node-action-field label {
+  line-height: 1.3;
+}
+
+body.redesign-stage52.page-clients #bulkRemoveNodeButton {
+  white-space: normal;
+  line-height: 1.2;
+}
+
+@media (max-width: 760px) {
+  body.redesign-stage52.page-clients .bulk-node-action-row {
+    grid-template-columns: 1fr !important;
+  }
+
+  body.redesign-stage52.page-clients .bulk-node-remove-btn {
+    width: 100% !important;
+  }
+
+  body.redesign-stage52.page-clients #importSyncModal .modal-card {
+    padding-bottom: calc(26px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+}
