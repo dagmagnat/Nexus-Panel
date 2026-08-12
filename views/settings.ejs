@@ -210,6 +210,36 @@
     </form>
   </section>
 
+  <section class="card span-6" id="settings-transfer-card">
+    <h2><span class="section-icon" aria-hidden="true">📦</span>Перенос настроек</h2>
+    <div class="kv-list">
+      <div class="kv-item">
+        <strong>Отдельный зашифрованный пакет</strong>
+        <div class="muted">Переносит настройки подписок, Happ, routing, Telegram, узлы с паролями/API-токенами, SNI, редиректы и VPN-сервисы. Клиенты в этот файл не входят.</div>
+        <div class="alert ok" style="margin-top:10px;">IP/URL развертывания, ключ входа, разрешённые admin IP и учётная запись администратора новой панели сохраняются. Редиректы и VPN-сервисы импортируются отключёнными до проверки.</div>
+        <label style="margin-top:12px;">Парольная фраза экспорта (минимум 12 символов)</label>
+        <input id="settings-transfer-export-passphrase" type="password" minlength="12" autocomplete="new-password" placeholder="Запиши её: без фразы файл не восстановить" />
+        <label>Повтори парольную фразу</label>
+        <input id="settings-transfer-export-confirm" type="password" minlength="12" autocomplete="new-password" />
+        <div class="actions" style="margin-top:12px;">
+          <button type="button" onclick="window.exportSettingsTransfer && window.exportSettingsTransfer(this)">Скачать .nxsettings</button>
+        </div>
+      </div>
+      <div class="kv-item">
+        <strong>Проверить или импортировать</strong>
+        <input id="settings-transfer-file" type="file" accept=".nxsettings,application/json" style="margin-top:12px;" />
+        <label style="margin-top:12px;">Парольная фраза файла</label>
+        <input id="settings-transfer-import-passphrase" type="password" minlength="12" autocomplete="current-password" />
+        <div class="actions" style="margin-top:12px;">
+          <button type="button" class="secondary" onclick="window.importSettingsTransfer && window.importSettingsTransfer(this, true)">Проверить без записи</button>
+          <button type="button" onclick="window.importSettingsTransfer && window.importSettingsTransfer(this, false)">Импортировать настройки</button>
+        </div>
+        <pre id="settings-transfer-status" class="muted" style="margin-top:10px;white-space:pre-wrap;max-height:300px;overflow:auto;"></pre>
+        <small class="hint">Перед настоящим импортом создаётся <code>data/backups/settings-import-before-*.db</code>. После импорта перезапусти контейнер панели.</small>
+      </div>
+    </div>
+  </section>
+
   <section class="card span-6">
     <h2><span class="section-icon" aria-hidden="true">⚙️</span>Общие настройки</h2>
     <form method="post" action="/settings">
@@ -749,5 +779,92 @@ async function restoreBackup() {
   }
 }
 window.restoreBackup = restoreBackup;
+
+function settingsTransferStatus(message) {
+  const target = document.getElementById('settings-transfer-status');
+  if (target) target.textContent = String(message || '');
+}
+
+async function exportSettingsTransfer(button) {
+  const passphrase = document.getElementById('settings-transfer-export-passphrase')?.value || '';
+  const confirmPassphrase = document.getElementById('settings-transfer-export-confirm')?.value || '';
+  if (passphrase.length < 12) return alert('Парольная фраза должна содержать минимум 12 символов.');
+  if (passphrase !== confirmPassphrase) return alert('Парольные фразы не совпадают.');
+  try {
+    if (button) button.disabled = true;
+    settingsTransferStatus('Шифрую и собираю настройки…');
+    const response = await fetch('/settings/transfer/export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify({ passphrase })
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.error || 'Не удалось экспортировать настройки');
+    }
+    const blob = await response.blob();
+    const disposition = response.headers.get('Content-Disposition') || '';
+    const encodedName = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+    const fileName = encodedName ? decodeURIComponent(encodedName) : 'nexus-settings.nxsettings';
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    settingsTransferStatus('Настройки экспортированы. Сохрани файл и парольную фразу отдельно.');
+  } catch (err) {
+    settingsTransferStatus('Ошибка: ' + String(err.message || err));
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+function formatSettingsTransferResult(result) {
+  const counts = result.inspection?.counts || result.counts || {};
+  const lines = [result.message || 'Файл настроек проверен'];
+  lines.push(`Настроек панели: ${counts.appSettings || result.settingsUpserted || 0}`);
+  lines.push(`Узлов: ${counts.nodes ?? ((result.nodesCreated || 0) + (result.nodesUpdated || 0))}`);
+  lines.push(`Кэшей inbound: ${counts.nodeInboundCache ?? result.inboundCachesUpserted ?? 0}`);
+  lines.push(`Редиректов: ${counts.redirectRules ?? ((result.redirectRulesCreated || 0) + (result.redirectRulesUpdated || 0))}`);
+  lines.push(`SNI-профилей: ${counts.sniProfiles ?? ((result.sniProfilesCreated || 0) + (result.sniProfilesUpdated || 0))}`);
+  lines.push(`VPN-хостов: ${counts.vpnHosts ?? ((result.vpnHostsCreated || 0) + (result.vpnHostsUpdated || 0))}`);
+  lines.push(`VPN-сервисов: ${counts.vpnServices ?? ((result.vpnServicesCreated || 0) + (result.vpnServicesUpdated || 0))}`);
+  if (result.backupPath) lines.push(`Резервная копия: ${result.backupPath}`);
+  if (Array.isArray(result.warnings) && result.warnings.length) lines.push('', 'Предупреждения:', ...result.warnings.map(item => '- ' + item));
+  if (result.dryRun) lines.push('', 'База не изменена: выполнен полный rollback.');
+  return lines.join('\n');
+}
+
+async function importSettingsTransfer(button, dryRun) {
+  const file = document.getElementById('settings-transfer-file')?.files?.[0];
+  const passphrase = document.getElementById('settings-transfer-import-passphrase')?.value || '';
+  if (!file) return alert('Выбери файл .nxsettings.');
+  if (passphrase.length < 12) return alert('Парольная фраза должна содержать минимум 12 символов.');
+  if (file.size > 50 * 1024 * 1024) return alert('Файл больше 50 МБ — используй agg settings import через SSH.');
+  if (!dryRun && !confirm('Импортировать настройки? Клиенты и доступ администратора не изменятся; перед записью будет создан backup.')) return;
+  try {
+    if (button) button.disabled = true;
+    settingsTransferStatus(dryRun ? 'Проверяю пакет без записи…' : 'Импортирую и перешифровываю секреты…');
+    const bundle = await file.text();
+    const response = await fetch('/settings/transfer/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify({ passphrase, bundle, dryRun })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.ok) throw new Error(result.error || 'Операция настроек не выполнена');
+    settingsTransferStatus(formatSettingsTransferResult(result));
+    if (!dryRun) settingsTransferStatus(formatSettingsTransferResult(result) + '\n\nПерезапусти контейнер: cd /opt/3xui-aggregator && docker compose restart aggregator');
+  } catch (err) {
+    settingsTransferStatus('Ошибка: ' + String(err.message || err));
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+window.exportSettingsTransfer = exportSettingsTransfer;
+window.importSettingsTransfer = importSettingsTransfer;
 </script>
 <%- include('partials_footer') %>

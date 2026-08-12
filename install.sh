@@ -2082,6 +2082,124 @@ client_transfer_cli() {
   esac
 }
 
+settings_transfer_help() {
+  cat <<'EOF'
+Зашифрованный перенос настроек Nexus Panel / 3xui-Aggregator.
+
+Команды:
+  agg settings export [FILE]
+  agg settings inspect FILE
+  agg settings import FILE [--dry-run]
+
+Экспорт не содержит клиентов. Переносятся настройки панели, подписок, Happ,
+маршрутизации, Telegram, узлы и их секреты, SNI, редиректы, VPN-хосты/сервисы.
+Deployment IP/URL, ключ входа и администратор новой панели не заменяются.
+Редиректы и VPN-сервисы импортируются отключёнными до ручной проверки.
+EOF
+}
+
+read_settings_transfer_passphrase() {
+  local confirm="${1:-0}"
+  if [ -n "${NEXUS_SETTINGS_PASSPHRASE:-}" ]; then
+    SETTINGS_TRANSFER_PASSPHRASE="$NEXUS_SETTINGS_PASSPHRASE"
+  else
+    local first second=""
+    read -r -s -p "Парольная фраза файла настроек (минимум 12 символов): " first
+    echo
+    if [ "$confirm" = "1" ]; then
+      read -r -s -p "Повтори парольную фразу: " second
+      echo
+      if [ "$first" != "$second" ]; then err "Парольные фразы не совпадают."; return 1; fi
+    fi
+    SETTINGS_TRANSFER_PASSPHRASE="$first"
+  fi
+  if [ "${#SETTINGS_TRANSFER_PASSPHRASE}" -lt 12 ]; then
+    err "Парольная фраза должна содержать минимум 12 символов."
+    return 1
+  fi
+}
+
+run_settings_transfer_in_container() {
+  local passphrase="$1"
+  shift
+  local tool="$APP_DIR/scripts/settings-transfer.js"
+  if [ ! -f "$tool" ]; then err "Утилита настроек не найдена: $tool"; return 1; fi
+  if ! command -v docker >/dev/null 2>&1; then err "Docker не найден."; return 1; fi
+
+  if docker inspect -f '{{.State.Running}}' "$AGG_CONTAINER_NAME" 2>/dev/null | grep -qx true; then
+    # Keep the helper under /app/scripts: it loads ../lib_crypto.js and the
+    # container already has the native better-sqlite3 dependency for Node.
+    # docker cp also makes this work immediately after applying a files-only
+    # patch, before the image has been rebuilt.
+    docker cp "$tool" "$AGG_CONTAINER_NAME:/app/scripts/settings-transfer.js" >/dev/null
+    printf '%s' "$passphrase" | docker exec -i \
+      -e NODE_PATH=/app/node_modules \
+      -e NEXUS_SETTINGS_PASSPHRASE_STDIN=1 \
+      "$AGG_CONTAINER_NAME" \
+      node /app/scripts/settings-transfer.js "$@"
+  else
+    printf '%s' "$passphrase" | (cd "$APP_DIR" && docker compose run --rm --no-deps -T \
+      -v "$tool:/app/scripts/settings-transfer-cli.js:ro" \
+      -e NODE_PATH=/app/node_modules \
+      -e NEXUS_SETTINGS_PASSPHRASE_STDIN=1 \
+      aggregator node /app/scripts/settings-transfer-cli.js "$@")
+  fi
+}
+
+settings_transfer_cli() {
+  require_root
+  refresh_runtime_paths
+  local action="${1:-help}"
+  if [ "$action" = "help" ] || [ "$action" = "--help" ] || [ "$action" = "-h" ]; then
+    settings_transfer_help
+    return 0
+  fi
+  if [ ! -f "$APP_DIR/data/app.db" ]; then err "База не найдена: $APP_DIR/data/app.db"; return 1; fi
+
+  case "$action" in
+    export)
+      shift || true
+      local output_path="${1:-/root/nexus-settings-$(date +%F-%H%M%S).nxsettings}"
+      local temp_name=".settings-export-$$-$(date +%s).nxsettings"
+      read_settings_transfer_passphrase 1
+      local command_status=0
+      run_settings_transfer_in_container "$SETTINGS_TRANSFER_PASSPHRASE" export \
+        --db /app/data/app.db --output "/app/data/$temp_name" || command_status=$?
+      if [ "$command_status" -ne 0 ]; then
+        [ ! -f "$APP_DIR/data/$temp_name" ] || unlink "$APP_DIR/data/$temp_name"
+        return "$command_status"
+      fi
+      install -m 0600 "$APP_DIR/data/$temp_name" "$output_path"
+      unlink "$APP_DIR/data/$temp_name"
+      say "Зашифрованные настройки экспортированы: $output_path"
+      warn "Не забудь парольную фразу: без неё файл восстановить невозможно."
+      ;;
+    inspect|import)
+      shift || true
+      local input_path="${1:-}"
+      if [ -z "$input_path" ] || [ ! -f "$input_path" ]; then err "Файл настроек не найден: ${input_path:-не указан}"; return 1; fi
+      shift || true
+      local temp_name=".settings-input-$$-$(date +%s).nxsettings"
+      read_settings_transfer_passphrase 0
+      install -m 0600 "$input_path" "$APP_DIR/data/$temp_name"
+      local command_status=0
+      if [ "$action" = "inspect" ]; then
+        run_settings_transfer_in_container "$SETTINGS_TRANSFER_PASSPHRASE" inspect --input "/app/data/$temp_name" || command_status=$?
+      else
+        run_settings_transfer_in_container "$SETTINGS_TRANSFER_PASSPHRASE" import \
+          --db /app/data/app.db --input "/app/data/$temp_name" "$@" || command_status=$?
+      fi
+      unlink "$APP_DIR/data/$temp_name"
+      [ "$command_status" -eq 0 ] || return "$command_status"
+      ;;
+    *)
+      err "Неизвестная команда settings: $action"
+      settings_transfer_help
+      return 1
+      ;;
+  esac
+}
+
 main_menu() {
   echo >&2
   say "Обнаружена существующая установка." >&2
@@ -2176,6 +2294,12 @@ fi
 if [ "${1:-}" = "clients" ]; then
   shift || true
   client_transfer_cli "$@"
+  exit $?
+fi
+
+if [ "${1:-}" = "settings" ]; then
+  shift || true
+  settings_transfer_cli "$@"
   exit $?
 fi
 

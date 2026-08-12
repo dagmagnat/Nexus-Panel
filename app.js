@@ -580,6 +580,7 @@ function setAttachmentDispositionHeader(res, unicodeFileName, fallbackBaseName =
 }
 
 const CLIENT_TRANSFER_SCRIPT = path.join(__dirname, 'scripts', 'client-transfer.py');
+const SETTINGS_TRANSFER_SCRIPT = path.join(__dirname, 'scripts', 'settings-transfer.js');
 const CLIENT_TRANSFER_BODY_LIMIT = '25mb';
 const CLIENT_TRANSFER_OUTPUT_LIMIT = 60 * 1024 * 1024;
 
@@ -653,6 +654,73 @@ function parseClientTransferToolJson(buffer) {
     return value;
   } catch (err) {
     throw new Error(`Утилита переноса вернула некорректный ответ: ${String(err.message || err)}`);
+  }
+}
+
+function runSettingsTransferTool(args, passphrase, options = {}) {
+  const maxStdoutBytes = Number(options.maxStdoutBytes || 60 * 1024 * 1024);
+  const timeoutMs = Number(options.timeoutMs || 120000);
+  const secret = String(passphrase || '');
+  if (secret.length < 12) return Promise.reject(new Error('Парольная фраза должна содержать минимум 12 символов.'));
+
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [SETTINGS_TRANSFER_SCRIPT, ...args], {
+      cwd: __dirname,
+      env: { ...process.env, NEXUS_SETTINGS_PASSPHRASE: secret },
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    const stdout = [];
+    const stderr = [];
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
+    let finished = false;
+    const fail = message => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      try { child.kill('SIGKILL'); } catch (_) {}
+      reject(new Error(message));
+    };
+    const timer = setTimeout(() => fail('Перенос настроек превысил 120 секунд. Используй SSH-команду agg settings.'), timeoutMs);
+    child.on('error', err => fail(String(err.message || err)));
+    child.stdout.on('data', chunk => {
+      stdoutBytes += chunk.length;
+      if (stdoutBytes > maxStdoutBytes) return fail('Файл настроек слишком большой для веб-интерфейса. Используй agg settings.');
+      stdout.push(chunk);
+    });
+    child.stderr.on('data', chunk => {
+      stderrBytes += chunk.length;
+      if (stderrBytes <= 1024 * 1024) stderr.push(chunk);
+    });
+    child.on('close', code => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      const out = Buffer.concat(stdout);
+      const errorText = Buffer.concat(stderr).toString('utf8').trim();
+      if (code === 0) return resolve(out);
+      let message = errorText || `Утилита настроек завершилась с кодом ${code}`;
+      try {
+        const parsed = JSON.parse(errorText);
+        message = String(parsed.error || parsed.message || message);
+      } catch (_) {}
+      reject(new Error(message));
+    });
+  });
+}
+
+async function withSettingsTransferBundle(bundleText, callback) {
+  const text = String(bundleText || '').replace(/^\uFEFF/, '').trim();
+  if (!text) throw new Error('Выбери непустой файл .nxsettings.');
+  if (Buffer.byteLength(text, 'utf8') > 50 * 1024 * 1024) throw new Error('Файл настроек превышает 50 МБ. Используй SSH-команду agg settings.');
+  try { JSON.parse(text); } catch (_) { throw new Error('Файл .nxsettings содержит некорректный JSON-контейнер.'); }
+  const temporaryDir = fs.mkdtempSync(path.join(DATA_DIR, 'settings-transfer-'));
+  const inputPath = path.join(temporaryDir, 'settings.nxsettings');
+  try {
+    fs.writeFileSync(inputPath, text, { flag: 'wx', mode: 0o600 });
+    return await callback(inputPath);
+  } finally {
+    fs.rmSync(temporaryDir, { recursive: true, force: true });
   }
 }
 
@@ -12858,6 +12926,56 @@ app.post('/backup/restore', requireAuth, bodyParser.text({ type: '*/*', limit: '
     req.session.destroy(() => res.redirect(buildLoginRedirectPath('Резервная копия восстановлена. Войди заново.')));
   } catch (err) {
     res.status(400).send(String(err.message || err));
+  }
+});
+
+const parseSettingsTransferRequest = express.json({ limit: '50mb' });
+
+app.post('/settings/transfer/export', requireAuth, parseSettingsTransferRequest, async (req, res) => {
+  try {
+    const passphrase = String(req.body?.passphrase || '');
+    const output = await runSettingsTransferTool([
+      'export', '--db', path.join(DATA_DIR, 'app.db'), '--output', '-'
+    ], passphrase);
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.type('application/json');
+    setAttachmentDispositionHeader(res, `nexus-settings-${stamp}.nxsettings`, 'nexus-settings');
+    res.send(output);
+  } catch (err) {
+    res.status(400).json({ ok: false, error: String(err.message || err) });
+  }
+});
+
+app.post('/settings/transfer/inspect', requireAuth, parseSettingsTransferRequest, async (req, res) => {
+  try {
+    const result = await withSettingsTransferBundle(req.body?.bundle, async inputPath => {
+      const output = await runSettingsTransferTool([
+        'inspect', '--input', inputPath
+      ], String(req.body?.passphrase || ''), { maxStdoutBytes: 2 * 1024 * 1024 });
+      return parseClientTransferToolJson(output);
+    });
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ ok: false, error: String(err.message || err) });
+  }
+});
+
+app.post('/settings/transfer/import', requireAuth, parseSettingsTransferRequest, async (req, res) => {
+  try {
+    const dryRun = Boolean(req.body?.dryRun);
+    const result = await withSettingsTransferBundle(req.body?.bundle, async inputPath => {
+      const args = ['import', '--db', path.join(DATA_DIR, 'app.db'), '--input', inputPath];
+      if (dryRun) args.push('--dry-run');
+      const output = await runSettingsTransferTool(args, String(req.body?.passphrase || ''), { maxStdoutBytes: 4 * 1024 * 1024 });
+      return parseClientTransferToolJson(output);
+    });
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ ok: false, error: String(err.message || err) });
   }
 });
 
