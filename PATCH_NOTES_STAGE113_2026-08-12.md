@@ -1,6 +1,8 @@
 # Stage 113 — отдельный перенос настроек
 
-Версия: `stage113-settings-transfer-1.0.9-2026-08-12`
+Версия: `stage113-settings-transfer-1.0.9-rev2-2026-08-12`
+
+Rev.2 исправляет ошибку `allowedColumns.has is not a function` при наличии нескольких записей inbound-кэша или SNI-профилей.
 
 ## Что добавлено
 

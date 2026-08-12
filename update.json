@@ -1,5 +1,5 @@
 {
-  "version": "stage113-settings-transfer-1.0.9-2026-08-12",
+  "version": "stage113-settings-transfer-1.0.9-rev2-2026-08-12",
   "name": "Nexus Panel 1.0.9 — Encrypted Settings Transfer",
   "repository": "https://github.com/dagmagnat/Nexus-Panel",
   "archive_url": "https://github.com/dagmagnat/Nexus-Panel/archive/refs/heads/main.zip",
@@ -9,6 +9,7 @@
     "Добавлен отдельный зашифрованный пакет настроек .nxsettings и команды agg settings export/inspect/import.",
     "Переносятся настройки подписок, Happ, routing, Telegram, узлы с секретами, SNI, редиректы и VPN-хосты/сервисы.",
     "Секреты расшифровываются старым APP_SECRET и перешифровываются APP_SECRET нового сервера; пароль пакета не хранится.",
-    "Клиенты, администратор и параметры доступа нового сервера не заменяются; dry-run и SQLite-backup защищают импорт."
+    "Клиенты, администратор и параметры доступа нового сервера не заменяются; dry-run и SQLite-backup защищают импорт.",
+    "Rev.2 исправляет экспорт нескольких записей inbound-кэша и SNI-профилей."
   ]
 }

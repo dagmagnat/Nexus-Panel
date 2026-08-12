@@ -96,8 +96,10 @@ function createSource(file) {
     VALUES (7,'EU','3xui','https://node.example','/panel','admin',?,'token',?,'',1,1,'online')
   `).run(encrypt('node-password', sourceSecret), encrypt('node-api-token', sourceSecret));
   db.prepare("INSERT INTO node_inbound_cache (node_id,inbound_id,inbound_json) VALUES (7,1,'{\"protocol\":\"vless\"}')").run();
+  db.prepare("INSERT INTO node_inbound_cache (node_id,inbound_id,inbound_json) VALUES (8,2,'{\"protocol\":\"vless\",\"network\":\"xhttp\"}')").run();
   db.prepare("INSERT INTO redirect_rules (bind_ip,node_id,target_host,target_port,enabled,last_status,metrics_json) VALUES ('31.1.2.3',7,'127.0.0.1',2053,1,'online','{\"connections\":10}')").run();
   db.prepare("INSERT INTO sni_profiles (name,sni,comment) VALUES ('VK','vk.com','old profile')").run();
+  db.prepare("INSERT INTO sni_profiles (name,sni,comment) VALUES ('Google','google.com','second profile')").run();
   db.prepare(`
     INSERT INTO vpn_hosts (id,name,hostname,ssh_port,ssh_username,password_enc,enabled,last_status)
     VALUES (9,'VPN host','10.0.0.2',22,'root',?,1,'online')
@@ -135,7 +137,9 @@ test('encrypted settings bundle re-encrypts secrets and never imports clients or
 
     const exported = runTool(['export', '--db', sourceDb, '--output', bundle]);
     assert.equal(exported.counts.nodes, 1);
+    assert.equal(exported.counts.nodeInboundCache, 2);
     assert.equal(exported.counts.redirectRules, 1);
+    assert.equal(exported.counts.sniProfiles, 2);
     assert.equal(fs.statSync(bundle).mode & 0o777, 0o600);
     const outerText = fs.readFileSync(bundle, 'utf8');
     assert.doesNotMatch(outerText, /node-password|telegram-secret|routing_config/);

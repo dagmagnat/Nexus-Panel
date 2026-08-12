@@ -221,7 +221,9 @@ function exportSettings(db, sourceSecret) {
   const categories = {
     appSettings: settings,
     nodes: exportSecretRows('nodes', NODE_SECRET_COLUMNS, { last_status: 'unknown', last_error: '' }),
-    nodeInboundCache: tableExists(db, 'node_inbound_cache') ? db.prepare('SELECT * FROM node_inbound_cache ORDER BY node_id').all().map(rowObject) : [],
+    nodeInboundCache: tableExists(db, 'node_inbound_cache')
+      ? db.prepare('SELECT * FROM node_inbound_cache ORDER BY node_id').all().map(row => rowObject(row))
+      : [],
     redirectRules: tableExists(db, 'redirect_rules') ? db.prepare('SELECT * FROM redirect_rules ORDER BY id').all().map(row => ({
       ...rowObject(row),
       enabled: 0,
@@ -229,7 +231,9 @@ function exportSettings(db, sourceSecret) {
       last_error: 'Импортировано отключённым: проверь bind IP и порт на новом сервере',
       metrics_json: ''
     })) : [],
-    sniProfiles: tableExists(db, 'sni_profiles') ? db.prepare('SELECT * FROM sni_profiles ORDER BY id').all().map(rowObject) : [],
+    sniProfiles: tableExists(db, 'sni_profiles')
+      ? db.prepare('SELECT * FROM sni_profiles ORDER BY id').all().map(row => rowObject(row))
+      : [],
     vpnHosts: exportSecretRows('vpn_hosts', VPN_HOST_SECRET_COLUMNS, { enabled: 0, last_status: 'unknown', last_error: 'Импортировано отключённым: проверь доступ с нового сервера' }),
     vpnServices: exportSecretRows('vpn_services', VPN_SERVICE_SECRET_COLUMNS, { enabled: 0, last_status: 'unknown', last_error: 'Импортировано отключённым: проверь конфигурацию нового сервера' })
   };
