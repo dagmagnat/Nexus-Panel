@@ -650,22 +650,48 @@ clone_or_update_repo() {
 
   REPO_URL="$repo_url"
   BRANCH="$branch"
-  save_source_config
 
   if [ -d "$APP_DIR/.git" ]; then
-    warn "Каталог $APP_DIR уже существует. Принудительно обновляю проект..."
-    git -C "$APP_DIR" fetch --all
-    git -C "$APP_DIR" checkout "$branch"
-    git -C "$APP_DIR" reset --hard "origin/$branch"
+    local current_origin target_commit
+    current_origin="$(git -C "$APP_DIR" remote get-url origin 2>/dev/null || true)"
+    warn "Каталог $APP_DIR уже существует. Сначала проверяю новый источник, не останавливая панель..."
+    if [ -n "$current_origin" ] && [ "${current_origin%/}" != "${repo_url%/}" ]; then
+      info "Источник будет переключён: $current_origin -> $repo_url"
+    fi
+
+    # Fetch напрямую по выбранному URL не зависит от старого origin. Запрет
+    # интерактивного запроса логина не даёт обновлению зависнуть на удалённом
+    # или приватном прежнем репозитории. До успешной загрузки стек продолжает
+    # работать и git-конфигурация остаётся прежней.
+    if ! GIT_TERMINAL_PROMPT=0 git -c credential.interactive=never -C "$APP_DIR" fetch --prune "$repo_url" "$branch"; then
+      err "Не удалось скачать $repo_url (ветка $branch). Панель не остановлена и данные не изменены."
+      return 1
+    fi
+    target_commit="$(git -C "$APP_DIR" rev-parse FETCH_HEAD)"
+
+    stop_existing_aggregator_stack
+    git -C "$APP_DIR" checkout -B "$branch" "$target_commit"
+    git -C "$APP_DIR" reset --hard "$target_commit"
+    if git -C "$APP_DIR" remote get-url origin >/dev/null 2>&1; then
+      git -C "$APP_DIR" remote set-url origin "$repo_url"
+    else
+      git -C "$APP_DIR" remote add origin "$repo_url"
+    fi
+    git -C "$APP_DIR" update-ref "refs/remotes/origin/$branch" "$target_commit"
   else
-    say "Сначала скачиваю проект во временный каталог..."
+    say "Сначала скачиваю проект во временный каталог, не останавливая панель..."
     local tmp_dir preserve_dir
     tmp_dir="$(mktemp -d)"
     preserve_dir="$(mktemp -d)"
-    git clone -b "$branch" "$repo_url" "$tmp_dir"
+    if ! GIT_TERMINAL_PROMPT=0 git -c credential.interactive=never clone -b "$branch" "$repo_url" "$tmp_dir"; then
+      rm -rf "$tmp_dir" "$preserve_dir"
+      err "Не удалось скачать $repo_url (ветка $branch). Панель не остановлена и данные не изменены."
+      return 1
+    fi
 
     if [ -d "$APP_DIR" ] && app_dir_has_runtime_data; then
       warn "Каталог $APP_DIR не является git-клоном, но содержит настройки или базу. Сохраняю .env, .install.conf и data перед заменой файлов."
+      stop_existing_aggregator_stack
       preserve_runtime_files_if_needed "$preserve_dir"
     fi
 
@@ -1736,10 +1762,12 @@ update_files_only() {
     exit 1
   fi
 
-  stop_existing_aggregator_stack
   local local_src
   local_src="$(script_source_dir)"
   if can_update_from_local_bundle "$local_src"; then
+    # Архив уже скачан и проверен до этой точки, поэтому стек можно безопасно
+    # остановить непосредственно перед заменой файлов.
+    stop_existing_aggregator_stack
     copy_project_files_from_local_bundle "$local_src"
   else
     clone_or_update_repo "$REPO_URL" "$BRANCH"
@@ -1767,7 +1795,6 @@ change_settings_and_update() {
   prompt_port_change
   prompt_admin_change
 
-  stop_existing_aggregator_stack
   clone_or_update_repo "$REPO_URL" "$BRANCH"
   prepare_config_and_run
 }
@@ -2042,6 +2069,12 @@ main() {
   print_result
 }
 
+
+# Test/helper mode: load the installer functions without starting the
+# interactive menu. Normal installation never sets this variable.
+if [ "${NEXUS_INSTALLER_LIBRARY_ONLY:-0}" = "1" ]; then
+  return 0 2>/dev/null || exit 0
+fi
 
 if [ "${1:-}" = "update" ] || [ "${1:-}" = "--update-files-only" ]; then
   clear || true

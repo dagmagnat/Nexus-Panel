@@ -1,14 +1,14 @@
 {
-  "version": "stage110-nexus-branding-1.0.6-2026-08-12",
-  "name": "Nexus Panel 1.0.6 — Brand Identity",
+  "version": "stage111-safe-legacy-update-1.0.7-2026-08-12",
+  "name": "Nexus Panel 1.0.7 — Safe Legacy Update",
   "repository": "https://github.com/dagmagnat/Nexus-Panel",
   "archive_url": "https://github.com/dagmagnat/Nexus-Panel/archive/refs/heads/main.zip",
   "archive": "Nexus-Panel-main.zip",
   "filename": "Nexus-Panel-main.zip",
   "notes": [
-    "Добавлен собственный логотип Nexus Panel в интерфейс, страницу входа и публичную страницу подписки.",
-    "Добавлены favicon, Apple Touch Icon, web manifest и PNG-иконки 192/512 px.",
-    "JSON-подписка передаёт URL логотипа и фирменной страницы; стандартный profile-web-page-url Happ ведёт на страницу клиента.",
-    "Сохранены официальный репозиторий, точная синхронизация Inbound ID, параметры выбранного транспорта и трафик inbound."
+    "Старый origin dagmagnat/3xui-Aggregator автоматически переключается на dagmagnat/Nexus-Panel без запроса логина GitHub.",
+    "Новый источник скачивается и проверяется до остановки контейнеров; при ошибке панель продолжает работать.",
+    "База data/app.db, .env и настройки установки сохраняются при обновлении поверх прежней установки.",
+    "Сохранены фирменный логотип, точная синхронизация Inbound ID, параметры транспорта и трафик inbound."
   ]
 }
