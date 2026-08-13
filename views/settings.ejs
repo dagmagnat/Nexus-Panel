@@ -290,7 +290,7 @@
             <input id="panel-access-key" name="panel_access_key" value="<%= panelAccessKey || '' %>" placeholder="Оставь пустым, чтобы отключить ключ" style="flex:1;" />
             <button type="button" class="secondary" onclick="generatePanelKey()">Сгенерировать</button>
           </div>
-          <small class="hint">Если ключ задан, обычный <code>/login</code> отдаёт 404. Вход: <code><%= panelLoginUrl || '' %></code></small>
+          <small class="hint">Ключ сохраняет доверие браузера и защищает служебные запросы. Старые мобильные ярлыки больше не получают 404: при необходимости панель покажет вход по логину и паролю. Вход с ключом: <code><%= panelLoginUrl || '' %></code></small>
         </div>
 
         <div class="field">

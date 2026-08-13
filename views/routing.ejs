@@ -35,6 +35,18 @@
 <%- include('partials_header', { pageTitle: 'Маршрутизация', pageSubtitle: 'Loyalsoldier GeoData, RU direct, VPN-исключения и блокировка рекламы', activePage: 'routing' }) %>
 
 <style>
+  /* Critical layout is kept inline as well as in Spectrum CSS. This prevents an
+     old proxy/browser stylesheet from squeezing the form into 12 narrow tracks. */
+  .routing-page-grid { display:grid !important; grid-template-columns:minmax(0,3fr) minmax(360px,2fr) !important; align-items:start; }
+  .routing-page-grid > .routing-editor-card,
+  .routing-page-grid > .routing-summary-card { grid-column:auto !important; min-width:0; }
+  .routing-form { display:flex !important; min-width:0; flex-direction:column; gap:16px; }
+  .routing-form > * { min-width:0; }
+  .routing-form .form-grid { display:grid !important; grid-template-columns:repeat(2,minmax(0,1fr)) !important; gap:13px 14px; }
+  .routing-form .form-grid > .field { grid-column:1 / -1 !important; min-width:0; }
+  .routing-form .form-grid > .field.half { grid-column:span 1 !important; }
+  .routing-form .mode-grid { display:grid !important; grid-template-columns:repeat(2,minmax(0,1fr)) !important; }
+  .routing-form .dns-preset-grid { display:grid !important; grid-template-columns:repeat(3,minmax(0,1fr)) !important; }
   .geodata-catalog-card { position: static; top: auto; align-self: stretch; width: 100%; }
   .geodata-toolbar { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:10px 0 12px; }
   .geodata-toolbar input { flex:1 1 220px; min-width:0; }
@@ -52,7 +64,14 @@
   .geodata-mini:hover { border-color:rgba(96,165,250,.75); }
   .geodata-mini.copy-ok { border-color:rgba(52,211,153,.75); }
   .geodata-help { margin-top:10px; font-size:12px; color:var(--muted); line-height:1.45; }
+  @media (max-width: 1120px) {
+    .routing-page-grid { grid-template-columns:minmax(0,1fr) !important; }
+  }
   @media (max-width: 900px) {
+    .routing-form .form-grid,
+    .routing-form .mode-grid,
+    .routing-form .dns-preset-grid { grid-template-columns:minmax(0,1fr) !important; }
+    .routing-form .form-grid > .field.half { grid-column:1 / -1 !important; }
     .geodata-catalog-card { position:static; }
     .geodata-lists { grid-template-columns:1fr; }
     .geodata-scroll { max-height:280px; }
