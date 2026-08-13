@@ -2,7 +2,7 @@
   "name": "Nexus Panel",
   "short_name": "Nexus",
   "description": "3x-ui and Remnawave network control panel",
-  "start_url": "/login",
+  "start_url": "/mobile-login",
   "scope": "/",
   "display": "standalone",
   "background_color": "#071126",
