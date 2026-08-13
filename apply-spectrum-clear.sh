@@ -7,7 +7,7 @@ NO_BUILD=0
 
 usage() {
   cat <<'EOF'
-Nexus Spectrum Clear 2.0.2 — routing/mobile-login hotfix
+Nexus Spectrum Clear 2.1.0 — compact mobile workspace
 
 Использование:
   sudo bash apply-spectrum-clear.sh
@@ -58,8 +58,8 @@ if [[ ! -f "$TARGET_DIR/app.js" || ! -f "$TARGET_DIR/docker-compose.yml" ]]; the
 fi
 
 if [[ ! -f "$TARGET_DIR/public/css/spectrum-clear.css" ]]; then
-  echo "[ERR] Это дополнение ставится поверх Nexus Panel 2.0.0 Spectrum Clear." >&2
-  echo "[ERR] Сначала установи Spectrum Clear 2.0.1, затем повтори установку hotfix 2.0.2." >&2
+  echo "[ERR] Это дополнение ставится поверх Nexus Panel Spectrum Clear." >&2
+  echo "[ERR] Сначала установи Nexus Panel 2.0.2, затем повтори обновление 2.1.0." >&2
   exit 1
 fi
 
@@ -80,7 +80,7 @@ done < "$MANIFEST"
 
 STAMP="$(date -u +%Y%m%d-%H%M%S)"
 BACKUP_BASE="${NEXUS_BACKUP_BASE:-/opt/3xui-backups}"
-BACKUP_ROOT="$BACKUP_BASE/spectrum-clear-hotfix-2.0.2-$STAMP"
+BACKUP_ROOT="$BACKUP_BASE/spectrum-clear-mobile-2.1.0-$STAMP"
 mkdir -p "$BACKUP_ROOT/files"
 printf '%s\n' "$TARGET_DIR" > "$BACKUP_ROOT/TARGET_DIR"
 cp -a "$MANIFEST" "$BACKUP_ROOT/SPECTRUM_CLEAR_FILES.txt"
@@ -112,7 +112,7 @@ while IFS= read -r relative; do
   fi
 done < "$MANIFEST"
 
-echo "[INF] Устанавливаю Spectrum Clear. data/ и .env не изменяются."
+echo "[INF] Устанавливаю компактную мобильную компоновку. data/ и .env не изменяются."
 while IFS= read -r relative; do
   [[ -n "$relative" ]] || continue
   mkdir -p "$TARGET_DIR/$(dirname "$relative")"
@@ -143,6 +143,6 @@ if ! docker compose up -d --build; then
 fi
 
 docker compose ps
-echo "[OK] Nexus Panel 2.0.2 Spectrum Clear установлен."
+echo "[OK] Nexus Panel 2.1.0 Spectrum Clear установлен."
 echo "[INF] Резервная копия: $BACKUP_ROOT"
 echo "[INF] Откат интерфейса: bash '$BACKUP_ROOT/rollback-spectrum-clear.sh' '$BACKUP_ROOT'"
