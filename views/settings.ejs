@@ -6,7 +6,7 @@
 <form id="bumpSubRevisionForm" method="post" action="/settings/subscription-revision/bump"></form>
 
 <div class="grid">
-  <section class="card span-6 panel-settings-card">
+  <section class="card span-6 panel-settings-card" data-settings-key="panel">
     <h2><span class="section-icon" aria-hidden="true">🎛️</span>Настройка панели</h2>
     <p class="muted">Управляет внешним видом мобильной версии: размер интерфейса и тип навигации.</p>
     <form method="post" action="/settings/panel-ui" class="form-grid">
@@ -80,7 +80,7 @@
     </form>
   </section>
 
-  <section class="card span-12 happ-control-card" id="happ-control-app">
+  <section class="card span-12 happ-control-card" id="happ-control-app" data-settings-key="happ">
     <h2><span class="section-icon" aria-hidden="true">🧭</span>Happ Control App</h2>
     <p class="muted">Здесь собраны только параметры Happ и совместимых приложений: автообновление профиля, userinfo, support-url, announce/sub-info, подпись сервера и JSON/Xray. Маршрутизация настраивается только в отдельном разделе «Маршрутизация».</p>
 
@@ -210,13 +210,13 @@
     </form>
   </section>
 
-  <section class="card span-6" id="settings-transfer-card">
+  <section class="card span-6 settings-transfer-card" id="settings-transfer-card" data-settings-key="transfer">
     <h2><span class="section-icon" aria-hidden="true">📦</span>Перенос настроек</h2>
     <div class="kv-list">
       <div class="kv-item">
         <strong>Отдельный зашифрованный пакет</strong>
-        <div class="muted">Переносит настройки подписок, Happ, routing, Telegram, узлы с паролями/API-токенами, SNI, редиректы и VPN-сервисы. Клиенты в этот файл не входят.</div>
-        <div class="alert ok" style="margin-top:10px;">IP/URL развертывания, ключ входа, разрешённые admin IP и учётная запись администратора новой панели сохраняются. Редиректы и VPN-сервисы импортируются отключёнными до проверки.</div>
+        <div class="muted">Переносит настройки подписок, Happ, routing, Telegram, узлы с паролями/API-токенами, SNI и редиректы. Клиенты в этот файл не входят.</div>
+        <div class="alert ok" style="margin-top:10px;">IP/URL развертывания, ключ входа, разрешённые admin IP и учётная запись администратора новой панели сохраняются. Редиректы импортируются отключёнными до проверки.</div>
         <label style="margin-top:12px;">Парольная фраза экспорта (минимум 12 символов)</label>
         <input id="settings-transfer-export-passphrase" type="password" minlength="12" autocomplete="new-password" placeholder="Запиши её: без фразы файл не восстановить" />
         <label>Повтори парольную фразу</label>
@@ -240,7 +240,7 @@
     </div>
   </section>
 
-  <section class="card span-6">
+  <section class="card span-6" data-settings-key="general">
     <h2><span class="section-icon" aria-hidden="true">⚙️</span>Общие настройки</h2>
     <form method="post" action="/settings">
       <div class="form-grid">
@@ -367,7 +367,7 @@
     </form>
   </section>
 
-  <section class="card span-6">
+  <section class="card span-6 settings-sni-card" data-settings-key="sni">
     <h2><span class="section-icon" aria-hidden="true">🛡️</span>SNI-профили REALITY</h2>
     <p class="muted">Сохраняй часто используемые SNI, проверяй TLS-доступность и выбирай их потом в узлах. Это меняет только выдаваемую подписку, если в узле выбран профиль.</p>
     <form method="post" action="/settings/sni-profiles" class="form-grid sni-profile-form" data-floating-save-label="SNI-профиль">
@@ -408,7 +408,7 @@
     </div>
   </section>
 
-  <section class="card span-6">
+  <section class="card span-6 settings-backup-card" data-settings-key="backup">
     <h2><span class="section-icon" aria-hidden="true">💾</span>Резервная копия</h2>
     <div class="kv-list">
       <div class="kv-item">
@@ -432,7 +432,7 @@
     </div>
   </section>
 
-  <section class="card span-6" id="project-update-card">
+  <section class="card span-6" id="project-update-card" data-settings-key="updates">
     <h2><span class="section-icon" aria-hidden="true">🔄</span>Обновление проекта</h2>
     <div class="kv-list update-box">
       <div class="kv-item">
@@ -465,7 +465,7 @@
   </div>
 
 
-  <section class="card span-6">
+  <section class="card span-6 settings-server-card" data-settings-key="server">
     <h2><span class="section-icon" aria-hidden="true">🖥️</span>Сервер и обслуживание</h2>
     <div class="kv-list">
       <div class="kv-item">
@@ -509,13 +509,7 @@
     </div>
   </section>
 
-  <section class="card span-6">
-    <h2><span class="section-icon" aria-hidden="true">✈️</span>Telegram</h2>
-    <p class="muted">Системные уведомления перенесены в раздел TG-бот, чтобы все Telegram-настройки были в одном месте.</p>
-    <div class="actions"><a class="link-btn secondary" href="/telegram-bot">Открыть TG-бот</a></div>
-  </section>
-
-  <section class="card span-6">
+  <section class="card span-6 settings-security-card" data-settings-key="security">
     <h2><span class="section-icon" aria-hidden="true">🔒</span>Безопасность</h2>
     <form method="post" action="/settings/security" class="form-grid security-settings-form">
       <div class="field half">
@@ -830,8 +824,6 @@ function formatSettingsTransferResult(result) {
   lines.push(`Кэшей inbound: ${counts.nodeInboundCache ?? result.inboundCachesUpserted ?? 0}`);
   lines.push(`Редиректов: ${counts.redirectRules ?? ((result.redirectRulesCreated || 0) + (result.redirectRulesUpdated || 0))}`);
   lines.push(`SNI-профилей: ${counts.sniProfiles ?? ((result.sniProfilesCreated || 0) + (result.sniProfilesUpdated || 0))}`);
-  lines.push(`VPN-хостов: ${counts.vpnHosts ?? ((result.vpnHostsCreated || 0) + (result.vpnHostsUpdated || 0))}`);
-  lines.push(`VPN-сервисов: ${counts.vpnServices ?? ((result.vpnServicesCreated || 0) + (result.vpnServicesUpdated || 0))}`);
   if (result.backupPath) lines.push(`Резервная копия: ${result.backupPath}`);
   if (Array.isArray(result.warnings) && result.warnings.length) lines.push('', 'Предупреждения:', ...result.warnings.map(item => '- ' + item));
   if (result.dryRun) lines.push('', 'База не изменена: выполнен полный rollback.');

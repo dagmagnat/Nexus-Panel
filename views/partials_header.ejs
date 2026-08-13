@@ -33,7 +33,7 @@
     } catch (_) {}
   })();
   </script>
-  <link rel="stylesheet" href="/css/spectrum-clear.css?v=1" />
+  <link rel="stylesheet" href="/css/spectrum-clear.css?v=2" />
   <script src="/js/security.js?v=1"></script>
   <% if (typeof isDevelopment !== 'undefined' && isDevelopment) { %><script src="/js/dev-inspector.js?v=1" defer></script><% } %>
 </head>
@@ -42,7 +42,6 @@
     dashboard: '<rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/>',
     nodes: '<rect x="3" y="4" width="18" height="6" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/><path d="M7 7h.01M7 17h.01M11 7h7M11 17h7"/>',
     clients: '<circle cx="9" cy="8" r="3.2"/><path d="M3.5 20c.6-3.3 2.7-5 5.5-5s4.9 1.7 5.5 5M16 6.2a3 3 0 0 1 0 5.6M17 15.3c2 .8 3.2 2.4 3.5 4.7"/>',
-    vpn: '<path d="M12 3 20 6v5.7c0 5-3.2 8.3-8 10.3-4.8-2-8-5.3-8-10.3V6l8-3z"/><path d="m9.3 12 1.8 1.8 3.8-4"/>',
     routing: '<circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="6" r="2.4"/><path d="m8 16 8-8M6 6h6M6 6v6"/>',
     redirects: '<path d="M18 8H5m3-3L5 8l3 3M6 16h13m-3-3 3 3-3 3"/>',
     diagnostics: '<path d="M3 12h4l2.5 6L14 6l2.5 6H21"/>',
@@ -58,9 +57,9 @@
     return '<svg class="nexus-icon' + (cls ? ' ' + cls : '') + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (NEXUS_ICONS[name] || '') + '</svg>';
   }
   const currentPath = typeof activePage !== 'undefined' ? activePage : '';
-  const moreNavActive = ['more', 'settings', 'redirects', 'diagnostics', 'telegram_bot', 'vpn'].includes(currentPath);
+  const moreNavActive = ['more', 'settings', 'redirects', 'diagnostics', 'telegram_bot'].includes(currentPath);
   const sectionLabels = {
-    dashboard: 'Обзор', nodes: 'Инфраструктура', clients: 'Доступ', vpn: 'Инфраструктура',
+    dashboard: 'Обзор', nodes: 'Инфраструктура', clients: 'Доступ',
     routing: 'Сеть', redirects: 'Сеть', diagnostics: 'Система', telegram_bot: 'Интеграции',
     settings: 'Система', more: 'Nexus Panel'
   };
@@ -90,7 +89,6 @@
         </div>
         <div class="spectrum-nav-group">
           <span class="spectrum-nav-label">Сеть</span>
-          <a href="/vpn" class="<%= currentPath === 'vpn' ? 'active' : '' %>"><span class="nav-icon"><%- nexusIcon('vpn') %></span><span>VPN-сервисы</span></a>
           <a href="/routing" class="<%= currentPath === 'routing' ? 'active' : '' %>"><span class="nav-icon"><%- nexusIcon('routing') %></span><span>Маршрутизация</span></a>
           <a href="/redirects" class="<%= currentPath === 'redirects' ? 'active' : '' %>"><span class="nav-icon"><%- nexusIcon('redirects') %></span><span>Перенаправление</span></a>
         </div>
@@ -120,7 +118,6 @@
           <% if (typeof pageSubtitle !== 'undefined' && pageSubtitle) { %><p class="subtitle"><%= pageSubtitle %></p><% } %>
         </div>
         <div class="spectrum-page-actions">
-          <% if (currentPath === 'nodes') { %><a class="spectrum-quick-action" href="/nodes?tab=add">Добавить узел</a><% } %>
           <% if (currentPath === 'clients') { %><button type="button" class="spectrum-quick-action" onclick="window.openModalById && openModalById('createClientModal')">Создать клиента</button><% } %>
           <button type="button" class="theme-toggle spectrum-theme-button" data-theme-toggle aria-label="Переключить тему"><span data-theme-icon><%- nexusIcon('moon', 'theme-moon') %><%- nexusIcon('sun', 'theme-sun') %></span><span class="theme-label">Тема</span></button>
         </div>

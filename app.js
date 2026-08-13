@@ -11075,15 +11075,7 @@ function vpnBack(tab, type, message) {
 }
 
 app.get('/vpn', requireAuth, (req, res) => {
-  const data = vpnManager.listPageData(req.query);
-  let aggregatorPublicHost = '';
-  try { aggregatorPublicHost = new URL(getPanelPublicUrl()).hostname || ''; } catch (_) {}
-  render(res, 'vpn', {
-    ...data,
-    aggregatorPublicHost,
-    message: req.query.message || '',
-    error: req.query.error || ''
-  });
+  res.redirect('/clients');
 });
 
 app.post('/vpn/hosts', requireAuth, (req, res) => {
@@ -13792,7 +13784,7 @@ app.post('/clients/transfer/import', requireAuth, parseClientTransferJsonBody, a
 
 app.get('/clients', requireAuth, (req, res) => {
   try {
-  const clientType = ['xray', 'wireguard', 'amneziawg', 'outline'].includes(String(req.query.type || '')) ? String(req.query.type) : 'xray';
+  const clientType = 'xray';
   const q = String(req.query.q || '').trim();
   const qNorm = normalizeSearchText(q);
   const allClients = db.prepare(`
@@ -13871,7 +13863,7 @@ app.get('/clients', requireAuth, (req, res) => {
   const nodes = clientType === 'xray'
     ? db.prepare(`SELECT * FROM nodes WHERE enabled = 1 ORDER BY ${nodeOrderSql()}`).all().map(enrichNodeFlagFields).filter(isClientManagedNode)
     : [];
-  const vpnData = vpnManager.listPageData({ tab: 'clients' });
+  const vpnData = { clients: [], services: [], aggregatorClients: [], protocolLabels: {} };
   const vpnProtocolMatch = client => clientType === 'wireguard'
     ? client.protocol === 'wireguard'
     : clientType === 'amneziawg'

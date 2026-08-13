@@ -1,4 +1,4 @@
-<%- include('partials_header', { pageTitle: 'Клиенты', pageSubtitle: 'Xray/Reality и отдельные VPN-конфигурации', activePage: 'clients' }) %>
+<%- include('partials_header', { pageTitle: 'Клиенты', pageSubtitle: 'Xray / Reality, подписки, лимиты и управление доступом', activePage: 'clients' }) %>
 <%
   function flagEmojiFromCode(code) {
     const cc = String(code || '').trim().toUpperCase();
@@ -219,13 +219,6 @@
       <% if (q) { %><a class="link-btn secondary" href="/clients<%= clientTypeQuery %>">Сбросить</a><% } %>
     </form>
   </div>
-
-  <nav class="client-protocol-tabs" aria-label="Типы клиентов">
-    <a href="/clients" class="<%= clientType === 'xray' ? 'is-active' : '' %>">Reality / Xray <span><%= xrayCount %></span></a>
-    <a href="/clients?type=wireguard" class="<%= clientType === 'wireguard' ? 'is-active' : '' %>">WireGuard <span><%= vpnCounts.wireguard %></span></a>
-    <a href="/clients?type=amneziawg" class="<%= clientType === 'amneziawg' ? 'is-active' : '' %>">AmneziaWG <span><%= vpnCounts.amneziawg %></span></a>
-    <a href="/clients?type=outline" class="<%= clientType === 'outline' ? 'is-active' : '' %>">Outline <span><%= vpnCounts.outline %></span></a>
-  </nav>
 
   <% if (clientType === 'xray') { %>
   <div class="client-directory-toolbar" id="clientDirectoryToolbar" aria-label="Фильтр и сортировка клиентов">

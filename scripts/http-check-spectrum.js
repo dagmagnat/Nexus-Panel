@@ -78,7 +78,7 @@ function csrfFrom(html) {
   cookie = cookieFrom(loginResponse) || cookie;
 
   const routes = [
-    '/dashboard', '/nodes', '/clients', '/clients?q=nexus01&edit=1', '/nodes/1/edit', '/vpn',
+    '/dashboard', '/nodes', '/clients', '/clients?q=nexus01&edit=1', '/nodes/1/edit',
     '/routing', '/redirects', '/diagnostics', '/telegram-bot', '/settings', '/more'
   ];
   const report = [];

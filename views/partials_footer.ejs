@@ -482,7 +482,6 @@
 
   function setupDesktopSettingsTabs(){
     if (!location.pathname.startsWith('/settings')) return;
-    if (!window.matchMedia || !window.matchMedia('(min-width: 901px)').matches) return;
     const grid = document.querySelector('.spectrum-page-content > .grid, main > .grid');
     if (!grid || grid.dataset.tabsReady === '1') return;
     const sections = Array.from(grid.querySelectorAll(':scope > section.card'));
@@ -490,8 +489,12 @@
     grid.dataset.tabsReady = '1';
     grid.classList.add('desktop-settings-grid');
     const tabMeta = sections.map(function(section, index){
-      const title = (section.querySelector('h2') && section.querySelector('h2').textContent || ('Раздел ' + (index + 1))).replace(/\s+/g,' ').trim();
-      const id = 'settings-tab-' + index;
+      const heading = section.querySelector('h2');
+      const titleNode = heading ? heading.cloneNode(true) : null;
+      if (titleNode) titleNode.querySelectorAll('.section-icon').forEach(function(icon){ icon.remove(); });
+      const title = ((titleNode && titleNode.textContent) || ('Раздел ' + (index + 1))).replace(/\s+/g,' ').trim();
+      const key = String(section.dataset.settingsKey || index).replace(/[^a-z0-9_-]/gi, '-');
+      const id = 'settings-tab-' + key;
       section.id = section.id || id;
       section.classList.add('settings-tab-panel');
       section.dataset.settingsTab = id;

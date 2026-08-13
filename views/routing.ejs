@@ -62,8 +62,8 @@
 <% if (message) { %><div class="alert ok"><%= message %></div><% } %>
 <% if (error) { %><div class="alert err"><%= error %></div><% } %>
 
-<div class="grid">
-  <section class="card span-6">
+<div class="grid routing-page-grid">
+  <section class="card span-6 routing-editor-card">
     <h2>Параметры для JSON</h2>
     <p class="muted">Эти настройки применяются к JSON-подпискам узлов 3x-ui: <code>/json/:slug</code>. Здесь задаются только собственные правила domain/geosite и IP/geoip, исключения, DNS и блокировка.</p>
 
@@ -208,7 +208,7 @@
     </form>
   </section>
 
-  <section class="card span-6">
+  <section class="card span-6 routing-summary-card">
     <h2>Текущий итог</h2>
     <div class="kv-list">
       <div class="kv-item">

@@ -36,8 +36,8 @@
 <% if (message) { %><div class="alert ok"><%= message %></div><% } %>
 <% if (error) { %><div class="alert err"><%= error %></div><% } %>
 
-<div class="grid">
-  <section class="card span-7">
+<div class="grid redirect-page-grid">
+  <section class="card span-7 redirect-editor-card">
     <h2>Создать перенаправление</h2>
     <p class="muted">Выбери IP текущего сервера панели и узлы. После применения адрес выбранных узлов в JSON/SUB будет заменяться на IP панели, а host-helper на сервере сделает перенаправление на настоящий IP узла и его порт.</p>
     <form method="post" action="/redirects/apply" class="js-long-action" data-loading-title="Сохраняю перенаправление" data-loading-text="Готовлю правила для helper. Применение iptables на хосте занимает несколько секунд.">
@@ -116,7 +116,7 @@
     </form>
   </section>
 
-  <section class="card span-5">
+  <section class="card span-5 redirect-status-card">
     <div class="section-title-row redirect-refresh-title">
       <h2>Статус helper</h2>
       <div class="redirect-refresh-controls" aria-label="Автообновление страницы перенаправления">
