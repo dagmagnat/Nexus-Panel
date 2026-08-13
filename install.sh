@@ -32,6 +32,14 @@ warn() { echo -e "${YELLOW}$*${NC}"; }
 err() { echo -e "${RED}$*${NC}"; }
 info() { echo -e "${CYAN}$*${NC}"; }
 
+maybe_clear_screen() {
+  # По умолчанию сохраняем журнал терминала: при установке через SSH ошибки
+  # curl/apt должны оставаться видимыми. Очистку можно включить явно.
+  if [ "${NEXUS_INSTALLER_CLEAR:-0}" = "1" ] && [ -t 1 ]; then
+    clear || true
+  fi
+}
+
 require_root() {
   if [ "${EUID}" -ne 0 ]; then
     err "Запусти установку от root: sudo -i"
@@ -2216,7 +2224,7 @@ main_menu() {
 }
 
 main() {
-  clear || true
+  maybe_clear_screen
   say "=============================================="
   say "Установка / обновление Nexus Panel"
   say "=============================================="
@@ -2285,10 +2293,11 @@ main() {
 }
 
 
-# Test/helper mode: load the installer functions without starting the
-# interactive menu. Normal installation never sets this variable.
-if [ "${NEXUS_INSTALLER_LIBRARY_ONLY:-0}" = "1" ]; then
-  return 0 2>/dev/null || exit 0
+# Test/helper mode is valid only when this file is sourced. Previously an
+# exported NEXUS_INSTALLER_LIBRARY_ONLY=1 also suppressed a normal
+# `bash install.sh` invocation and produced a completely silent exit.
+if [ "${NEXUS_INSTALLER_LIBRARY_ONLY:-0}" = "1" ] && [ "${BASH_SOURCE[0]}" != "$0" ]; then
+  return 0
 fi
 
 if [ "${1:-}" = "clients" ]; then
@@ -2304,7 +2313,7 @@ if [ "${1:-}" = "settings" ]; then
 fi
 
 if [ "${1:-}" = "update" ] || [ "${1:-}" = "--update-files-only" ]; then
-  clear || true
+  maybe_clear_screen
   say "=============================================="
   say "Web/CLI update: обновление файлов без изменения настроек"
   say "=============================================="

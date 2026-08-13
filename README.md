@@ -38,10 +38,22 @@ Nexus Panel — панель агрегации и управления узла
 
 ```bash
 sudo -i
-apt-get update && apt-get install -y curl
-curl -fsSL https://raw.githubusercontent.com/dagmagnat/Nexus-Panel/main/install.sh -o /tmp/nexus-panel-install.sh
-bash /tmp/nexus-panel-install.sh
+unset NEXUS_INSTALLER_LIBRARY_ONLY
+apt-get update
+apt-get install -y ca-certificates curl
+curl --fail --show-error --location --retry 5 --retry-delay 2 --connect-timeout 20 \
+  https://raw.githubusercontent.com/dagmagnat/Nexus-Panel/main/install.sh \
+  -o /tmp/nexus-panel-install.sh \
+  && test -s /tmp/nexus-panel-install.sh \
+  && grep -q '^#!/usr/bin/env bash' /tmp/nexus-panel-install.sh \
+  && bash /tmp/nexus-panel-install.sh 2>&1 | tee /root/nexus-panel-install.log
 ```
+
+Если приглашение уже имеет вид `root@server:~#`, повторять `sudo -i` не нужно.
+Сообщение `/usr/bin/xauth: file /root/.Xauthority does not exist` относится к
+SSH X11 forwarding, а не к Nexus Panel, и не мешает установке. Команда выше не
+запускает пустой или ошибочно загруженный файл и сохраняет полный журнал в
+`/root/nexus-panel-install.log`.
 
 Установщик сам скачает `dagmagnat/Nexus-Panel`, создаст конфигурацию, установит Docker при необходимости и покажет точный адрес входа с ключом.
 
@@ -66,8 +78,13 @@ agg
 Если установка ещё привязана к старому репозиторию `dagmagnat/3xui-Aggregator`, сначала убедитесь, что файлы Nexus Panel уже загружены в ветку `main`, создайте резервную копию через пункт `5`, а затем один раз запустите новый установщик напрямую:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/dagmagnat/Nexus-Panel/main/install.sh -o /tmp/nexus-panel-install.sh
-bash /tmp/nexus-panel-install.sh update
+unset NEXUS_INSTALLER_LIBRARY_ONLY
+curl --fail --show-error --location --retry 5 --retry-delay 2 --connect-timeout 20 \
+  https://raw.githubusercontent.com/dagmagnat/Nexus-Panel/main/install.sh \
+  -o /tmp/nexus-panel-install.sh \
+  && test -s /tmp/nexus-panel-install.sh \
+  && grep -q '^#!/usr/bin/env bash' /tmp/nexus-panel-install.sh \
+  && bash /tmp/nexus-panel-install.sh update 2>&1 | tee /root/nexus-panel-update.log
 ```
 
 Версия 1.0.7 сначала проверяет новый репозиторий без остановки контейнеров, затем автоматически меняет старый Git `origin` и обновляет файлы. При недоступном или пустом репозитории рабочая панель не останавливается. Каталог `data`, `.env`, `.install.conf` и `.source.conf` не удаляются, поэтому клиенты, UUID, привязки узлов и настройки сохраняются.

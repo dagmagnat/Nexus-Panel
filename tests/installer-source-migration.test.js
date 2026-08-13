@@ -135,3 +135,22 @@ test('failed source download does not stop the running installation', () => {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+test('installer cannot silently exit when helper-only variable is exported', () => {
+  const source = fs.readFileSync(installerPath, 'utf8');
+  assert.match(
+    source,
+    /NEXUS_INSTALLER_LIBRARY_ONLY[^\n]+BASH_SOURCE\[0\][^\n]+!=[^\n]+\$0/,
+    'helper-only guard must be limited to sourcing the installer'
+  );
+  assert.match(source, /maybe_clear_screen/, 'SSH diagnostics stay visible by default');
+});
+
+test('README bootstrap validates the downloaded installer before execution', () => {
+  const readme = fs.readFileSync(path.join(projectRoot, 'README.md'), 'utf8');
+  assert.match(readme, /unset NEXUS_INSTALLER_LIBRARY_ONLY/);
+  assert.match(readme, /--retry 5 --retry-delay 2 --connect-timeout 20/);
+  assert.match(readme, /test -s \/tmp\/nexus-panel-install\.sh/);
+  assert.match(readme, /grep -q '\^#!\/usr\/bin\/env bash'/);
+  assert.match(readme, /tee \/root\/nexus-panel-install\.log/);
+});
