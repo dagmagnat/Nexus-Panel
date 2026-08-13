@@ -836,6 +836,13 @@ app.use((req, res, next) => {
   next();
 });
 app.use(bodyParser.urlencoded({ extended: true, limit: '2mb' }));
+app.use(['/css/spectrum-clear.css', '/site.webmanifest'], (req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.setHeader('Surrogate-Control', 'no-store');
+  next();
+});
 app.use(express.static('public'));
 app.use(session({
   store: new SQLiteStore({ db: 'sessions.sqlite', dir: DATA_DIR }),
@@ -970,6 +977,13 @@ function isStaticAssetPath(pathname) {
     || pathname === '/favicon.ico';
 }
 
+function isBrowserPanelNavigation(req) {
+  if (req.method !== 'GET') return false;
+  const destination = String(req.headers['sec-fetch-dest'] || '').toLowerCase();
+  const accept = String(req.headers.accept || '').toLowerCase();
+  return destination === 'document' || accept.includes('text/html');
+}
+
 function requirePanelAccessKey(req, res, next) {
   let accessKey = getCurrentPanelAccessKey();
   const environment = getPanelAccessKeyEnvironmentState();
@@ -1030,6 +1044,11 @@ function requirePanelAccessKey(req, res, next) {
     return next();
   }
 
+  // Never strand an installed PWA or an old mobile shortcut on a plain 404.
+  // The login form is still protected by the administrator password, allowed
+  // IP list and brute-force throttling. Non-browser requests remain hidden.
+  if (req.path === '/login' || req.path === '/mobile-login') return next();
+  if (isBrowserPanelNavigation(req)) return res.redirect('/mobile-login');
   return res.status(404).send('Not found');
 }
 

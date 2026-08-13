@@ -1,14 +1,14 @@
 {
-  "version": "stage201-spectrum-clear-2.0.1-2026-08-13",
-  "name": "Nexus Panel 2.0.1 — Spectrum Clear UI correction",
+  "version": "stage202-spectrum-clear-2.0.2-2026-08-13",
+  "name": "Nexus Panel 2.0.2 — routing and mobile login hotfix",
   "repository": "https://github.com/dagmagnat/Nexus-Panel",
   "archive_url": "https://github.com/dagmagnat/Nexus-Panel/archive/refs/heads/main.zip",
   "archive": "Nexus-Panel-main.zip",
   "filename": "Nexus-Panel-main.zip",
   "notes": [
-    "Убраны блок потребления по узлам, VPN-сервисы из навигации и дублирующая вкладка Telegram в настройках.",
-    "Исправлены размеры и выравнивание строк узлов, кнопок клиентов, форм маршрутизации, перенаправления и карточек настроек.",
-    "Настройки на мобильном теперь открываются по компактным вкладкам; узлы, клиенты и dashboard используют отдельные мобильные компоновки.",
-    "Существующие клиенты, UUID, sub_slug, ссылки, .env и data не изменяются; старые данные VPN не удаляются из базы."
+    "Форма маршрутизации получила независимую адаптивную сетку и больше не сжимается в узкие вертикальные полосы.",
+    "CSS и webmanifest больше не кешируются прокси/браузером, а их URL получили новую ревизию.",
+    "Мобильный ярлык запускает /mobile-login; старые ссылки /login и закрытые страницы после потери сессии ведут на вход вместо Not found.",
+    "Пароль, разрешённые admin IP, блокировка перебора, клиенты, UUID, ссылки, .env и data остаются без изменений."
   ]
 }

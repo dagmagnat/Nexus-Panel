@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 INSTANCE_NAME="${AGG_INSTANCE:-${INSTANCE_NAME:-default}}"
 APP_DIR="${APP_DIR:-/opt/3xui-aggregator}"
@@ -10,7 +10,19 @@ GREEN='\033[1;32m'
 YELLOW='\033[1;33m'
 RED='\033[1;31m'
 CYAN='\033[1;36m'
+BLUE='\033[1;34m'
+MAGENTA='\033[1;35m'
+BOLD='\033[1m'
+DIM='\033[2m'
 NC='\033[0m'
+
+NEXUS_UI_ACTIVE=0
+NEXUS_UI_ANIMATE=0
+NEXUS_UI_STEP=0
+NEXUS_UI_ERROR_SHOWN=0
+NEXUS_UI_LAST_STEP_LOG=""
+NEXUS_UI_LOG_FILE=""
+NEXUS_UI_LOG_DIR=""
 
 ENV_FILE="$APP_DIR/.env"
 INSTALL_CONF="$APP_DIR/.install.conf"
@@ -31,6 +43,152 @@ say() { echo -e "${GREEN}$*${NC}"; }
 warn() { echo -e "${YELLOW}$*${NC}"; }
 err() { echo -e "${RED}$*${NC}"; }
 info() { echo -e "${CYAN}$*${NC}"; }
+
+ui_init() {
+  [ "$NEXUS_UI_ACTIVE" = "1" ] && return 0
+  NEXUS_UI_ACTIVE=1
+
+  local stamp log_root
+  stamp="$(date -u +%Y%m%d-%H%M%S)"
+  log_root="${NEXUS_INSTALLER_LOG_DIR:-/var/log/nexus-panel}"
+  NEXUS_UI_LOG_DIR="$log_root/install-$stamp-$$"
+  NEXUS_UI_LOG_FILE="$log_root/install-$stamp-$$.log"
+  mkdir -p "$NEXUS_UI_LOG_DIR"
+  : > "$NEXUS_UI_LOG_FILE"
+  chmod 700 "$NEXUS_UI_LOG_DIR" 2>/dev/null || true
+  chmod 600 "$NEXUS_UI_LOG_FILE" 2>/dev/null || true
+
+  # Даже если stdout направлен в tee, stdin и /dev/tty остаются терминалом.
+  # Поэтому анимация видна пользователю, а обычный текст сохраняется в журнал.
+  if [ "${NEXUS_INSTALLER_PLAIN:-0}" != "1" ] && [ -t 0 ] && [ -w /dev/tty ]; then
+    if exec 9>/dev/tty 2>/dev/null; then
+      NEXUS_UI_ANIMATE=1
+    fi
+  fi
+}
+
+ui_banner() {
+  ui_init
+  printf '\n'
+  printf "${CYAN}        ╭──────────────────────────────────────╮${NC}\n"
+  printf "${CYAN}        │${NC} ${MAGENTA}◆${NC}  ${BOLD}N E X U S   P A N E L${NC}           ${CYAN}│${NC}\n"
+  printf "${CYAN}        │${NC}    ${DIM}Spectrum installer · safe deploy${NC}    ${CYAN}│${NC}\n"
+  printf "${CYAN}        ╰──────────────────────────────────────╯${NC}\n"
+  printf "${DIM}        Клиенты, UUID, ссылки и data сохраняются${NC}\n\n"
+  printf 'Nexus Panel installer started: %s\n' "$(date -Is)" >> "$NEXUS_UI_LOG_FILE"
+}
+
+ui_section() {
+  local title="$1"
+  printf '\n'
+  printf "${BLUE}  ┌─ ${BOLD}%s${NC}\n" "$title"
+}
+
+ui_step_success() {
+  local number="$1" label="$2" elapsed="$3"
+  printf "${GREEN}  ✓${NC} ${DIM}%02d${NC}  %-48s ${DIM}%ss${NC}\n" "$number" "$label" "$elapsed"
+}
+
+ui_step_failure() {
+  local number="$1" label="$2" status="$3" step_log="$4"
+  NEXUS_UI_ERROR_SHOWN=1
+  printf "${RED}  ✕ %02d  %s${NC} ${DIM}(код %s)${NC}\n" "$number" "$label" "$status" >&2
+  printf "${RED}  ├─ Ошибка команды. Последние строки:${NC}\n" >&2
+  if [ -s "$step_log" ]; then
+    tail -n "${NEXUS_INSTALLER_ERROR_LINES:-80}" "$step_log" | sed 's/^/  │  /' >&2
+  else
+    printf '  │  Команда завершилась без диагностического вывода.\n' >&2
+  fi
+  printf "${RED}  └─ Полный журнал: %s${NC}\n" "$NEXUS_UI_LOG_FILE" >&2
+}
+
+ui_run() {
+  local label="$1"
+  shift
+  ui_init
+  NEXUS_UI_STEP=$((NEXUS_UI_STEP + 1))
+  NEXUS_UI_ERROR_SHOWN=0
+
+  local number step_log start now elapsed pid status frame_index
+  local -a frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+  number="$NEXUS_UI_STEP"
+  step_log="$NEXUS_UI_LOG_DIR/step-$(printf '%02d' "$number").log"
+  NEXUS_UI_LAST_STEP_LOG="$step_log"
+  start="$(date +%s)"
+  frame_index=0
+
+  {
+    printf '\n===== STEP %02d: %s =====\n' "$number" "$label"
+    printf 'Started: %s\n' "$(date -Is)"
+  } >> "$NEXUS_UI_LOG_FILE"
+
+  "$@" > "$step_log" 2>&1 &
+  pid=$!
+
+  if [ "$NEXUS_UI_ANIMATE" = "1" ]; then
+    while kill -0 "$pid" 2>/dev/null; do
+      now="$(date +%s)"
+      elapsed=$((now - start))
+      printf '\r\033[2K%s  %s %02d  %s · %ss%s' "$CYAN" "${frames[$frame_index]}" "$number" "$label" "$elapsed" "$NC" >&9
+      frame_index=$(((frame_index + 1) % ${#frames[@]}))
+      sleep 0.12
+    done
+    printf '\r\033[2K' >&9
+  else
+    printf "${CYAN}  …${NC} ${DIM}%02d${NC}  %s\n" "$number" "$label"
+    while kill -0 "$pid" 2>/dev/null; do
+      sleep 0.2
+      now="$(date +%s)"
+      elapsed=$((now - start))
+      if [ "$elapsed" -gt 0 ] && [ $((elapsed % 15)) -eq 0 ] && [ "${NEXUS_UI_LAST_REPORT:-}" != "$elapsed" ]; then
+        printf "${DIM}      всё ещё выполняется · %ss${NC}\n" "$elapsed"
+        NEXUS_UI_LAST_REPORT="$elapsed"
+      fi
+    done
+  fi
+
+  if wait "$pid"; then
+    status=0
+  else
+    status=$?
+  fi
+  now="$(date +%s)"
+  elapsed=$((now - start))
+  cat "$step_log" >> "$NEXUS_UI_LOG_FILE"
+  printf 'Finished: %s (status=%s)\n' "$(date -Is)" "$status" >> "$NEXUS_UI_LOG_FILE"
+
+  if [ "$status" -eq 0 ]; then
+    ui_step_success "$number" "$label" "$elapsed"
+    return 0
+  fi
+
+  ui_step_failure "$number" "$label" "$status" "$step_log"
+  return "$status"
+}
+
+ui_unhandled_error() {
+  local status="${1:-1}" line="${2:-?}"
+  [ "$status" -ne 0 ] || return 0
+  [ "$NEXUS_UI_ERROR_SHOWN" = "1" ] && return 0
+  NEXUS_UI_ERROR_SHOWN=1
+  set +e
+  printf '\n'
+  printf "${RED}  ╭─ Установка остановлена${NC}\n" >&2
+  printf "${RED}  │  Код ошибки: %s · строка install.sh: %s${NC}\n" "$status" "$line" >&2
+  if [ -n "$NEXUS_UI_LAST_STEP_LOG" ] && [ -s "$NEXUS_UI_LAST_STEP_LOG" ]; then
+    printf "${RED}  │  Последние строки:${NC}\n" >&2
+    tail -n "${NEXUS_INSTALLER_ERROR_LINES:-80}" "$NEXUS_UI_LAST_STEP_LOG" | sed 's/^/  │  /' >&2
+  fi
+  if [ -n "$NEXUS_UI_LOG_FILE" ]; then
+    printf "${RED}  ╰─ Журнал: %s${NC}\n" "$NEXUS_UI_LOG_FILE" >&2
+  else
+    printf "${RED}  ╰─ Проверь вывод выше.${NC}\n" >&2
+  fi
+}
+
+ui_install_error_trap() {
+  trap 'ui_unhandled_error "$?" "$LINENO"' ERR
+}
 
 maybe_clear_screen() {
   # По умолчанию сохраняем журнал терминала: при установке через SSH ошибки
@@ -533,9 +691,11 @@ EOF
 }
 
 install_packages() {
-  say "Обновляю пакеты..."
-  apt-get update -y
-  DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl git lsb-release openssl apt-transport-https software-properties-common iproute2 iptables nftables netcat-openbsd python3 openssh-server sudo
+  ui_run "Обновление списка пакетов" apt-get update -y
+  ui_run "Установка системных компонентов" env DEBIAN_FRONTEND=noninteractive \
+    apt-get install -y ca-certificates curl git lsb-release openssl \
+    apt-transport-https software-properties-common iproute2 iptables nftables \
+    netcat-openbsd python3 openssh-server sudo
 }
 
 install_vpn_local_ssh_access() {
@@ -608,14 +768,19 @@ EOF
 
 install_docker_if_needed() {
   if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
-    say "Docker и Docker Compose уже установлены."
+    NEXUS_UI_STEP=$((NEXUS_UI_STEP + 1))
+    ui_step_success "$NEXUS_UI_STEP" "Docker и Docker Compose уже установлены" "0"
     return
   fi
 
-  say "Устанавливаю Docker..."
-  curl -fsSL https://get.docker.com | sh
-  systemctl enable docker
-  systemctl start docker
+  local docker_installer
+  docker_installer="$(mktemp)"
+  ui_run "Загрузка официального Docker installer" \
+    curl --fail --show-error --location --retry 5 --retry-delay 2 \
+      --connect-timeout 20 https://get.docker.com -o "$docker_installer"
+  ui_run "Установка Docker Engine и Compose" sh "$docker_installer"
+  rm -f "$docker_installer"
+  ui_run "Запуск службы Docker" systemctl enable --now docker
 
   if ! docker compose version >/dev/null 2>&1; then
     err "Docker установлен, но docker compose недоступен."
@@ -671,7 +836,8 @@ clone_or_update_repo() {
     # интерактивного запроса логина не даёт обновлению зависнуть на удалённом
     # или приватном прежнем репозитории. До успешной загрузки стек продолжает
     # работать и git-конфигурация остаётся прежней.
-    if ! GIT_TERMINAL_PROMPT=0 git -c credential.interactive=never -C "$APP_DIR" fetch --prune "$repo_url" "$branch"; then
+    if ! ui_run "Загрузка обновлений Nexus Panel" env GIT_TERMINAL_PROMPT=0 \
+      git -c credential.interactive=never -C "$APP_DIR" fetch --prune "$repo_url" "$branch"; then
       err "Не удалось скачать $repo_url (ветка $branch). Панель не остановлена и данные не изменены."
       return 1
     fi
@@ -687,11 +853,12 @@ clone_or_update_repo() {
     fi
     git -C "$APP_DIR" update-ref "refs/remotes/origin/$branch" "$target_commit"
   else
-    say "Сначала скачиваю проект во временный каталог, не останавливая панель..."
+    info "Сначала скачиваю проект во временный каталог, не останавливая панель..."
     local tmp_dir preserve_dir
     tmp_dir="$(mktemp -d)"
     preserve_dir="$(mktemp -d)"
-    if ! GIT_TERMINAL_PROMPT=0 git -c credential.interactive=never clone -b "$branch" "$repo_url" "$tmp_dir"; then
+    if ! ui_run "Загрузка Nexus Panel из GitHub" env GIT_TERMINAL_PROMPT=0 \
+      git -c credential.interactive=never clone -b "$branch" "$repo_url" "$tmp_dir"; then
       rm -rf "$tmp_dir" "$preserve_dir"
       err "Не удалось скачать $repo_url (ветка $branch). Панель не остановлена и данные не изменены."
       return 1
@@ -1208,9 +1375,7 @@ compose_up_build() {
 }
 
 start_stack() {
-  say "Собираю и запускаю контейнеры..."
-  info "Docker build: npm ci по package-lock, официальный registry, host network и fallback registry."
-  compose_up_build
+  ui_run "Сборка и запуск контейнеров" compose_up_build
 }
 
 stop_existing_aggregator_stack() {
@@ -1300,7 +1465,7 @@ EOF
 }
 
 create_backup() {
-  say "Создаю резервную копию..."
+  ui_section "Резервная копия"
   mkdir -p "$BACKUP_DIR"
 
   local stamp archive_name archive_path had_compose
@@ -1318,7 +1483,8 @@ create_backup() {
     docker compose stop || true
   fi
 
-  tar -czf "$archive_path" -C "$(dirname "$APP_DIR")" "$(basename "$APP_DIR")"
+  ui_run "Архивация Nexus Panel" tar -czf "$archive_path" \
+    -C "$(dirname "$APP_DIR")" "$(basename "$APP_DIR")"
 
   say "Резервная копия создана:"
   say "$archive_path"
@@ -1349,8 +1515,7 @@ restore_from_backup() {
   rm -rf "$APP_DIR"
   mkdir -p /opt
 
-  say "Распаковываю резервную копию..."
-  tar -xzf "$archive_path" -C /opt
+  ui_run "Распаковка резервной копии" tar -xzf "$archive_path" -C /opt
 
   if [ ! -d "$APP_DIR" ]; then
     err "После распаковки каталог $APP_DIR не найден."
@@ -1672,6 +1837,7 @@ normalize_modes_after_port_choice() {
 }
 
 prepare_config_and_run() {
+  ui_section "Применение конфигурации"
   local server_ip
   server_ip="$(get_public_server_ip)"
 
@@ -1702,8 +1868,9 @@ prepare_config_and_run() {
   write_env_file
   write_runtime_files
   write_dockerfile_patch_note
-  install_vpn_local_ssh_access
+  ui_run "Подготовка локального VPN-доступа" install_vpn_local_ssh_access
   start_stack
+  ui_section "Системные службы"
   install_forwarder_service
   install_web_update_service
   install_shortcut_command
@@ -1762,6 +1929,7 @@ copy_project_files_from_local_bundle() {
 }
 
 update_files_only() {
+  ui_section "Безопасное обновление"
   say "Обновляю файлы проекта без изменения настроек..."
   load_existing_config
 
@@ -1785,6 +1953,7 @@ update_files_only() {
 }
 
 change_settings_and_update() {
+  ui_section "Изменение параметров"
   say "Изменяю настройки и обновляю проект..."
   load_existing_config
 
@@ -1808,13 +1977,15 @@ change_settings_and_update() {
 }
 
 reinstall_full() {
+  ui_section "Полная переустановка"
   warn "Полная переустановка..."
   load_source_config
   warn "Сначала скачиваю свежую версию проекта. Старые файлы будут удалены только если скачивание успешно."
 
   local tmp_dir
   tmp_dir="$(mktemp -d)"
-  git clone -b "$BRANCH" "$REPO_URL" "$tmp_dir"
+  ui_run "Загрузка свежей версии Nexus Panel" env GIT_TERMINAL_PROMPT=0 \
+    git -c credential.interactive=never clone -b "$BRANCH" "$REPO_URL" "$tmp_dir"
 
   stop_existing_aggregator_stack
   rm -rf "$APP_DIR"
@@ -1827,10 +1998,12 @@ reinstall_full() {
 }
 
 fresh_install_flow() {
+  ui_section "Новая установка"
   prompt_instance_for_new_install
   load_source_config
   clone_or_update_repo "$REPO_URL" "$BRANCH"
   load_existing_config
+  ui_section "Параметры панели"
   first_install_wizard
   prepare_config_and_run
   install_shortcut_command
@@ -1839,21 +2012,22 @@ fresh_install_flow() {
 print_result() {
   local effective_access_key=""
   effective_access_key="$(get_effective_panel_access_key)"
-  echo
-  say "=============================================="
-  say "Готово"
-  say "=============================================="
-  say "Экземпляр: ${INSTANCE_NAME}"
-  say "Адрес панели: ${PANEL_PUBLIC_URL}"
+  printf '\n'
+  printf "${GREEN}  ╭────────────────────────────────────────────────────────────╮${NC}\n"
+  printf "${GREEN}  │  ✓  NEXUS PANEL УСТАНОВЛЕНА                              │${NC}\n"
+  printf "${GREEN}  ╰────────────────────────────────────────────────────────────╯${NC}\n"
+  printf "${DIM}  Экземпляр${NC}       %s\n" "${INSTANCE_NAME}"
+  printf "${DIM}  Адрес панели${NC}    %s\n" "${PANEL_PUBLIC_URL}"
   if [ -n "$effective_access_key" ]; then
-    say "Адрес входа в панель: ${PANEL_PUBLIC_URL}/login?key=${effective_access_key}"
+    printf "${DIM}  Адрес входа${NC}     ${CYAN}%s/mobile-login?key=%s${NC}\n" "${PANEL_PUBLIC_URL}" "$effective_access_key"
   fi
-  say "Публичный адрес подписок: ${SUB_PUBLIC_URL}"
+  printf "${DIM}  Подписки${NC}        %s\n" "${SUB_PUBLIC_URL}"
   if [ -n "${BIND_IP:-}" ]; then
-    say "Привязка портов Caddy к IP: ${BIND_IP}"
+    printf "${DIM}  Caddy bind IP${NC}   %s\n" "${BIND_IP}"
   fi
-  say "Логин: ${ADMIN_USER}"
-  say "Каталог проекта: ${APP_DIR}"
+  printf "${DIM}  Логин${NC}           %s\n" "${ADMIN_USER}"
+  printf "${DIM}  Каталог${NC}         %s\n" "${APP_DIR}"
+  printf "${DIM}  Журнал${NC}          %s\n" "${NEXUS_UI_LOG_FILE:-/root/nexus-panel-install.log}"
   echo
   warn "Адрес входа панели и публичный адрес подписок могут отличаться."
   warn "JSON/SUB-ссылки строятся от публичного адреса подписок, без secret-key."
@@ -1868,7 +2042,7 @@ print_result() {
     fi
   fi
   if [ -n "$effective_access_key" ]; then
-    warn "Без secret-key адрес /login будет отдавать 404. Сохрани адрес входа выше."
+    warn "Сохрани мобильный адрес входа выше. Старые ярлыки /login после обновлений автоматически откроют форму входа, а не 404."
   fi
   warn "Быстрый запуск меню: agg (или agg-${INSTANCE_NAME} для этого экземпляра)"
 }
@@ -1987,8 +2161,8 @@ PYDIAG
   [ -n "$public_url" ] || public_url="http://${PANEL_IP:-$(get_public_server_ip)}:${APP_PORT:-3000}"
   say "Панель: ${public_url}"
   if [ -n "$access_key" ]; then
-    say "Вход: ${public_url%/}/login?key=${access_key}"
-    warn "Без key адрес /login может отдавать 404 — это защита панели, а не поломка."
+    say "Вход: ${public_url%/}/mobile-login?key=${access_key}"
+    warn "Старые адреса /login автоматически открывают безопасную форму входа и больше не застревают на 404."
   fi
   warn "Если после диагностики всё ещё 502/404 — пришли вывод: cd $APP_DIR && docker compose ps && docker logs --tail=120 $AGG_CONTAINER_NAME"
 }
@@ -2210,31 +2384,31 @@ settings_transfer_cli() {
 
 main_menu() {
   echo >&2
-  say "Обнаружена существующая установка." >&2
-  say "1 - Новая установка / ещё один экземпляр" >&2
-  say "2 - Обновить файлы без изменения настроек" >&2
-  say "3 - Изменить настройки установки и обновить" >&2
-  say "4 - Переустановить заново" >&2
-  say "5 - Создать резервную копию" >&2
-  say "6 - Восстановить из резервной копии" >&2
-  say "7 - Удалить проект" >&2
-  say "8 - Диагностика и восстановление доступа" >&2
-  say "0 - Выход" >&2
+  printf "${CYAN}  ╭─ Обнаружена существующая установка ───────────────╮${NC}\n" >&2
+  printf '  │  1  Новая установка / ещё один экземпляр        │\n' >&2
+  printf '  │  2  Обновить файлы, сохранив настройки           │\n' >&2
+  printf '  │  3  Изменить настройки и обновить                │\n' >&2
+  printf '  │  4  Переустановить заново                         │\n' >&2
+  printf '  │  5  Создать резервную копию                       │\n' >&2
+  printf '  │  6  Восстановить резервную копию                  │\n' >&2
+  printf '  │  7  Удалить проект                                │\n' >&2
+  printf '  │  8  Диагностика и восстановление доступа          │\n' >&2
+  printf '  │  0  Выход                                         │\n' >&2
+  printf "${CYAN}  ╰────────────────────────────────────────────────────╯${NC}\n" >&2
   ask 'Выбери действие' '2'
 }
 
 main() {
   maybe_clear_screen
-  say "=============================================="
-  say "Установка / обновление Nexus Panel"
-  say "=============================================="
-  say "Скрипт умеет: установка, обновление, изменение настроек, резервное копирование и восстановление."
-  echo
-
   require_root
+  ui_init
+  ui_install_error_trap
+  ui_banner
+
   refresh_runtime_paths
   load_source_config
   refresh_runtime_paths
+  ui_section "Подготовка сервера"
   install_packages
   install_docker_if_needed
   ensure_dir
@@ -2314,13 +2488,14 @@ fi
 
 if [ "${1:-}" = "update" ] || [ "${1:-}" = "--update-files-only" ]; then
   maybe_clear_screen
-  say "=============================================="
-  say "Web/CLI update: обновление файлов без изменения настроек"
-  say "=============================================="
   require_root
+  ui_init
+  ui_install_error_trap
+  ui_banner
   refresh_runtime_paths
   load_source_config
   refresh_runtime_paths
+  ui_section "Подготовка сервера"
   install_packages
   install_docker_if_needed
   ensure_dir

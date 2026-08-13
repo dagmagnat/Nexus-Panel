@@ -6,7 +6,7 @@
 
 Nexus Panel — панель агрегации и управления узлами **3x-ui** и **Remnawave**: клиенты, SUB/JSON-подписки, маршрутизация, трафик, Telegram и синхронизация выбранного inbound.
 
-[![Version](https://img.shields.io/badge/version-2.0.1-blue)](https://github.com/dagmagnat/Nexus-Panel)
+[![Version](https://img.shields.io/badge/version-2.0.2-blue)](https://github.com/dagmagnat/Nexus-Panel)
 ![Node.js](https://img.shields.io/badge/node-%3E%3D22-gray)
 ![License](https://img.shields.io/badge/license-MIT-gray)
 
@@ -226,7 +226,7 @@ Nexus Panel проверяет сертификат удалённого узл�
 
 ### `Not found` при входе
 
-Используйте полный адрес `/login?key=...`, который напечатал установщик. После первой успешной проверки ключ синхронизируется с SQLite, а параметр `key` удаляется из адресной строки безопасным редиректом.
+Начиная с версии 2.0.2 мобильный ярлык использует постоянную точку `/mobile-login`. Старый `/login`, сохранённый до обновления, также открывает форму входа и больше не возвращает голый 404. Закрытые страницы без действующей сессии перенаправляют в безопасный вход; пароль, разрешённые IP и защита от перебора продолжают действовать.
 
 ## Структура проекта
 
