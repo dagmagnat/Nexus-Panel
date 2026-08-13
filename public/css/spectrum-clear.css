@@ -1107,6 +1107,8 @@ html[data-color-mode="light"] .routing-preview, html[data-color-mode="light"] .d
 .command-row, .sni-input-row, .redirect-refresh-controls { display: flex; align-items: center; gap: 8px; }
 .redirect-node-list, .geodata-lists { display: grid; gap: 9px; }
 .routing-page-grid, .redirect-page-grid { align-items: start; }
+.routing-page-grid { grid-template-columns: minmax(0, 3fr) minmax(360px, 2fr); }
+.routing-page-grid > .routing-editor-card, .routing-page-grid > .routing-summary-card { grid-column: auto; }
 .routing-editor-card, .routing-summary-card, .redirect-editor-card, .redirect-status-card { min-width: 0; }
 .routing-summary-card { position: sticky; top: 105px; }
 .routing-summary-card .kv-item { align-items: start; }
@@ -1336,6 +1338,7 @@ details[open] > summary { margin-bottom: 10px; color: var(--text-strong); }
   .happ-control-layout, .node-edit-layout, .vpn-host-create-layout, .vpn-hosts-shell { grid-template-columns: minmax(0, 1fr); }
   .happ-help-panel, .node-edit-help-card { position: static; }
   .routing-summary-card { position: static; }
+  .routing-page-grid { grid-template-columns: minmax(0, 1fr); }
   .sni-profile-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .sni-profile-actions { align-self: end; }
   .stage11-more-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
