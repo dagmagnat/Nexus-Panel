@@ -34,6 +34,7 @@ test('Nexus Panel brand assets contain the expected web icon sizes', () => {
 test('manifest and every standalone page use the Nexus Panel logo', () => {
   const manifest = JSON.parse(readProjectFile('public/site.webmanifest').toString('utf8'));
   assert.equal(manifest.name, 'Nexus Panel');
+  assert.equal(manifest.start_url, '/mobile-login');
   assert.deepEqual(manifest.icons.map(icon => icon.sizes), ['192x192', '512x512']);
 
   for (const view of ['views/partials_header.ejs', 'views/login.ejs', 'views/open_sub.ejs']) {

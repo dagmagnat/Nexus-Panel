@@ -91,6 +91,13 @@ async function requestLogin(port, key) {
   });
 }
 
+async function requestProtected(port, key, accept = 'application/json') {
+  return fetch(`http://127.0.0.1:${port}/dashboard?key=${encodeURIComponent(key)}`, {
+    headers: { accept },
+    redirect: 'manual'
+  });
+}
+
 function setDatabaseSetting(dataDir, key, value) {
   const db = new Database(path.join(dataDir, 'app.db'));
   try {
@@ -176,9 +183,11 @@ test('panel access key recovers once from .env and respects later UI changes', {
   setDatabaseSetting(dataDir, 'panel_access_key', uiKey);
   assert.equal(printRuntimePanelAccessKey(dataDir, recoveredEnvironmentKey), uiKey);
   appInstance = await startApp(dataDir, recoveredEnvironmentKey);
-  response = await requestLogin(appInstance.port, recoveredEnvironmentKey);
+  response = await requestProtected(appInstance.port, recoveredEnvironmentKey);
   assert.equal(response.status, 404);
   assert.equal(await response.text(), 'Not found');
+  response = await requestLogin(appInstance.port, recoveredEnvironmentKey);
+  assert.equal(response.status, 200, 'stale key may show password login but must not unlock protected routes');
   response = await requestLogin(appInstance.port, uiKey);
   assert.equal(response.status, 302);
   await stopApp(appInstance);
@@ -193,4 +202,36 @@ test('panel access key recovers once from .env and respects later UI changes', {
   await stopApp(appInstance);
   appInstance = null;
   assert.equal(readPanelAccessKey(dataDir), rotatedEnvironmentKey);
+});
+
+test('mobile and stale browser shortcuts recover to login instead of Not found', { timeout: 30000 }, async t => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-mobile-login-'));
+  let appInstance = null;
+  t.after(async () => {
+    await stopApp(appInstance);
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  appInstance = await startApp(dataDir, 'mobile-entry-key-1234');
+
+  let response = await fetch(`http://127.0.0.1:${appInstance.port}/mobile-login`, { redirect: 'manual' });
+  assert.equal(response.status, 302);
+  assert.equal(response.headers.get('location'), '/login');
+
+  response = await fetch(`http://127.0.0.1:${appInstance.port}/login`, { redirect: 'manual' });
+  assert.equal(response.status, 200);
+  assert.match(await response.text(), /Вход в панель/);
+
+  response = await fetch(`http://127.0.0.1:${appInstance.port}/dashboard`, {
+    headers: { accept: 'text/html' },
+    redirect: 'manual'
+  });
+  assert.equal(response.status, 302);
+  assert.equal(response.headers.get('location'), '/mobile-login');
+
+  response = await fetch(`http://127.0.0.1:${appInstance.port}/dashboard`, {
+    headers: { accept: 'application/json' },
+    redirect: 'manual'
+  });
+  assert.equal(response.status, 404);
 });
