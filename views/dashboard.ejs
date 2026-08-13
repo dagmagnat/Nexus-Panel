@@ -107,34 +107,6 @@
     <div class="stats-number"><%= stats.offline %></div>
   </section>
 
-  <% const pulseList = (typeof pulseNodes !== 'undefined' && Array.isArray(pulseNodes)) ? pulseNodes : []; %>
-  <% if (pulseList.length) { %>
-  <section class="card span-12 agg-pulse-card" id="aggPulseCard">
-    <div class="agg-pulse-head">
-      <div>
-        <h2>Состояние узлов</h2>
-        <p class="muted">Статус узлов обновляется автоматически каждые 10 секунд. <span id="aggPulseUpdatedAt" aria-live="polite"></span></p>
-      </div>
-      <button type="button" class="btn-secondary" id="aggPulseCheckBtn">Проверить</button>
-    </div>
-    <div class="agg-pulse-list" id="aggPulseList">
-      <% pulseList.forEach(n => {
-        const code = String(n.country_code || '').trim().toUpperCase();
-        const title = nodeTitle({ country_name_ru: n.country_name_ru, name: n.name, label_suffix: n.label_suffix });
-        const state = !n.enabled ? 'disabled' : (n.last_status === 'online' ? 'online' : (n.last_status === 'offline' ? 'offline' : 'unknown'));
-      %>
-        <% const pulseFlag = flagImg(n.country_code, n.country_flag, n.country_name_ru || n.name, n.node_type); %>
-        <div class="agg-pulse-item" data-node-id="<%= n.id %>" data-state="<%= state %>" title="<%= title %>">
-          <% if (pulseFlag) { %><span class="agg-pulse-flag-img"><%- pulseFlag %></span><% } else if (code && code.length === 2 && !['ZZ','XX'].includes(code)) { %><span class="agg-pulse-flag"><%= code %></span><% } %>
-          <span class="agg-pulse-name"><%= title %></span>
-          <span class="agg-pulse-ms" data-pulse-ms><%= !n.enabled ? 'выкл' : '' %></span>
-          <span class="agg-pulse-dot" aria-hidden="true"></span>
-        </div>
-      <% }); %>
-    </div>
-  </section>
-  <% } %>
-
   <nav class="mobile-dashboard-tabs span-12" id="mobileDashboardTabs" aria-label="Разделы главной страницы">
     <button type="button" data-mobile-dashboard-tab="traffic"><span class="mobile-dashboard-tab-icon"><svg class="agg-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v9.5"/><path d="m7.5 10 4.5 4.5L16.5 10"/><path d="M5 19.5h14"/></svg></span><span class="mobile-dashboard-tab-label">Скачано</span></button>
     <button type="button" data-mobile-dashboard-tab="top"><span class="mobile-dashboard-tab-icon"><svg class="agg-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="7.8" r="3.3"/><path d="M3.4 20c.6-3.3 2.9-5.1 5.6-5.1s5 1.8 5.6 5.1"/><path d="M15.4 5.4a3.3 3.3 0 0 1 0 4.8M17.6 15.3c1.7.9 2.7 2.5 3 4.7"/></svg></span><span class="mobile-dashboard-tab-label">Кто больше потратил</span></button>
@@ -914,72 +886,6 @@ function normalizeDashboardSearchText(value) {
   render();
 })();
 
-
-(function aggPulse(){
-  const btn = document.getElementById('aggPulseCheckBtn');
-  const list = document.getElementById('aggPulseList');
-  const updatedAt = document.getElementById('aggPulseUpdatedAt');
-  if (!btn || !list) return;
-  let running = false;
-  let timer = null;
-
-  async function refreshNodeStatus() {
-    if (running || document.hidden) return;
-    running = true;
-    const items = Array.from(list.querySelectorAll('.agg-pulse-item'));
-    items.forEach(it => {
-      if (it.dataset.state !== 'disabled') {
-        it.dataset.state = 'checking';
-        const ms = it.querySelector('[data-pulse-ms]');
-        if (ms) ms.textContent = '…';
-      }
-    });
-    btn.disabled = true;
-    const oldText = btn.textContent;
-    btn.textContent = 'Проверяю…';
-    try {
-      const res = await fetch('/dashboard/node-status.json', {
-        headers: { 'Accept': 'application/json' },
-        cache: 'no-store'
-      });
-      const data = await res.json();
-      if (!res.ok || !data.ok) throw new Error(data.error || 'Не удалось проверить узлы');
-      const byId = new Map((data.checks || []).map(check => [String(check.nodeId), check]));
-      items.forEach(it => {
-        if (it.dataset.state === 'disabled') return;
-        const c = byId.get(String(it.dataset.nodeId));
-        const ms = it.querySelector('[data-pulse-ms]');
-        if (!c) { it.dataset.state = 'unknown'; if (ms) ms.textContent = ''; return; }
-        it.dataset.state = c.status === 'disabled' ? 'disabled' : (c.ok ? 'online' : 'offline');
-        if (ms) ms.textContent = c.ok
-          ? (c.ms ? Math.round(c.ms) + ' мс' : '')
-          : 'нет ответа';
-      });
-      if (updatedAt) {
-        const stamp = data.generatedAt ? new Date(data.generatedAt) : new Date();
-        updatedAt.textContent = 'Последняя проверка: ' + stamp.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + '.';
-      }
-    } catch (_) {
-      items.forEach(it => { if (it.dataset.state === 'checking') it.dataset.state = 'unknown'; });
-      if (updatedAt) updatedAt.textContent = 'Проверка временно недоступна.';
-    } finally {
-      running = false;
-      btn.disabled = false;
-      btn.textContent = oldText;
-    }
-  }
-
-  btn.addEventListener('click', refreshNodeStatus);
-  timer = window.setInterval(refreshNodeStatus, 10000);
-  window.setTimeout(refreshNodeStatus, 500);
-  document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) refreshNodeStatus();
-  });
-  window.addEventListener('pagehide', () => {
-    if (timer) window.clearInterval(timer);
-    timer = null;
-  }, { once: true });
-})();
 
 (function aggTrafficChart(){
   const wrap = document.getElementById('aggChartWrap');

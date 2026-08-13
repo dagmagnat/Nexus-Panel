@@ -905,6 +905,7 @@
     }
     const quick = e.target.closest('[data-client-quick]');
     if (quick) {
+      if (quick.matches('[data-mobile-client-card]') && e.target.closest('button, a, input, label, select, textarea, form')) return;
       e.preventDefault();
       openClientQuickCard(quick.getAttribute('data-client-quick'));
       return;

@@ -64,10 +64,33 @@
   .geodata-mini:hover { border-color:rgba(96,165,250,.75); }
   .geodata-mini.copy-ok { border-color:rgba(52,211,153,.75); }
   .geodata-help { margin-top:10px; font-size:12px; color:var(--muted); line-height:1.45; }
+  .routing-mobile-view-tabs { display:none; }
   @media (max-width: 1120px) {
     .routing-page-grid { grid-template-columns:minmax(0,1fr) !important; }
   }
   @media (max-width: 900px) {
+    .routing-mobile-view-tabs {
+      position:sticky;
+      top:58px;
+      z-index:45;
+      display:grid;
+      grid-template-columns:1fr 1fr;
+      gap:5px;
+      margin:0 0 10px;
+      padding:5px;
+      background:color-mix(in srgb, var(--surface) 94%, transparent);
+      border:1px solid var(--line);
+      border-radius:13px;
+      backdrop-filter:blur(18px);
+    }
+    .routing-mobile-view-tabs button { min-height:38px; padding:7px 9px; color:var(--muted); background:transparent; border:0; box-shadow:none; font-size:12px; }
+    .routing-mobile-view-tabs button.is-active { color:#fff; background:var(--brand-gradient); }
+    .routing-page-grid { display:block !important; width:100%; min-width:0; }
+    .routing-page-grid > section { width:100%; min-width:0; margin:0 0 11px; }
+    .routing-page-grid[data-mobile-view="editor"] > .routing-summary-card { display:none !important; }
+    .routing-page-grid[data-mobile-view="summary"] > .routing-editor-card,
+    .routing-page-grid[data-mobile-view="summary"] > .geodata-catalog-card { display:none !important; }
+    .routing-page-grid[data-mobile-view="summary"] > .routing-summary-card { display:block !important; position:static !important; }
     .routing-form .form-grid,
     .routing-form .mode-grid,
     .routing-form .dns-preset-grid { grid-template-columns:minmax(0,1fr) !important; }
@@ -75,13 +98,35 @@
     .geodata-catalog-card { position:static; }
     .geodata-lists { grid-template-columns:1fr; }
     .geodata-scroll { max-height:280px; }
+    .routing-editor-card,
+    .routing-summary-card,
+    .geodata-catalog-card { padding:12px !important; overflow:hidden; }
+    .routing-editor-card h2,
+    .routing-summary-card h2,
+    .geodata-catalog-card h2 { font-size:17px; }
+    .routing-form { gap:12px !important; }
+    .routing-form h3 { margin:2px 0 -3px; font-size:13px; }
+    .routing-form .switch-row,
+    .routing-form .preset-card { padding:9px; }
+    .routing-form .hint,
+    .routing-form small,
+    .routing-editor-card > .muted,
+    .geodata-help { font-size:10.5px; line-height:1.42; }
+    .routing-form textarea { min-height:104px; font-size:12px; line-height:1.42; }
+    .routing-preview { max-width:100%; overflow:auto; font-size:10.5px; }
+    .routing-summary-card .kv-item { grid-template-columns:1fr; gap:5px; padding:10px 0; }
   }
 </style>
 
 <% if (message) { %><div class="alert ok"><%= message %></div><% } %>
 <% if (error) { %><div class="alert err"><%= error %></div><% } %>
 
-<div class="grid routing-page-grid">
+<nav class="routing-mobile-view-tabs" aria-label="Раздел маршрутизации">
+  <button type="button" class="is-active" data-routing-mobile-view="editor">Настройка</button>
+  <button type="button" data-routing-mobile-view="summary">Текущий итог</button>
+</nav>
+
+<div class="grid routing-page-grid" data-mobile-view="editor">
   <section class="card span-6 routing-editor-card">
     <h2>Параметры для JSON</h2>
     <p class="muted">Эти настройки применяются к JSON-подпискам узлов 3x-ui: <code>/json/:slug</code>. Здесь задаются только собственные правила domain/geosite и IP/geoip, исключения, DNS и блокировка.</p>
@@ -460,6 +505,23 @@ async function loadGeodataCatalog(refresh) {
   }
 }
 
-document.addEventListener('DOMContentLoaded', () => loadGeodataCatalog(false));
+function setupRoutingMobileViews() {
+  const tabs = document.querySelector('.routing-mobile-view-tabs');
+  const grid = document.querySelector('.routing-page-grid');
+  if (!tabs || !grid) return;
+  tabs.addEventListener('click', event => {
+    const button = event.target.closest('[data-routing-mobile-view]');
+    if (!button) return;
+    const view = button.dataset.routingMobileView === 'summary' ? 'summary' : 'editor';
+    grid.dataset.mobileView = view;
+    tabs.querySelectorAll('[data-routing-mobile-view]').forEach(item => item.classList.toggle('is-active', item === button));
+    if (window.matchMedia('(max-width: 900px)').matches) tabs.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  setupRoutingMobileViews();
+  loadGeodataCatalog(false);
+});
 </script>
 <%- include('partials_footer') %>

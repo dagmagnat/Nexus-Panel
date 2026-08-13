@@ -809,7 +809,14 @@ function initNodeDetailsPanel() {
     if (search) search.value = '';
     if (type) type.value = 'all';
     if (state) state.value = 'all';
-    applyNodeFilters();
+    const activeStateFilter = String(document.getElementById('nodeStateFilter')?.value || 'all');
+    if (activeStateFilter === 'online' || activeStateFilter === 'offline') {
+      const previousPage = nodeCurrentPage;
+      applyNodeFilters();
+      nodeCurrentPage = previousPage;
+      renderNodePagination();
+      ensureSelectedNodeOnVisiblePage();
+    }
   });
   updateVisibleNodesCount();
 }
@@ -877,6 +884,49 @@ function initMobileNodeOrder() {
     }
   });
 }
+
+let nodeActivityRefreshRunning = false;
+let nodeActivityRefreshTimer = null;
+
+function setNodeActivityBadge(badge, state, label) {
+  if (!badge) return;
+  ['online', 'offline', 'unknown', 'checking', 'disabled'].forEach(name => badge.classList.remove(name));
+  badge.classList.add(state);
+  badge.textContent = label;
+}
+
+async function refreshNodeActivity() {
+  if (nodeActivityRefreshRunning || document.hidden || !document.getElementById('nodesOrderBody')) return;
+  nodeActivityRefreshRunning = true;
+  try {
+    const response = await fetch('/dashboard/node-status.json', {
+      headers: { 'Accept': 'application/json' },
+      cache: 'no-store'
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.ok) throw new Error(data.error || 'Не удалось проверить узлы');
+    const checks = new Map((data.checks || []).map(item => [String(item.nodeId), item]));
+    getNodeRows().forEach(row => {
+      const check = checks.get(String(row.dataset.nodeId));
+      if (!check) return;
+      const disabled = check.status === 'disabled' || row.dataset.nodeEnabled === 'disabled';
+      const state = disabled ? 'unknown' : (check.ok ? 'online' : 'offline');
+      const label = disabled ? '—' : state;
+      row.dataset.nodeActivity = state;
+      setNodeActivityBadge(row.querySelector('.node-row-activity .badge'), state, label);
+      const detail = document.querySelector(`[data-detail-node-id="${CSS.escape(String(row.dataset.nodeId))}"]`);
+      setNodeActivityBadge(detail?.querySelector('.node-status-grid > div:nth-child(2) .badge'), state, label);
+      const last = detail?.querySelector('.node-detail-last');
+      if (last) last.textContent = `Последний статус: ${label} · автопроверка ${new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`;
+    });
+    applyNodeFilters();
+  } catch (_) {
+    // Оставляем последний известный статус и повторяем проверку через минуту.
+  } finally {
+    nodeActivityRefreshRunning = false;
+  }
+}
+
 function showLoading(title, text) {
   const modal = document.getElementById('loadingModal');
   if (!modal) return;
@@ -888,6 +938,15 @@ document.addEventListener('DOMContentLoaded', () => {
   initNodeDragOrder();
   initMobileNodeOrder();
   initNodeDetailsPanel();
+  window.setTimeout(refreshNodeActivity, 800);
+  nodeActivityRefreshTimer = window.setInterval(refreshNodeActivity, 60000);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) refreshNodeActivity();
+  });
+  window.addEventListener('pagehide', () => {
+    if (nodeActivityRefreshTimer) window.clearInterval(nodeActivityRefreshTimer);
+    nodeActivityRefreshTimer = null;
+  }, { once: true });
   document.querySelectorAll('form.js-long-action').forEach(form => {
     form.addEventListener('submit', () => showLoading(form.dataset.loadingTitle, form.dataset.loadingText));
   });

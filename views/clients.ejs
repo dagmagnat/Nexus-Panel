@@ -287,10 +287,12 @@
           <button type="button" class="btn-secondary" data-client-select-action="all" onclick="return setAllClientSelection(true)">Выбрать все</button>
           <button type="button" class="btn-secondary" data-client-select-action="none" onclick="return setAllClientSelection(false)">Снять выбор</button>
           <span class="bulk-selected-count" id="bulkSelectedCount">Выбрано: 0</span>
+          <button type="button" class="btn-secondary bulk-actions-toggle" id="bulkActionsToggle" aria-expanded="false" aria-controls="bulkSelectionBody">Действия</button>
         </div>
         <small class="hint">Кнопка выбирает всех клиентов, показанных текущим поиском. Один клиент считается один раз, даже если список адаптивно отображается в нескольких вариантах.</small>
       </div>
 
+      <div class="bulk-selection-body" id="bulkSelectionBody">
       <div class="bulk-node-action-row">
         <div class="bulk-node-action-field">
           <label for="bulkRemoveNodeId" id="bulkRemoveNodeLabel">Удалить выбранных клиентов из узла</label>
@@ -316,6 +318,7 @@
         </div>
         <button class="danger" type="submit" data-bulk-action="delete-clients">Удалить выбранных клиентов</button>
       </div>
+      </div>
     </div>
 
   <div class="mobile-client-cards">
@@ -330,7 +333,7 @@
       const filterKeys = mobileClientFilterKeys(client).join(' ');
       const canShowSub = Boolean(showSubLinks);
     %>
-      <article class="mobile-client-card status-<%= clientStatus.key %>" data-mobile-client-card data-client-entry data-client-view="mobile" data-client-id-entry="<%= client.id %>" data-client-search="<%= clientDirectorySearch(client) %>" data-client-node-ids="<%= clientDirectoryNodeIds(client) %>" data-client-name="<%= compactTitle(client) %>" data-client-order="<%= client.id %>" data-client-expiry-order="<%= Number(client.expiry_time || 0) %>" data-client-status="<%= clientDirectoryStatusFilter(client) %>" data-statuses="<%= filterKeys %>">
+      <article class="mobile-client-card status-<%= clientStatus.key %>" data-mobile-client-card data-client-quick="<%= client.id %>" tabindex="0" role="button" aria-label="Открыть клиента <%= displayTitle %>" data-client-entry data-client-view="mobile" data-client-id-entry="<%= client.id %>" data-client-search="<%= clientDirectorySearch(client) %>" data-client-node-ids="<%= clientDirectoryNodeIds(client) %>" data-client-name="<%= compactTitle(client) %>" data-client-order="<%= client.id %>" data-client-expiry-order="<%= Number(client.expiry_time || 0) %>" data-client-status="<%= clientDirectoryStatusFilter(client) %>" data-statuses="<%= filterKeys %>">
         <div class="mobile-client-head stage12-client-head">
           <label class="mobile-card-check" title="Выбрать клиента">
             <input class="inline client-check" type="checkbox" name="client_ids" value="<%= client.id %>" data-client-id="<%= client.id %>" />
@@ -1395,6 +1398,16 @@ function updateBulkSelectionUi() {
   const all = getAllClientIdsOnPage();
   const count = document.getElementById('bulkSelectedCount');
   if (count) count.textContent = `Выбрано: ${selected.size}`;
+  const panel = document.querySelector('.bulk-selection-panel');
+  const toggle = document.getElementById('bulkActionsToggle');
+  if (panel) {
+    panel.classList.toggle('has-selection', selected.size > 0);
+    if (selected.size === 0) panel.classList.remove('is-open');
+  }
+  if (toggle) {
+    toggle.disabled = selected.size === 0;
+    toggle.setAttribute('aria-expanded', panel?.classList.contains('is-open') ? 'true' : 'false');
+  }
   document.querySelectorAll('[data-client-select-action="all"]').forEach(btn => {
     const active = all.size > 0 && selected.size === all.size;
     btn.classList.toggle('is-active', active);
@@ -2000,6 +2013,22 @@ function showLoading(title, text) {
   modal.classList.remove('hidden');
 }
 document.addEventListener('DOMContentLoaded', () => {
+  const bulkPanel = document.querySelector('.bulk-selection-panel');
+  const bulkToggle = document.getElementById('bulkActionsToggle');
+  bulkToggle?.addEventListener('click', () => {
+    if (!bulkPanel?.classList.contains('has-selection')) return;
+    const open = !bulkPanel.classList.contains('is-open');
+    bulkPanel.classList.toggle('is-open', open);
+    bulkToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
+  document.querySelectorAll('[data-mobile-client-card][data-client-quick]').forEach(card => {
+    card.addEventListener('keydown', event => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      if (event.target.closest('button, a, input, label, select, textarea')) return;
+      event.preventDefault();
+      window.openClientQuickCard?.(card.dataset.clientQuick);
+    });
+  });
   document.querySelectorAll('form.import-sync-form').forEach(form => syncImportModeUi(form));
   document.querySelectorAll('form.js-long-action').forEach(form => {
     form.addEventListener('submit', (event) => {
