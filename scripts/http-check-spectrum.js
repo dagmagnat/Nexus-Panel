@@ -107,8 +107,25 @@ function csrfFrom(html) {
   });
 
   const cssResponse = await request('/css/spectrum-clear.css');
+  const manifestResponse = await request('/site.webmanifest');
+  const manifest = await manifestResponse.json();
+  const cssCacheControl = String(cssResponse.headers.get('cache-control') || '');
+  const manifestCacheControl = String(manifestResponse.headers.get('cache-control') || '');
   const failed = report.filter(item => item.status !== 200 || !item.spectrumBody || !item.spectrumCss || item.legacyCss.length);
-  const result = { ok: failed.length === 0 && cssResponse.status === 200, routes: report.length, cssStatus: cssResponse.status, failed, report };
+  const staticRevisionOk = cssCacheControl.includes('no-store')
+    && manifestCacheControl.includes('no-store')
+    && manifest.start_url === '/mobile-login';
+  const result = {
+    ok: failed.length === 0 && cssResponse.status === 200 && manifestResponse.status === 200 && staticRevisionOk,
+    routes: report.length,
+    cssStatus: cssResponse.status,
+    manifestStatus: manifestResponse.status,
+    manifestStartUrl: manifest.start_url,
+    cssCacheControl,
+    manifestCacheControl,
+    failed,
+    report
+  };
   console.log(JSON.stringify(result, null, 2));
   process.exitCode = result.ok ? 0 : 1;
 })().catch(error => {
