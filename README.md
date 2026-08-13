@@ -6,7 +6,7 @@
 
 Nexus Panel — панель агрегации и управления узлами **3x-ui** и **Remnawave**: клиенты, SUB/JSON-подписки, маршрутизация, трафик, Telegram и синхронизация выбранного inbound.
 
-[![Version](https://img.shields.io/badge/version-1.0.9-gray)](https://github.com/dagmagnat/Nexus-Panel)
+[![Version](https://img.shields.io/badge/version-2.0.0-blue)](https://github.com/dagmagnat/Nexus-Panel)
 ![Node.js](https://img.shields.io/badge/node-%3E%3D22-gray)
 ![License](https://img.shields.io/badge/license-MIT-gray)
 
@@ -23,6 +23,14 @@ Nexus Panel — панель агрегации и управления узла
 - собственный логотип в панели, favicon, Apple Touch Icon и фирменная публичная страница подписки;
 - маршрутизация, перенаправление трафика, Telegram-бот и резервные копии;
 - адаптивный интерфейс со светлой и тёмной темами.
+
+## Spectrum Clear
+
+Начиная с версии 2.0.0 панель использует единый интерфейс **Nexus Spectrum Clear**. Это полный дизайн-системный переход, а не набор цветовых переопределений: общий каркас, группированная навигация, master-detail для узлов, новый каталог клиентов, единые формы/модальные окна и отдельные мобильные компоновки.
+
+Старые `style.css`, `redesign.css`, `nexus-ui.css` и `stage*.css` больше не подключаются, поэтому разные разделы не получают конфликтующие цвета и размеры. Источник интерфейса один: `public/css/spectrum-clear.css`.
+
+Редизайн не меняет `data/app.db`, `.env`, UUID клиентов и `sub_slug`. Уже выданные ссылки подписок сохраняются. Подробные критерии и контракт: [`docs/NEXUS_PRODUCT_SPEC.md`](docs/NEXUS_PRODUCT_SPEC.md) и [`docs/DATA_COMPATIBILITY.md`](docs/DATA_COMPATIBILITY.md).
 
 ## Быстрая установка
 
@@ -157,6 +165,7 @@ cd Nexus-Panel
 npm ci
 npm run check
 npm test
+npm run check:spectrum
 npm run dev
 ```
 

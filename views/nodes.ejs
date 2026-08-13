@@ -63,9 +63,9 @@
 <% } %>
 
 <div class="desktop-page-tabs" data-page-tabs="nodes">
-  <button type="button" class="<%= activeNodeTab === 'list' ? 'is-active' : '' %>" data-tab-target="list">🧩 Список узлов</button>
-  <button type="button" class="<%= activeNodeTab === 'add' ? 'is-active' : '' %>" data-tab-target="add">➕ Добавить узел</button>
-  <button type="button" class="<%= activeNodeTab === 'help' ? 'is-active' : '' %>" data-tab-target="help">ℹ️ Подсказка</button>
+  <button type="button" class="<%= activeNodeTab === 'list' ? 'is-active' : '' %>" data-tab-target="list">Список узлов</button>
+  <button type="button" class="<%= activeNodeTab === 'add' ? 'is-active' : '' %>" data-tab-target="add">Добавить узел</button>
+  <button type="button" class="<%= activeNodeTab === 'help' ? 'is-active' : '' %>" data-tab-target="help">Подсказка</button>
 </div>
 
 <nav class="nodes-mobile-tabs" aria-label="Разделы узлов">
@@ -287,7 +287,7 @@
   <section class="card span-12 tab-panel nodes-modern-card <%= activeNodeTab === 'list' ? 'is-active' : '' %>" data-tab-panel="list">
     <div class="nodes-modern-head">
       <div class="section-title-row nodes-order-title">
-        <h2><span class="section-icon" aria-hidden="true">🗂️</span>Список узлов <span class="count-chip"><%= nodes.length %></span></h2>
+        <h2>Список узлов <span class="count-chip"><%= nodes.length %></span></h2>
         <span id="nodeOrderStatus" class="muted">Перетащи ⠿ на ПК или используй ↑/↓ на телефоне, чтобы изменить порядок в приложении</span>
       </div>
       <% if (nodes.length) { %>

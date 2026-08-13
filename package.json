@@ -1,6 +1,6 @@
 {
   "name": "nexus-panel",
-  "version": "1.0.9",
+  "version": "2.0.0",
   "description": "Nexus Panel — 3x-ui and Remnawave aggregation panel with exact inbound sync, subscriptions and traffic monitoring",
   "homepage": "https://github.com/dagmagnat/Nexus-Panel#readme",
   "bugs": {
@@ -17,7 +17,9 @@
     "dev": "cross-env DOTENV_CONFIG_PATH=.env.development NODE_ENV=development concurrently --kill-others --names SERVER,UI \"npm:dev:server\" \"npm:dev:ui\"",
     "dev:server": "nodemon --config nodemon.json",
     "dev:ui": "browser-sync start --config bs-config.cjs",
-    "check": "node --check app.js && node --check lib_crypto.js && node --check lib_vpn_manager.js && node --check public/js/security.js && node --check public/js/dev-inspector.js && node --check public/js/client-transfer.js && node --check scripts/settings-transfer.js && node --check scripts/setup-dev.js && node --check scripts/print-panel-access-key.js && python3 -B scripts/client-transfer.py --help >/dev/null && npm run check:views",
+    "dev:seed": "node scripts/dev-seed-spectrum.js",
+    "check": "node --check app.js && node --check lib_crypto.js && node --check lib_vpn_manager.js && node --check public/js/security.js && node --check public/js/dev-inspector.js && node --check public/js/client-transfer.js && node --check scripts/settings-transfer.js && node --check scripts/setup-dev.js && node --check scripts/print-panel-access-key.js && node --check scripts/dev-seed-spectrum.js && node --check scripts/http-check-spectrum.js && python3 -B scripts/client-transfer.py --help >/dev/null && npm run check:views",
+    "check:spectrum": "npm run predev && node scripts/http-check-spectrum.js",
     "check:views": "node scripts/check-views.js",
     "test": "node --test tests/*.test.js",
     "test:bulk-remove-node": "node --test tests/bulk-remove-node.test.js",

@@ -1,3 +1,4 @@
+      </div>
     </main>
   </div>
 <script>
@@ -87,6 +88,7 @@
   // Mobile Lite: long cards become real accordions on phones only.
   // v6: wrap the whole card content, not only siblings of a nested title.
   function setupMobileAccordions(){
+    if (body.classList.contains('nexus-spectrum')) return;
     syncMobileLitePreference();
     if (!body.classList.contains('theme-mobile_lite')) return;
     const isPhone = window.matchMedia('(max-width: 900px)').matches;
@@ -203,6 +205,7 @@
   // automatic wrapper can miss content; this makes every generated accordion
   // hide/show the actual body consistently.
   function repairMobileAccordionsV7(){
+    if (body.classList.contains('nexus-spectrum')) return;
     syncMobileLitePreference();
     if (!body.classList.contains('theme-mobile_lite')) return;
     if (!window.matchMedia('(max-width: 900px)').matches) return;
@@ -285,6 +288,7 @@
   };
 
   function applySectionIcons(){
+    if (body.classList.contains('nexus-spectrum')) return;
     document.querySelectorAll('h2, h3, .mobile-collapse-title').forEach(function(title){
       if (title.querySelector('.section-icon')) return;
       const clone = title.cloneNode(true);
@@ -479,7 +483,7 @@
   function setupDesktopSettingsTabs(){
     if (!location.pathname.startsWith('/settings')) return;
     if (!window.matchMedia || !window.matchMedia('(min-width: 901px)').matches) return;
-    const grid = document.querySelector('main > .grid');
+    const grid = document.querySelector('.spectrum-page-content > .grid, main > .grid');
     if (!grid || grid.dataset.tabsReady === '1') return;
     const sections = Array.from(grid.querySelectorAll(':scope > section.card'));
     if (sections.length < 3) return;
@@ -1149,6 +1153,7 @@
 
 <script>
 (function(){
+  if (document.body.classList.contains('nexus-spectrum')) return;
   const configs = [
     { root: () => document.querySelector('.desktop-modern-nav'), selector: ':scope > a', key: 'agg.order.sidebar.v1', title: 'Левое меню', id: el => el.getAttribute('href') || el.textContent.trim(), label: el => el.textContent.trim() },
     { root: () => document.querySelector('.desktop-page-tabs[data-page-tabs]'), selector: ':scope > button[data-tab-target]', key: () => 'agg.order.tabs.' + (document.querySelector('.desktop-page-tabs[data-page-tabs]')?.dataset.pageTabs || 'page') + '.v1', title: 'Вкладки страницы', id: el => el.dataset.tabTarget || el.textContent.trim(), label: el => el.textContent.trim() },
@@ -1229,6 +1234,7 @@
 
 <script>
 (function(){
+  if (document.body.classList.contains('nexus-spectrum')) return;
   // stage57 final: direct close handlers for order editor.
   function closeOrderModalNow(){ document.getElementById('orderEditorModal')?.classList.add('hidden'); }
   document.addEventListener('click', function(e){
@@ -1331,7 +1337,9 @@
 (function(){
   // stage58: one reliable control layer for order editor, API auth visibility and dirty-save.
   const ORDER_CONFIGS = [
-    { root: () => document.querySelector('.desktop-modern-nav'), selector: ':scope > a', key: 'agg.order.sidebar.v1', title: 'Левое меню', id: el => el.getAttribute('href') || el.textContent.trim(), label: el => el.textContent.trim() },
+    { root: () => document.querySelectorAll('.spectrum-nav-group')[0] || null, selector: ':scope > a', key: 'nexus.order.sidebar.primary.v1', title: 'Меню · Основное', id: el => el.getAttribute('href') || el.textContent.trim(), label: el => el.textContent.trim() },
+    { root: () => document.querySelectorAll('.spectrum-nav-group')[1] || null, selector: ':scope > a', key: 'nexus.order.sidebar.network.v1', title: 'Меню · Сеть', id: el => el.getAttribute('href') || el.textContent.trim(), label: el => el.textContent.trim() },
+    { root: () => document.querySelectorAll('.spectrum-nav-group')[2] || null, selector: ':scope > a', key: 'nexus.order.sidebar.system.v1', title: 'Меню · Система', id: el => el.getAttribute('href') || el.textContent.trim(), label: el => el.textContent.trim() },
     { root: () => document.querySelector('.desktop-page-tabs[data-page-tabs]'), selector: ':scope > button[data-tab-target]', key: () => 'agg.order.tabs.' + (document.querySelector('.desktop-page-tabs[data-page-tabs]')?.dataset.pageTabs || 'page') + '.v1', title: 'Вкладки страницы', id: el => el.dataset.tabTarget || el.textContent.trim(), label: el => el.textContent.trim() },
     { root: () => document.querySelector('.settings-tabs'), selector: ':scope > button[data-settings-tab]', key: 'agg.order.settings.tabs.v1', title: 'Вкладки настроек', id: el => el.dataset.settingsTab || el.textContent.trim(), label: el => el.textContent.trim() }
   ];
@@ -1497,6 +1505,7 @@
 
 <script>
 (function(){
+  if (document.body.classList.contains('nexus-spectrum')) return;
   // stage59: final guard for false dirty bar, auth visibility and order modal controls.
   function formDataString(form){
     try {
@@ -1648,6 +1657,7 @@
 
 <script>
 (function(){
+  if (document.body.classList.contains('nexus-spectrum')) return;
   // stage60: strict final UI guards for tabs/order/dirty-save after all older handlers.
   function formDataString(form){
     try {
@@ -1985,7 +1995,7 @@
   // stage87 — превращаем полосы-алерты вверху страницы во всплывающие уведомления.
   const main = document.querySelector('.main');
   if (!main) return;
-  const alerts = Array.from(main.children).filter(el => el.classList && el.classList.contains('alert') && (el.classList.contains('ok') || el.classList.contains('err')));
+  const alerts = Array.from(main.querySelectorAll(':scope > .alert, .spectrum-page-content > .alert')).filter(el => el.classList && (el.classList.contains('ok') || el.classList.contains('err')));
   if (!alerts.length) return;
   const stack = document.createElement('div');
   stack.className = 'agg-toast-stack';
