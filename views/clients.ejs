@@ -246,6 +246,11 @@
       </select>
     </label>
     <div class="client-directory-toolbar-actions">
+      <div class="client-online-refresh-controls" aria-label="Обновление статуса клиентов">
+        <label class="client-online-auto"><input type="checkbox" id="clientOnlineAutoRefresh" checked /><span>Авто</span></label>
+        <select id="clientOnlineRefreshInterval" aria-label="Интервал автообновления"><option value="10">10 сек.</option><option value="30">30 сек.</option><option value="60">60 сек.</option></select>
+        <button type="button" class="btn-secondary" id="clientOnlineRefreshNow">Обновить</button>
+      </div>
       <div class="client-directory-result">
         <span>Показано</span>
         <strong id="clientDirectoryCount"><%= clients.length %></strong>
@@ -287,12 +292,10 @@
           <button type="button" class="btn-secondary" data-client-select-action="all" onclick="return setAllClientSelection(true)">Выбрать все</button>
           <button type="button" class="btn-secondary" data-client-select-action="none" onclick="return setAllClientSelection(false)">Снять выбор</button>
           <span class="bulk-selected-count" id="bulkSelectedCount">Выбрано: 0</span>
-          <button type="button" class="btn-secondary bulk-actions-toggle" id="bulkActionsToggle" aria-expanded="false" aria-controls="bulkSelectionBody">Действия</button>
         </div>
-        <small class="hint">Кнопка выбирает всех клиентов, показанных текущим поиском. Один клиент считается один раз, даже если список адаптивно отображается в нескольких вариантах.</small>
+        <small class="hint bulk-selection-hint">Выбор применяется только к клиентам текущего поиска и фильтра.</small>
       </div>
 
-      <div class="bulk-selection-body" id="bulkSelectionBody">
       <div class="bulk-node-action-row">
         <div class="bulk-node-action-field">
           <label for="bulkRemoveNodeId" id="bulkRemoveNodeLabel">Удалить выбранных клиентов из узла</label>
@@ -302,9 +305,9 @@
               <option value="<%= node.id %>" data-node-type="<%= String(node.node_type || '3xui') %>"><%= flagText(node.country_code, node.country_flag, node.country_name_ru || node.name) %> <%= nodeName(node) %> (<%= nodeEndpointLabel(node) %>)</option>
             <% }) %>
           </select>
-          <small class="hint" id="bulkRemoveNodeHint">Клиент удаляется или отвязывается в выбранной удалённой панели, затем локальная связь удаляется из Aggregator. Для Remnawave снимается настроенный Internal Squad, а сам пользователь сохраняется.</small>
+          <small class="hint bulk-action-hint" id="bulkRemoveNodeHint">Сначала меняется удалённый узел, затем удаляется локальная связь. Сам клиент в Nexus сохраняется.</small>
         </div>
-        <button class="danger bulk-node-remove-btn" id="bulkRemoveNodeButton" type="submit" formaction="/clients/bulk-remove-node" data-bulk-action="remove-node">Удалить из выбранного узла</button>
+        <button class="danger bulk-node-remove-btn" id="bulkRemoveNodeButton" type="submit" formaction="/clients/bulk-remove-node" data-bulk-action="remove-node">Удалить из узла</button>
       </div>
 
       <div class="bulk-row compact-bulk-row">
@@ -317,7 +320,6 @@
           </select>
         </div>
         <button class="danger" type="submit" data-bulk-action="delete-clients">Удалить выбранных клиентов</button>
-      </div>
       </div>
     </div>
 
@@ -333,7 +335,7 @@
       const filterKeys = mobileClientFilterKeys(client).join(' ');
       const canShowSub = Boolean(showSubLinks);
     %>
-      <article class="mobile-client-card status-<%= clientStatus.key %>" data-mobile-client-card data-client-quick="<%= client.id %>" tabindex="0" role="button" aria-label="Открыть клиента <%= displayTitle %>" data-client-entry data-client-view="mobile" data-client-id-entry="<%= client.id %>" data-client-search="<%= clientDirectorySearch(client) %>" data-client-node-ids="<%= clientDirectoryNodeIds(client) %>" data-client-name="<%= compactTitle(client) %>" data-client-order="<%= client.id %>" data-client-expiry-order="<%= Number(client.expiry_time || 0) %>" data-client-status="<%= clientDirectoryStatusFilter(client) %>" data-statuses="<%= filterKeys %>">
+      <article class="mobile-client-card status-<%= clientStatus.key %>" data-mobile-client-card data-client-edit-card="<%= client.id %>" data-client-entry data-client-view="mobile" data-client-id-entry="<%= client.id %>" data-client-search="<%= clientDirectorySearch(client) %>" data-client-node-ids="<%= clientDirectoryNodeIds(client) %>" data-client-name="<%= compactTitle(client) %>" data-client-order="<%= client.id %>" data-client-expiry-order="<%= Number(client.expiry_time || 0) %>" data-client-status="<%= clientDirectoryStatusFilter(client) %>" data-statuses="<%= filterKeys %>" data-client-online="0" data-client-login="<%= client.login || '' %>" data-client-uuid="<%= client.uuid || '' %>">
         <div class="mobile-client-head stage12-client-head">
           <label class="mobile-card-check" title="Выбрать клиента">
             <input class="inline client-check" type="checkbox" name="client_ids" value="<%= client.id %>" data-client-id="<%= client.id %>" />
@@ -346,8 +348,9 @@
         </div>
 
         <div class="mobile-client-mainline">
-          <button type="button" class="mobile-client-name" data-client-quick="<%= client.id %>"><%= displayTitle %></button>
+          <button type="button" class="mobile-client-name" onclick="openClientEditor(<%= client.id %>)"><%= displayTitle %></button>
           <% if (secondaryText) { %><span class="mobile-client-comment"><%= secondaryText %></span><% } %>
+          <span class="modern-online-state offline mobile-online-state" data-modern-online-state data-client-id="<%= client.id %>" data-online-eligible="<%= client.enabled !== 0 && clientStatus.key !== 'expired' ? '1' : '0' %>"><i></i><b><%= client.enabled === 0 ? 'Отключён' : (clientStatus.key === 'expired' ? 'Исчерпано' : 'Не в сети') %></b></span>
         </div>
 
         <div class="mobile-client-metrics">
@@ -355,7 +358,7 @@
           <div><span>Лимит дней</span><strong><%= termShort(client) %></strong></div>
           <div><span>Лимит IP</span><strong><%= client.limit_ip && Number(client.limit_ip) > 0 ? client.limit_ip : '∞' %></strong></div>
         </div>
-        <div class="mobile-client-expiry">Действует до: <strong><%= expiryDateTime(client.expiry_time) %></strong></div>
+        <div class="mobile-client-expiry"><span>Действует до: <strong><%= expiryDateTime(client.expiry_time) %></strong></span><button type="button" class="mobile-client-edit-link" onclick="openClientEditor(<%= client.id %>)">Изменить ›</button></div>
 
         <div class="mobile-client-actions">
           <% if (canShowSub) { %>
@@ -381,7 +384,7 @@
       const secondaryText = secondaryClientText(client);
       const canShowSub = Boolean(showSubLinks);
     %>
-      <article class="desktop-client-tile status-<%= clientStatus.key %>" data-client-entry data-client-view="desktop" data-client-id-entry="<%= client.id %>" data-client-search="<%= clientDirectorySearch(client) %>" data-client-node-ids="<%= clientDirectoryNodeIds(client) %>" data-client-name="<%= compactTitle(client) %>" data-client-order="<%= client.id %>" data-client-expiry-order="<%= Number(client.expiry_time || 0) %>" data-client-status="<%= clientDirectoryStatusFilter(client) %>">
+      <article class="desktop-client-tile status-<%= clientStatus.key %>" data-client-entry data-client-view="desktop" data-client-id-entry="<%= client.id %>" data-client-search="<%= clientDirectorySearch(client) %>" data-client-node-ids="<%= clientDirectoryNodeIds(client) %>" data-client-name="<%= compactTitle(client) %>" data-client-order="<%= client.id %>" data-client-expiry-order="<%= Number(client.expiry_time || 0) %>" data-client-status="<%= clientDirectoryStatusFilter(client) %>" data-client-online="0" data-client-login="<%= client.login || '' %>" data-client-uuid="<%= client.uuid || '' %>">
         <div class="desktop-client-check">
           <label class="select-client" title="Выбрать клиента">
             <input class="inline client-check" type="checkbox" name="client_ids" value="<%= client.id %>" data-client-id="<%= client.id %>" />
@@ -434,7 +437,7 @@
           const hasNodeLimits = nodeLimitRows.length > 0;
           const canShowSub = Boolean(showSubLinks);
         %>
-          <tr data-client-entry data-client-view="table" data-client-id-entry="<%= client.id %>" data-client-search="<%= clientDirectorySearch(client) %>" data-client-node-ids="<%= clientDirectoryNodeIds(client) %>" data-client-name="<%= compactTitle(client) %>" data-client-order="<%= client.id %>" data-client-expiry-order="<%= Number(client.expiry_time || 0) %>" data-client-status="<%= clientDirectoryStatusFilter(client) %>">
+          <tr data-client-entry data-client-view="table" data-client-id-entry="<%= client.id %>" data-client-search="<%= clientDirectorySearch(client) %>" data-client-node-ids="<%= clientDirectoryNodeIds(client) %>" data-client-name="<%= compactTitle(client) %>" data-client-order="<%= client.id %>" data-client-expiry-order="<%= Number(client.expiry_time || 0) %>" data-client-status="<%= clientDirectoryStatusFilter(client) %>" data-client-online="0" data-client-login="<%= client.login || '' %>" data-client-uuid="<%= client.uuid || '' %>">
             <td class="check-col" data-label="Выбрать">
               <label class="select-client" title="Выбрать клиента">
                 <input class="inline client-check" type="checkbox" name="client_ids" value="<%= client.id %>" data-client-id="<%= client.id %>" />
@@ -480,7 +483,6 @@
             <th>Клиент</th>
             <th>Комментарий</th>
             <th>Трафик</th>
-            <th>Скорость</th>
             <th>Остаток</th>
             <th>Длительность</th>
           </tr>
@@ -556,7 +558,6 @@
               <div><span><%= formatClientBytes(usedBytes) %></span><b><%= trafficLimitGb > 0 ? trafficLimitGb + ' ГБ' : '∞' %></b></div>
               <div class="modern-traffic-track"><i style="width:<%= clientTrafficPercent(client).toFixed(1) %>%"></i></div>
             </td>
-            <td class="modern-speed-cell" data-modern-speed-client="<%= client.id %>">—</td>
             <td><span class="modern-remaining <%= remaining.key %>"><%= remaining.text %></span></td>
             <td><span class="modern-duration"><%= Number(client.duration_days || 0) > 0 ? Number(client.duration_days) + ' дн.' : '∞' %></span></td>
           </tr>
@@ -928,14 +929,14 @@
   const clientReturnPath = '/clients?' + new URLSearchParams({ ...(q ? { q } : {}), edit: String(client.id) }).toString();
   const canShowSubInEditor = Boolean(showSubLinks);
 %>
-  <div id="clientEditor-<%= client.id %>" class="modal hidden" onclick="closeClientEditor(event, <%= client.id %>)">
+  <div id="clientEditor-<%= client.id %>" class="modal hidden client-editor-shell" onclick="closeClientEditor(event, <%= client.id %>)">
     <div class="modal-card editor-modal client-editor-modal existing-client-editor-modal" onclick="event.stopPropagation()">
       <button type="button" class="modal-close" onclick="event.preventDefault(); event.stopPropagation(); hideClientEditor(<%= client.id %>); return false;">×</button>
       <h2>Клиент: <%= compactTitle(client) %></h2>
       <p class="muted">Подробная информация и редактор клиента в одном окне.</p>
-      <div class="client-detail-summary">
+      <div class="client-detail-summary client-editor-summary">
         <div><span>ID</span><strong><%= client.id %></strong></div>
-        <div><span>UUID</span><code><%= client.uuid %></code></div>
+        <div class="client-summary-uuid"><span>UUID</span><code><%= client.uuid %></code></div>
         <div><span>Статус</span><strong class="badge <%= clientStatusMeta(client).key %>"><%= clientStatusMeta(client).label %></strong></div>
         <div><span>Срок</span><strong><%= termShort(client) %> дн.</strong><small>до: <%= expiryDateTime(client.expiry_time) %></small></div>
         <div><span>Общий лимит</span><strong><%= client.traffic_gb && client.traffic_gb > 0 ? client.traffic_gb + ' ГБ' : '∞' %></strong></div>
@@ -956,9 +957,9 @@
         </div>
       </div>
 
-      <form method="post" action="/clients/<%= client.id %>/edit" class="js-long-action" data-loading-title="Сохраняю клиента" data-loading-text="Изменения применяются на узлах клиента. Это может занять время.">
+      <form method="post" action="/clients/<%= client.id %>/edit" class="js-long-action client-editor-form" data-loading-title="Сохраняю клиента" data-loading-text="Изменения применяются на узлах клиента. Это может занять время.">
         <input type="hidden" name="back" value="<%= clientReturnPath %>" />
-        <div class="form-grid clean-form">
+        <div class="form-grid clean-form client-editor-fields">
           <div class="field half">
             <label>Имя клиента</label>
             <input name="display_name" value="<%= client.display_name %>" required />
@@ -967,7 +968,7 @@
             <label>Логин / Email</label>
             <input name="login" value="<%= client.login %>" required />
           </div>
-          <div class="field half">
+          <div class="field half client-editor-comment-field">
             <label>Комментарий</label>
             <input name="comment" value="<%= client.comment || '' %>" placeholder="Заметка для поиска" />
           </div>
@@ -1398,16 +1399,6 @@ function updateBulkSelectionUi() {
   const all = getAllClientIdsOnPage();
   const count = document.getElementById('bulkSelectedCount');
   if (count) count.textContent = `Выбрано: ${selected.size}`;
-  const panel = document.querySelector('.bulk-selection-panel');
-  const toggle = document.getElementById('bulkActionsToggle');
-  if (panel) {
-    panel.classList.toggle('has-selection', selected.size > 0);
-    if (selected.size === 0) panel.classList.remove('is-open');
-  }
-  if (toggle) {
-    toggle.disabled = selected.size === 0;
-    toggle.setAttribute('aria-expanded', panel?.classList.contains('is-open') ? 'true' : 'false');
-  }
   document.querySelectorAll('[data-client-select-action="all"]').forEach(btn => {
     const active = all.size > 0 && selected.size === all.size;
     btn.classList.toggle('is-active', active);
@@ -1490,13 +1481,13 @@ function syncBulkNodeActionWithFilter() {
     const isRemnawave = selectedOption?.dataset?.nodeType === 'remnawave';
     if (label) label.textContent = `Удалить выбранных клиентов из узла «${nodeTitle}»`;
     if (hint) hint.textContent = isRemnawave
-      ? 'У выбранных пользователей будет снят Internal Squad этого подключения Remnawave, затем удалены локальные связи Aggregator. Сами пользователи Remnawave и другие squads сохраняются.'
-      : 'Фильтр и целевой узел совпадают. Будут обработаны только отмеченные клиенты; удаление подтверждается удалённой панелью до очистки связи в Aggregator.';
+      ? 'Будет снят только Internal Squad этого подключения; пользователь Remnawave сохранится.'
+      : 'Будут обработаны только отмеченные клиенты текущего фильтра.';
     if (button) button.textContent = isRemnawave ? 'Убрать из Remnawave' : 'Удалить из текущего узла';
     return;
   }
   if (label) label.textContent = 'Удалить выбранных клиентов из узла';
-  if (hint) hint.textContent = 'Клиент удаляется или отвязывается в выбранной удалённой панели, затем локальная связь удаляется из Aggregator. В Remnawave снимается только настроенный Internal Squad.';
+  if (hint) hint.textContent = 'Сначала меняется удалённый узел, затем удаляется локальная связь. Клиент Nexus сохраняется.';
   if (button) button.textContent = 'Удалить из выбранного узла';
 }
 function fillApplySelectedClientIds(form, selected) {
@@ -1673,7 +1664,13 @@ function syncClientModalScrollLock() {
 function openModalById(id) { document.getElementById(id)?.classList.remove('hidden'); syncClientModalScrollLock(); }
 function hideModalById(id) { document.getElementById(id)?.classList.add('hidden'); syncClientModalScrollLock(); }
 function closeModalById(e, id) { if (e.target.id === id) hideModalById(id); }
-function openClientEditor(id) { document.getElementById('clientEditor-' + id)?.classList.remove('hidden'); syncClientModalScrollLock(); }
+function openClientEditor(id) {
+  const modal = document.getElementById('clientEditor-' + id);
+  if (!modal) return;
+  modal.classList.remove('hidden');
+  modal.querySelector('.existing-client-editor-modal')?.scrollTo({ top: 0, behavior: 'auto' });
+  syncClientModalScrollLock();
+}
 function hideClientEditor(id) { document.getElementById('clientEditor-' + id)?.classList.add('hidden'); syncClientModalScrollLock(); }
 function closeClientEditor(e, id) { if (e.target.id === 'clientEditor-' + id) hideClientEditor(id); }
 function openLimitDetails(id) { document.getElementById('limitDetails-' + id)?.classList.remove('hidden'); }
@@ -1824,53 +1821,6 @@ async function refreshClientOnlineSummary() {
   }
 }
 
-let clientSpeedRefreshPending = false;
-async function refreshClientSpeedSummary() {
-  const cells = Array.from(document.querySelectorAll('[data-modern-speed-client]'));
-  if (!cells.length || clientSpeedRefreshPending) return;
-  clientSpeedRefreshPending = true;
-  try {
-    const response = await fetch('/dashboard/live-client-traffic.json?refresh=1&limit=500&min_mbps=0', { headers: { Accept: 'application/json' } });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || 'Ошибка загрузки скорости');
-    const rows = Array.isArray(data.clients) ? data.clients : [];
-    const byId = new Map(rows.map(row => [String(row.clientId || row.client_id || ''), row]));
-    cells.forEach(cell => {
-      const row = byId.get(String(cell.dataset.modernSpeedClient || ''));
-      if (!row) {
-        cell.textContent = 'Нет трафика';
-        cell.classList.remove('is-active');
-        return;
-      }
-      const active = Number(row.totalMbps || 0) > 0.001;
-      cell.classList.toggle('is-active', active);
-      cell.innerHTML = active
-        ? `<span>↓ ${String(row.downloadText || '0 Мбит/с')}</span><span>↑ ${String(row.uploadText || '0 Мбит/с')}</span>`
-        : '<span class="modern-speed-idle">Нет трафика</span>';
-      cell.title = `Всего: ${String(row.totalText || '0 Мбит/с')}`;
-
-      const traffic = cell.closest('tr')?.querySelector('[data-modern-traffic-client]');
-      if (traffic) {
-        const usedLabel = traffic.querySelector(':scope > div:first-child span');
-        if (usedLabel) usedLabel.textContent = String(row.currentTotalText || '0 Б');
-        const track = traffic.querySelector('.modern-traffic-track i');
-        const limitGb = Math.max(0, Number(traffic.dataset.trafficLimitGb || 0));
-        const used = Math.max(0, Number(row.currentUsed || 0));
-        const percent = limitGb > 0 ? Math.min(100, used / (limitGb * 1024 ** 3) * 100) : (used > 0 ? 100 : 0);
-        if (track) track.style.width = `${percent.toFixed(1)}%`;
-      }
-    });
-  } catch (err) {
-    cells.forEach(cell => {
-      cell.classList.remove('is-active');
-      cell.textContent = 'Недоступно';
-      cell.title = err.message || String(err);
-    });
-  } finally {
-    clientSpeedRefreshPending = false;
-  }
-}
-
 function setupClientOverviewShortcuts() {
   document.querySelectorAll('[data-client-status-shortcut]').forEach(button => {
     button.addEventListener('click', () => {
@@ -1886,17 +1836,45 @@ function setupClientOverviewShortcuts() {
   });
 }
 
+let clientOnlineAutoTimer = null;
+function configureClientOnlineAutoRefresh() {
+  const toggle = document.getElementById('clientOnlineAutoRefresh');
+  const select = document.getElementById('clientOnlineRefreshInterval');
+  if (!toggle || !select) return;
+  if (clientOnlineAutoTimer) window.clearInterval(clientOnlineAutoTimer);
+  clientOnlineAutoTimer = null;
+  select.disabled = !toggle.checked;
+  try {
+    localStorage.setItem('nexus.clients.onlineAuto', toggle.checked ? '1' : '0');
+    localStorage.setItem('nexus.clients.onlineInterval', String(select.value || '10'));
+  } catch (_) {}
+  if (!toggle.checked) return;
+  const seconds = [10, 30, 60].includes(Number(select.value)) ? Number(select.value) : 10;
+  clientOnlineAutoTimer = window.setInterval(() => {
+    if (!document.hidden) refreshClientOnlineSummary();
+  }, seconds * 1000);
+}
+
+function setupClientOnlineAutoRefresh() {
+  const toggle = document.getElementById('clientOnlineAutoRefresh');
+  const select = document.getElementById('clientOnlineRefreshInterval');
+  try {
+    if (toggle) toggle.checked = localStorage.getItem('nexus.clients.onlineAuto') !== '0';
+    const storedInterval = localStorage.getItem('nexus.clients.onlineInterval');
+    if (select && ['10', '30', '60'].includes(storedInterval)) select.value = storedInterval;
+  } catch (_) {}
+  toggle?.addEventListener('change', configureClientOnlineAutoRefresh);
+  select?.addEventListener('change', configureClientOnlineAutoRefresh);
+  document.getElementById('clientOnlineRefreshNow')?.addEventListener('click', refreshClientOnlineSummary);
+  configureClientOnlineAutoRefresh();
+}
+
 
 document.addEventListener('DOMContentLoaded', () => {
   setupMobileClientFilters();
   setupClientOverviewShortcuts();
+  setupClientOnlineAutoRefresh();
   refreshClientOnlineSummary();
-  refreshClientSpeedSummary();
-  window.setInterval(() => {
-    if (document.hidden) return;
-    refreshClientOnlineSummary();
-    refreshClientSpeedSummary();
-  }, 8000);
   document.querySelectorAll('.client-check[data-client-id]').forEach(cb => {
     cb.addEventListener('change', () => {
       syncClientCheckboxCopies(cb);
@@ -1907,6 +1885,12 @@ document.addEventListener('DOMContentLoaded', () => {
         master.indeterminate = selected.size > 0 && selected.size < all.size;
       });
       updateBulkSelectionUi();
+    });
+  });
+  document.querySelectorAll('[data-client-edit-card]').forEach(card => {
+    card.addEventListener('click', event => {
+      if (event.target.closest('button, a, input, select, textarea, label, form')) return;
+      openClientEditor(card.dataset.clientEditCard);
     });
   });
   updateBulkSelectionUi();
@@ -2013,22 +1997,6 @@ function showLoading(title, text) {
   modal.classList.remove('hidden');
 }
 document.addEventListener('DOMContentLoaded', () => {
-  const bulkPanel = document.querySelector('.bulk-selection-panel');
-  const bulkToggle = document.getElementById('bulkActionsToggle');
-  bulkToggle?.addEventListener('click', () => {
-    if (!bulkPanel?.classList.contains('has-selection')) return;
-    const open = !bulkPanel.classList.contains('is-open');
-    bulkPanel.classList.toggle('is-open', open);
-    bulkToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
-  });
-  document.querySelectorAll('[data-mobile-client-card][data-client-quick]').forEach(card => {
-    card.addEventListener('keydown', event => {
-      if (event.key !== 'Enter' && event.key !== ' ') return;
-      if (event.target.closest('button, a, input, label, select, textarea')) return;
-      event.preventDefault();
-      window.openClientQuickCard?.(card.dataset.clientQuick);
-    });
-  });
   document.querySelectorAll('form.import-sync-form').forEach(form => syncImportModeUi(form));
   document.querySelectorAll('form.js-long-action').forEach(form => {
     form.addEventListener('submit', (event) => {

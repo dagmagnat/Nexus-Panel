@@ -77,51 +77,75 @@
       ? '<span class="flag-badge emoji-fallback">' + emoji + '</span>'
       : nodeFallbackIcon(nodeType);
   }
+  const expiringSevenCount = (expiringClients || []).filter(client => {
+    const remaining = daysLeftExact(client.expiry_time);
+    return remaining !== null && remaining <= 7;
+  }).length;
+  const initialNodeProblemCount = (pulseNodes || []).filter(node => Number(node.enabled) === 1 && String(node.last_status || '') === 'offline').length;
+  const initialRedirectOk = !redirectStatus || redirectStatus.ok !== false;
 %>
 
 <% if (message) { %><div class="alert ok"><%= message %></div><% } %>
 <% if (error) { %><div class="alert err"><%= error %></div><% } %>
 
 <div class="desktop-page-tabs" data-page-tabs="dashboard">
-  <button type="button" class="is-active" data-tab-target="traffic"><span class="agg-tab-ico"><svg class="agg-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v9.5"/><path d="m7.5 10 4.5 4.5L16.5 10"/><path d="M5 19.5h14"/></svg></span>Скачано</button>
+  <button type="button" class="is-active" data-tab-target="expiry"><span class="agg-tab-ico"><svg class="agg-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.4"/><path d="M12 7.6V12l2.9 1.9"/></svg></span>Сроки</button>
+  <button type="button" data-tab-target="traffic"><span class="agg-tab-ico"><svg class="agg-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v9.5"/><path d="m7.5 10 4.5 4.5L16.5 10"/><path d="M5 19.5h14"/></svg></span>Скачано</button>
   <button type="button" data-tab-target="top"><span class="agg-tab-ico"><svg class="agg-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="7.8" r="3.3"/><path d="M3.4 20c.6-3.3 2.9-5.1 5.6-5.1s5 1.8 5.6 5.1"/><path d="M15.4 5.4a3.3 3.3 0 0 1 0 4.8M17.6 15.3c1.7.9 2.7 2.5 3 4.7"/></svg></span>Кто больше потратил</button>
-  <button type="button" data-tab-target="expiry"><span class="agg-tab-ico"><svg class="agg-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.4"/><path d="M12 7.6V12l2.9 1.9"/></svg></span>Сроки</button>
 </div>
 
 
 <div class="grid dashboard-grid">
-  <section class="stats-card span-3">
-    <div class="stats-label">Узлов</div>
-    <div class="stats-number"><%= stats.nodes %></div>
+  <button type="button" class="stats-card span-6 dashboard-primary-stat dashboard-online-stat" id="openOnlineClientsFromStat">
+    <div class="stats-label">Клиентов в сети</div>
+    <div class="stats-number" id="dashboardOnlineNowCount">—</div>
+    <small>Открыть список онлайн</small>
+  </button>
+  <button type="button" class="stats-card span-6 dashboard-primary-stat dashboard-expiry-stat" id="openExpiryFromStat">
+    <div class="stats-label">Заканчиваются за 7 дней</div>
+    <div class="stats-number" id="dashboardExpiryNowCount"><%= expiringSevenCount %></div>
+    <small>Открыть сроки 7 / 14 / 30 дней</small>
+  </button>
+
+  <section class="card span-12 dashboard-health-overview" aria-label="Состояние инфраструктуры">
+    <div class="dashboard-health-item" id="dashboardNodesHealth" data-state="<%= initialNodeProblemCount ? 'error' : 'ok' %>">
+      <a href="/nodes" class="dashboard-health-link">
+        <span class="dashboard-health-icon" aria-hidden="true">◫</span>
+        <span><b>Узлы</b><small id="dashboardNodesHealthSummary"><%= initialNodeProblemCount ? `Проблем: ${initialNodeProblemCount}` : 'Все доступные узлы отвечают' %></small></span>
+        <strong id="dashboardNodesHealthLabel"><%= initialNodeProblemCount ? 'Ошибка' : 'Работают' %></strong>
+      </a>
+      <div class="dashboard-health-issues" id="dashboardNodeIssues" <%= initialNodeProblemCount ? '' : 'hidden' %>></div>
+    </div>
+    <div class="dashboard-health-item" id="dashboardRedirectHealth" data-state="<%= initialRedirectOk ? 'ok' : 'error' %>">
+      <a href="/redirects" class="dashboard-health-link">
+        <span class="dashboard-health-icon" aria-hidden="true">⇄</span>
+        <span><b>Перенаправление</b><small id="dashboardRedirectHealthSummary"><%= redirectStatus && redirectStatus.message ? humanizeError(redirectStatus.message) : 'Проверяется раз в минуту' %></small></span>
+        <strong id="dashboardRedirectHealthLabel"><%= initialRedirectOk ? 'Работает' : 'Ошибка' %></strong>
+      </a>
+    </div>
   </section>
-  <section class="stats-card span-3">
-    <div class="stats-label">Клиентов</div>
-    <div class="stats-number"><%= stats.clients %></div>
-  </section>
-  <section class="stats-card span-3">
-    <div class="stats-label">Узлов онлайн</div>
-    <div class="stats-number"><%= stats.online %></div>
-  </section>
-  <section class="stats-card span-3">
-    <div class="stats-label">Узлов оффлайн</div>
-    <div class="stats-number"><%= stats.offline %></div>
+
+  <section class="dashboard-secondary-stats span-12" aria-label="Общая статистика">
+    <span><small>Клиентов</small><strong><%= stats.clients %></strong></span>
+    <span><small>Узлов</small><strong><%= stats.nodes %></strong></span>
+    <span><small>Узлов онлайн</small><strong id="dashboardNodesOnlineCount"><%= stats.online %></strong></span>
+    <span><small>Узлов оффлайн</small><strong id="dashboardNodesOfflineCount"><%= stats.offline %></strong></span>
   </section>
 
   <nav class="mobile-dashboard-tabs span-12" id="mobileDashboardTabs" aria-label="Разделы главной страницы">
+    <button type="button" data-mobile-dashboard-tab="expiry"><span class="mobile-dashboard-tab-icon"><svg class="agg-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.4"/><path d="M12 7.6V12l2.9 1.9"/></svg></span><span class="mobile-dashboard-tab-label">Сроки</span></button>
     <button type="button" data-mobile-dashboard-tab="traffic"><span class="mobile-dashboard-tab-icon"><svg class="agg-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v9.5"/><path d="m7.5 10 4.5 4.5L16.5 10"/><path d="M5 19.5h14"/></svg></span><span class="mobile-dashboard-tab-label">Скачано</span></button>
     <button type="button" data-mobile-dashboard-tab="top"><span class="mobile-dashboard-tab-icon"><svg class="agg-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="7.8" r="3.3"/><path d="M3.4 20c.6-3.3 2.9-5.1 5.6-5.1s5 1.8 5.6 5.1"/><path d="M15.4 5.4a3.3 3.3 0 0 1 0 4.8M17.6 15.3c1.7.9 2.7 2.5 3 4.7"/></svg></span><span class="mobile-dashboard-tab-label">Кто больше потратил</span></button>
-    <button type="button" data-mobile-dashboard-tab="expiry"><span class="mobile-dashboard-tab-icon"><svg class="agg-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.4"/><path d="M12 7.6V12l2.9 1.9"/></svg></span><span class="mobile-dashboard-tab-label">Сроки</span></button>
   </nav>
 
-  <section class="card span-12 dashboard-actions-card">
-    <button type="button" class="btn-main" id="openOnlineClientsModal">Онлайн клиенты</button>
-    <button type="button" class="btn-secondary" onclick="openDashboardModal('limitsModal')">Лимиты</button>
+  <section class="card span-12 dashboard-actions-card dashboard-priority-actions">
     <a href="/clients" class="link-btn secondary">Клиенты</a>
+    <button type="button" class="btn-secondary" onclick="openDashboardModal('limitsModal')">Лимиты</button>
     <button type="button" class="btn-secondary" onclick="runPanelCheck()">Проверка панели</button>
   </section>
 
 
-  <section class="card span-12 traffic-report-card tab-panel is-active" data-tab-panel="traffic">
+  <section class="card span-12 traffic-report-card tab-panel" data-tab-panel="traffic">
     <div class="section-title-row traffic-report-title">
       <div>
         <h2>Сколько было скачано</h2>
@@ -234,21 +258,25 @@
     <% } %>
   </section>
 
-  <section class="card span-12 tab-panel" data-tab-panel="expiry">
+  <section class="card span-12 tab-panel is-active" data-tab-panel="expiry">
     <div class="section-title-row expiry-title-row">
       <div>
-        <h2>Сроки заканчиваются в ближайшие 7 дней</h2>
+        <h2 id="expiryRangeTitle">Сроки заканчиваются в ближайшие 7 дней</h2>
         <div class="dashboard-inline-search">
           <span aria-hidden="true">⌕</span>
           <input id="expiryClientSearch" type="text" placeholder="Поиск по имени, логину или ID" autocomplete="off" />
           <button type="button" class="dashboard-search-clear" id="expiryClientSearchClear" aria-label="Очистить поиск">×</button>
         </div>
       </div>
-      <div class="expiry-tools"><button type="button" class="secondary expiry-sort-btn" id="expirySortBtn" data-sort-mode="soon">↕ Сортировка</button><span class="count-chip" id="expiryVisibleCount"><%= expiringClients ? expiringClients.length : 0 %></span></div>
+      <div class="expiry-tools">
+        <label class="expiry-range-control"><span>Период</span><select id="expiryRangeDays"><option value="7">7 дней</option><option value="14">14 дней</option><option value="30">30 дней</option></select></label>
+        <button type="button" class="secondary expiry-sort-btn" id="expirySortBtn" data-sort-mode="soon">↕ Сортировка</button>
+        <span class="count-chip" id="expiryVisibleCount"><%= expiringClients ? expiringClients.length : 0 %></span>
+      </div>
     </div>
 
     <% if (!expiringClients || !expiringClients.length) { %>
-      <p class="muted">На ближайшую неделю клиентов с истекающим сроком нет.</p>
+      <p class="muted">На ближайшие 30 дней клиентов с истекающим сроком нет.</p>
     <% } else { %>
       <div class="dashboard-client-list expiry-list" id="expiryList">
         <% expiringClients.forEach(client => { const _left = daysLeftNumber(client.expiry_time); const _exact = daysLeftExact(client.expiry_time); %>
@@ -279,13 +307,15 @@
     <div class="section-title-row">
       <div>
         <h2>Онлайн клиенты</h2>
-        <p class="muted">Список берётся с активных узлов и обновляется только по кнопке.</p>
+        <p class="muted">Компактный список с активных узлов. Открыв карточку клиента, закрой её — список останется на прежнем месте.</p>
       </div>
     </div>
     <div class="online-modal-controls">
       <button type="button" class="btn-main" id="onlineRefreshBtn">Обновить</button>
+      <label class="online-auto-toggle"><input type="checkbox" id="onlineAutoRefresh" checked /><span>Автообновление</span></label>
+      <label class="online-auto-interval"><span>Каждые</span><select id="onlineRefreshInterval"><option value="10">10 сек.</option><option value="30">30 сек.</option><option value="60">60 сек.</option></select></label>
     </div>
-    <div id="onlineClientsStatus" class="hint">Нажми «Обновить», чтобы загрузить онлайн-клиентов.</div>
+    <div id="onlineClientsStatus" class="hint">Загружаю онлайн-клиентов…</div>
     <div id="onlineClientsList" class="dashboard-client-list online-list"></div>
   </div>
 </div>
@@ -491,6 +521,22 @@ function onlineNodeBadgesHtml(client) {
     return `<span class="node-badge" title="${escapeHtml(title + transport)}">${flag}<span>${escapeHtml(title)}${transport}</span></span>`;
   }).join('') || '<span class="node-badge muted">узел не определён</span>';
 }
+function onlineNodePreviewHtml(client) {
+  const nodes = Array.isArray(client.nodes) ? client.nodes : [];
+  const visible = nodes.slice(0, 3).map(n => {
+    const title = renderNodeTitle({
+      country_code: n.countryCode || n.country_code,
+      country_name_ru: n.countryNameRu || n.country_name_ru,
+      nodeName: n.publicName || n.name,
+      node_name: n.publicName || n.name,
+      label_suffix: n.labelSuffix || n.label_suffix || ''
+    });
+    const flag = renderFlag(n.countryCode || n.country_code, n.countryFlag || n.country_flag || n.flag, n.nodeType || n.node_type);
+    return `<span class="online-node-preview" title="${escapeHtml(title)}">${flag || '<span aria-hidden="true">●</span>'}</span>`;
+  });
+  if (nodes.length > visible.length) visible.push(`<span class="online-node-more" title="Ещё узлов: ${nodes.length - visible.length}">+${nodes.length - visible.length}</span>`);
+  return visible.join('') || '<span class="online-node-none">—</span>';
+}
 function onlineClientUntil(client) {
   return client.expiry_time && Number(client.expiry_time) > 0
     ? new Date(Number(client.expiry_time)).toLocaleString('ru-RU', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' })
@@ -518,23 +564,13 @@ function renderOnlineClients(data) {
     const comment = client.comment || ((client.display_name && client.display_name !== client.login) ? client.display_name : '');
     const clientId = client.id || client.clientId || client.client_id || '';
     const until = onlineClientUntil(client);
-    const renewForm = clientId ? `
-      <form method="post" action="/clients/${encodeURIComponent(String(clientId))}/extend" class="online-client-renew-form js-long-action" data-loading-title="Продлеваю клиента" data-loading-text="Применяю новый срок на узлах клиента.">
-        <input type="hidden" name="back" value="/dashboard" />
-        <input name="days" type="number" min="1" value="30" inputmode="numeric" aria-label="Дней продления" />
-        <button type="submit" class="btn-secondary">Продлить</button>
-      </form>` : '';
     return `
       <div class="dashboard-client-card online-client-card online-client-row online-client-card-v2">
-        <div class="online-client-summary-v4">
-          <div class="online-client-main-v4">
-            <strong class="online-client-login-v4">${escapeHtml(client.login || client.display_name || '-')}</strong>
-            <small class="online-client-comment-v4">${escapeHtml(comment || '-')}</small>
-            <span class="online-client-expiry-v4">до: ${escapeHtml(until)}</span>
-          </div>
-          <button type="button" class="online-details-toggle online-details-toggle-v4" data-online-client-index="${index}" ${clientId ? `data-open-online-client="${escapeHtml(clientId)}" data-online-client-id="${escapeHtml(clientId)}"` : `data-open-online-client-fallback="1" data-online-client-detail="${escapeAttrJson(client)}"`}>Подробнее</button>
-          <div class="online-client-renew-wrap-v4">${renewForm}</div>
-        </div>
+        <span class="online-client-live-dot" title="Сейчас в сети" aria-label="Сейчас в сети"></span>
+        <div class="online-client-main-v4"><strong class="online-client-login-v4">${escapeHtml(client.login || client.display_name || '-')}</strong><small class="online-client-comment-v4">${escapeHtml(comment || 'Без комментария')}</small></div>
+        <span class="online-client-expiry-v4">до ${escapeHtml(until)}</span>
+        <div class="online-node-preview-list" aria-label="Узлы клиента">${onlineNodePreviewHtml(client)}</div>
+        <button type="button" class="online-details-toggle online-details-toggle-v4" data-online-client-index="${index}" ${clientId ? `data-open-online-client="${escapeHtml(clientId)}" data-online-client-id="${escapeHtml(clientId)}"` : `data-open-online-client-fallback="1" data-online-client-detail="${escapeAttrJson(client)}"`}>Подробнее</button>
       </div>`;
   }).join('');
   bindOnlineDetailsButtons();
@@ -562,7 +598,6 @@ function bindOnlineDetailsButtons() {
       event.stopPropagation();
       try {
         const raw = btn.getAttribute('data-online-client-detail') || '{}';
-        hideDashboardModal('onlineClientsModal');
         openOnlineClientDetail(JSON.parse(raw));
       } catch (err) {
         alert('Не удалось открыть детали клиента');
@@ -623,6 +658,8 @@ function renderClientQuickBody(c) {
       <div><span>Логин</span><strong>${escapeHtml(c.login || '-')}</strong></div>
       <div><span>Статус</span><strong>${escapeHtml(c.statusLabel || '-')}</strong></div>
       <div><span>Тип</span><strong>Основной</strong></div>
+      <div><span>Сейчас в сети</span><strong>${c.connectedNow ? 'Да' : 'Нет'}</strong></div>
+      <div><span>Последний раз в сети</span><strong>${escapeHtml(c.lastOnlineText || 'Нет данных')}</strong></div>
       <div><span>Действует до</span><strong>${escapeHtml(c.expiryText || '∞')}</strong></div>
       <div><span>Осталось</span><strong>${escapeHtml(c.daysLeft)} дн.</strong></div>
       <div><span>Трафик</span><strong>${escapeHtml(trafficText)}</strong></div>
@@ -645,7 +682,6 @@ async function openOnlineClientQuickDetail(id) {
   const body = document.getElementById('onlineClientDetailBody');
   const modal = document.getElementById('onlineClientDetailModal');
   if (!body || !modal) return;
-  hideDashboardModal('onlineClientsModal');
   openDashboardModal('onlineClientDetailModal');
   body.innerHTML = '<div class="client-quick-loading">Загружаю клиента...</div>';
   try {
@@ -669,7 +705,6 @@ function openOnlineClientDetail(client) {
   const body = document.getElementById('onlineClientDetailBody');
   const modal = document.getElementById('onlineClientDetailModal');
   if (!body || !modal) return;
-  hideDashboardModal('onlineClientsModal');
   const comment = client.comment || client.display_name || '';
   const until = onlineClientUntil(client);
   body.innerHTML = `
@@ -688,9 +723,86 @@ function openOnlineClientDetail(client) {
   openDashboardModal('onlineClientDetailModal');
 }
 
+let onlineClientsRefreshPending = false;
+let onlineClientsAutoTimer = null;
+let dashboardNodeRefreshPending = false;
+let dashboardLastHealthNotice = '';
+
+function notifyDashboardHealthOnce(message){
+  const text = String(message || '').trim();
+  if (!text || text === dashboardLastHealthNotice) return;
+  dashboardLastHealthNotice = text;
+  if (typeof window.showNexusNotice === 'function') window.showNexusNotice(text, 'err');
+}
+
+function renderDashboardHealth(data){
+  const checks = Array.isArray(data.checks) ? data.checks : [];
+  const failed = checks.filter(item => item.status === 'offline');
+  const online = checks.filter(item => item.status === 'online').length;
+  const offline = failed.length;
+  const onlineBox = document.getElementById('dashboardNodesOnlineCount');
+  const offlineBox = document.getElementById('dashboardNodesOfflineCount');
+  if (onlineBox) onlineBox.textContent = String(online);
+  if (offlineBox) offlineBox.textContent = String(offline);
+
+  const nodeHealth = document.getElementById('dashboardNodesHealth');
+  const nodeLabel = document.getElementById('dashboardNodesHealthLabel');
+  const nodeSummary = document.getElementById('dashboardNodesHealthSummary');
+  const nodeIssues = document.getElementById('dashboardNodeIssues');
+  if (nodeHealth) nodeHealth.dataset.state = failed.length ? 'error' : 'ok';
+  if (nodeLabel) nodeLabel.textContent = failed.length ? 'Ошибка' : 'Работают';
+  if (nodeSummary) nodeSummary.textContent = failed.length ? `Не отвечают: ${failed.length}` : `В сети: ${online}`;
+  if (nodeIssues) {
+    nodeIssues.hidden = failed.length === 0;
+    nodeIssues.innerHTML = failed.slice(0, 4).map(item => {
+      const error = typeof window.nexusHumanizeError === 'function' ? window.nexusHumanizeError(item.error || '') : String(item.error || 'Узел не отвечает');
+      return `<a href="${escapeHtml(item.editUrl || '/nodes')}" title="${escapeHtml(error)}"><b>${escapeHtml(item.title || 'Узел')}</b><span>${escapeHtml(error)}</span></a>`;
+    }).join('');
+  }
+
+  const redirect = data.redirect || {};
+  const redirectHealth = document.getElementById('dashboardRedirectHealth');
+  const redirectLabel = document.getElementById('dashboardRedirectHealthLabel');
+  const redirectSummary = document.getElementById('dashboardRedirectHealthSummary');
+  const redirectError = redirect.configured && redirect.ok === false;
+  if (redirectHealth) redirectHealth.dataset.state = redirectError ? 'error' : (redirect.configured ? 'ok' : 'idle');
+  if (redirectLabel) redirectLabel.textContent = redirect.statusLabel || (redirectError ? 'Ошибка' : 'Работает');
+  if (redirectSummary) redirectSummary.textContent = redirect.message || 'Активных правил нет';
+
+  const noticeParts = failed.map(item => `${item.title}: ${item.error || 'узел не отвечает'}`);
+  if (redirectError) noticeParts.push(`Перенаправление: ${redirect.message || 'helper не подтвердил правила'}`);
+  if (noticeParts.length) notifyDashboardHealthOnce(noticeParts.join(' · '));
+  else dashboardLastHealthNotice = '';
+}
+
+async function refreshDashboardNodeCounts() {
+  if (dashboardNodeRefreshPending || document.hidden) return;
+  dashboardNodeRefreshPending = true;
+  try {
+    const response = await fetch('/dashboard/node-status.json', { headers: { Accept: 'application/json' }, cache: 'no-store' });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || 'Ошибка проверки узлов');
+    renderDashboardHealth(data);
+  } catch (err) {
+    console.warn('Автопроверка узлов на главной:', err);
+    const message = typeof window.nexusHumanizeError === 'function' ? window.nexusHumanizeError(err) : String(err.message || err);
+    const nodeHealth = document.getElementById('dashboardNodesHealth');
+    const nodeLabel = document.getElementById('dashboardNodesHealthLabel');
+    const nodeSummary = document.getElementById('dashboardNodesHealthSummary');
+    if (nodeHealth) nodeHealth.dataset.state = 'error';
+    if (nodeLabel) nodeLabel.textContent = 'Ошибка';
+    if (nodeSummary) nodeSummary.textContent = message;
+    notifyDashboardHealthOnce(message);
+  } finally {
+    dashboardNodeRefreshPending = false;
+  }
+}
+
 async function refreshOnlineClients() {
   const btn = document.getElementById('onlineRefreshBtn');
   const status = document.getElementById('onlineClientsStatus');
+  if (onlineClientsRefreshPending) return;
+  onlineClientsRefreshPending = true;
   try {
     if (btn) btn.disabled = true;
     if (status) status.textContent = 'Обновляю онлайн-клиентов...';
@@ -698,11 +810,44 @@ async function refreshOnlineClients() {
     const data = await response.json();
     if (!response.ok || !data.ok) throw new Error(data.error || 'Ошибка загрузки онлайн-клиентов');
     renderOnlineClients(data);
+    const onlineCount = document.getElementById('dashboardOnlineNowCount');
+    if (onlineCount) onlineCount.textContent = String(Array.isArray(data.clients) ? data.clients.length : 0);
   } catch (err) {
-    if (status) status.textContent = 'Ошибка: ' + (err.message || err);
+    const message = typeof window.nexusHumanizeError === 'function' ? window.nexusHumanizeError(err) : String(err.message || err);
+    if (status) status.textContent = 'Ошибка: ' + message;
+    if (typeof window.showNexusNotice === 'function') window.showNexusNotice(message, 'err');
   } finally {
     if (btn) btn.disabled = false;
+    onlineClientsRefreshPending = false;
   }
+}
+
+function configureOnlineClientsAutoRefresh() {
+  const toggle = document.getElementById('onlineAutoRefresh');
+  const select = document.getElementById('onlineRefreshInterval');
+  if (!toggle || !select) return;
+  if (onlineClientsAutoTimer) window.clearInterval(onlineClientsAutoTimer);
+  onlineClientsAutoTimer = null;
+  select.disabled = !toggle.checked;
+  try {
+    localStorage.setItem('nexus.dashboard.onlineAuto', toggle.checked ? '1' : '0');
+    localStorage.setItem('nexus.dashboard.onlineInterval', String(select.value || '10'));
+  } catch (_) {}
+  if (!toggle.checked) return;
+  const seconds = [10, 30, 60].includes(Number(select.value)) ? Number(select.value) : 10;
+  onlineClientsAutoTimer = window.setInterval(() => {
+    if (!document.hidden) refreshOnlineClients();
+  }, seconds * 1000);
+}
+
+function openOnlineClientsWorkspace() {
+  openDashboardModal('onlineClientsModal');
+  refreshOnlineClients();
+}
+
+function openExpiryWorkspace(){
+  document.querySelector('.desktop-page-tabs[data-page-tabs="dashboard"] [data-tab-target="expiry"]')?.click();
+  document.querySelector('[data-tab-panel="expiry"]')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function setupMobileDashboardTabs() {
@@ -747,9 +892,6 @@ function openOnlineClientById(id, event) {
   window.__aggOnlineClientContext = onlineClient
     ? { id: cleanId, nodes: Array.isArray(onlineClient.nodes) ? onlineClient.nodes : [] }
     : null;
-  // Закрываем список онлайн-клиентов перед открытием карточки, чтобы новая
-  // карточка не оказалась визуально под первым модальным окном на мобильном.
-  hideDashboardModal('onlineClientsModal');
   if (window.openClientQuickCard) {
     window.openClientQuickCard(cleanId);
     return false;
@@ -806,11 +948,24 @@ document.addEventListener('DOMContentLoaded', () => {
   const probeBtn = document.getElementById('liveTrafficProbe');
   probeBtn?.addEventListener('click', probeLiveTraffic);
 
-  document.getElementById('openOnlineClientsModal')?.addEventListener('click', () => {
-    openDashboardModal('onlineClientsModal');
-    refreshOnlineClients();
-  });
+  document.getElementById('openOnlineClientsModal')?.addEventListener('click', openOnlineClientsWorkspace);
+  document.getElementById('openOnlineClientsFromStat')?.addEventListener('click', openOnlineClientsWorkspace);
+  document.getElementById('openExpiryFromStat')?.addEventListener('click', openExpiryWorkspace);
   document.getElementById('onlineRefreshBtn')?.addEventListener('click', refreshOnlineClients);
+  const onlineAuto = document.getElementById('onlineAutoRefresh');
+  const onlineInterval = document.getElementById('onlineRefreshInterval');
+  try {
+    if (onlineAuto) onlineAuto.checked = localStorage.getItem('nexus.dashboard.onlineAuto') !== '0';
+    const savedInterval = localStorage.getItem('nexus.dashboard.onlineInterval');
+    if (onlineInterval && ['10', '30', '60'].includes(savedInterval)) onlineInterval.value = savedInterval;
+  } catch (_) {}
+  onlineAuto?.addEventListener('change', configureOnlineClientsAutoRefresh);
+  onlineInterval?.addEventListener('change', configureOnlineClientsAutoRefresh);
+  configureOnlineClientsAutoRefresh();
+  refreshOnlineClients();
+  window.setTimeout(refreshDashboardNodeCounts, 1500);
+  window.setInterval(refreshDashboardNodeCounts, 60000);
+  document.getElementById('openExpiryDashboard')?.addEventListener('click', openExpiryWorkspace);
   setupMobileDashboardTabs();
 });
 
@@ -824,6 +979,8 @@ function normalizeDashboardSearchText(value) {
   const input = document.getElementById('expiryClientSearch');
   const clear = document.getElementById('expiryClientSearchClear');
   const count = document.getElementById('expiryVisibleCount');
+  const range = document.getElementById('expiryRangeDays');
+  const rangeTitle = document.getElementById('expiryRangeTitle');
   if (!btn || !list) return;
   const modes = ['soon', 'late', 'expired'];
   const labels = { soon: 'Сначала меньше дней', late: 'Сначала больше дней', expired: 'Сначала истёкшие' };
@@ -836,9 +993,11 @@ function normalizeDashboardSearchText(value) {
   function render(){
     const mode = modes[idx % modes.length];
     const query = normalizeDashboardSearchText(input?.value || '');
+    const rangeDays = [7, 14, 30].includes(Number(range?.value)) ? Number(range.value) : 7;
     const rows = Array.from(list.children).filter(el => el.classList && el.classList.contains('dashboard-client-card'));
     rows.forEach(row => {
-      const searchMatches = !query || normalizeDashboardSearchText(row.dataset.searchText || '').includes(query);
+      const dayValue = exactDays(row);
+      const searchMatches = (!query || normalizeDashboardSearchText(row.dataset.searchText || '').includes(query)) && dayValue <= rangeDays;
       // У старых слоёв CSS у карточки есть display с !important, поэтому одного
       // inline-style недостаточно: используем отдельный класс и hidden.
       row.classList.toggle('is-expiry-search-hidden', !searchMatches);
@@ -863,9 +1022,16 @@ function normalizeDashboardSearchText(value) {
     btn.textContent = '↕ ' + labels[mode];
     if (count) count.textContent = String(shown);
     if (clear) clear.hidden = !query;
+    if (rangeTitle) rangeTitle.textContent = `Сроки заканчиваются в ближайшие ${rangeDays} дней`;
+    try { localStorage.setItem('nexus.dashboard.expiryRange', String(rangeDays)); } catch (_) {}
   }
+  try {
+    const savedRange = localStorage.getItem('nexus.dashboard.expiryRange');
+    if (range && ['7', '14', '30'].includes(savedRange)) range.value = savedRange;
+  } catch (_) {}
   btn.addEventListener('click', () => { idx += 1; render(); });
   input?.addEventListener('input', render);
+  range?.addEventListener('change', render);
   clear?.addEventListener('click', () => { if (input) { input.value = ''; input.focus(); } render(); });
   render();
 })();
@@ -886,6 +1052,72 @@ function normalizeDashboardSearchText(value) {
   render();
 })();
 
+
+(function aggPulse(){
+  const btn = document.getElementById('aggPulseCheckBtn');
+  const list = document.getElementById('aggPulseList');
+  const updatedAt = document.getElementById('aggPulseUpdatedAt');
+  if (!btn || !list) return;
+  let running = false;
+  let timer = null;
+
+  async function refreshNodeStatus() {
+    if (running || document.hidden) return;
+    running = true;
+    const items = Array.from(list.querySelectorAll('.agg-pulse-item'));
+    items.forEach(it => {
+      if (it.dataset.state !== 'disabled') {
+        it.dataset.state = 'checking';
+        const ms = it.querySelector('[data-pulse-ms]');
+        if (ms) ms.textContent = '…';
+      }
+    });
+    btn.disabled = true;
+    const oldText = btn.textContent;
+    btn.textContent = 'Проверяю…';
+    try {
+      const res = await fetch('/dashboard/node-status.json', {
+        headers: { 'Accept': 'application/json' },
+        cache: 'no-store'
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || 'Не удалось проверить узлы');
+      const byId = new Map((data.checks || []).map(check => [String(check.nodeId), check]));
+      items.forEach(it => {
+        if (it.dataset.state === 'disabled') return;
+        const c = byId.get(String(it.dataset.nodeId));
+        const ms = it.querySelector('[data-pulse-ms]');
+        if (!c) { it.dataset.state = 'unknown'; if (ms) ms.textContent = ''; return; }
+        it.dataset.state = c.status === 'disabled' ? 'disabled' : (c.ok ? 'online' : 'offline');
+        if (ms) ms.textContent = c.ok
+          ? (c.ms ? Math.round(c.ms) + ' мс' : '')
+          : 'нет ответа';
+      });
+      if (updatedAt) {
+        const stamp = data.generatedAt ? new Date(data.generatedAt) : new Date();
+        updatedAt.textContent = 'Последняя проверка: ' + stamp.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + '.';
+      }
+    } catch (_) {
+      items.forEach(it => { if (it.dataset.state === 'checking') it.dataset.state = 'unknown'; });
+      if (updatedAt) updatedAt.textContent = 'Проверка временно недоступна.';
+    } finally {
+      running = false;
+      btn.disabled = false;
+      btn.textContent = oldText;
+    }
+  }
+
+  btn.addEventListener('click', refreshNodeStatus);
+  timer = window.setInterval(refreshNodeStatus, 10000);
+  window.setTimeout(refreshNodeStatus, 500);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) refreshNodeStatus();
+  });
+  window.addEventListener('pagehide', () => {
+    if (timer) window.clearInterval(timer);
+    timer = null;
+  }, { once: true });
+})();
 
 (function aggTrafficChart(){
   const wrap = document.getElementById('aggChartWrap');

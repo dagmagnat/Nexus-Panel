@@ -1575,6 +1575,47 @@ function htmlEscape(value) {
     .replace(/'/g, '&#39;');
 }
 
+function humanizeOperationalError(value) {
+  const original = String(value?.message || value || '').trim();
+  if (!original) return 'Неизвестная ошибка. Повтори действие и проверь журнал панели.';
+
+  const lower = original.toLowerCase();
+  let explanation = '';
+
+  if (/self[- ]signed certificate|self signed cert|depth_zero_self_signed_cert/.test(lower)) {
+    explanation = 'Узел использует самоподписанный TLS-сертификат. Установи действующий сертификат для домена узла или укажи корректный HTTPS-адрес панели.';
+  } else if (/certificate has expired|cert_has_expired|certificate expired/.test(lower)) {
+    explanation = 'TLS-сертификат узла истёк. Обнови сертификат на сервере узла.';
+  } else if (/hostname.*does not match|altname|certificate.*name|cert_common_name_invalid/.test(lower)) {
+    explanation = 'TLS-сертификат выпущен для другого домена. Проверь домен в URL узла и сертификат сервера.';
+  } else if (/econnrefused|connection refused|соединение отклонено/.test(lower)) {
+    explanation = 'Соединение отклонено. Проверь адрес, порт, firewall и запущена ли удалённая панель.';
+  } else if (/enotfound|eai_again|getaddrinfo|name or service not known|temporary failure in name resolution/.test(lower)) {
+    explanation = 'Домен узла не удалось найти через DNS. Проверь DNS-запись и адрес панели.';
+  } else if (/etimedout|timed out|timeout|aborterror|aborted|тайм-аут/.test(lower)) {
+    explanation = 'Удалённый сервер не ответил вовремя. Проверь доступность узла, порт и сетевые правила.';
+  } else if (/401|unauthori[sz]ed|authentication failed|login failed|invalid token/.test(lower)) {
+    explanation = 'Ошибка авторизации. Проверь API-токен, логин, пароль и Panel Path выбранного узла.';
+  } else if (/403|forbidden|access denied/.test(lower)) {
+    explanation = 'Доступ запрещён удалённой панелью. Проверь права API-токена и разрешённые IP.';
+  } else if (/404|not found|cannot get|cannot post|no route/.test(lower)) {
+    explanation = 'Адрес API не найден. Проверь URL панели, Panel Path, версию 3x-ui и Inbound ID.';
+  } else if (/duplicate|unique constraint|already exists|already present/.test(lower)) {
+    explanation = 'Такая запись уже существует. Проверь совпадение логина, email или UUID клиента.';
+  } else if (/network error|fetch failed|socket hang up|econnreset/.test(lower)) {
+    explanation = 'Сетевое соединение с удалённым сервером оборвалось. Проверь узел и повтори действие.';
+  }
+
+  if (!explanation) {
+    // Уже понятное русское сообщение оставляем без повторного префикса.
+    if (/[А-Яа-яЁё]/.test(original)) return original;
+    explanation = 'Операция не выполнена. Ниже оставлены технические сведения для диагностики.';
+  }
+
+  if (original === explanation || original.startsWith(explanation)) return original;
+  return `${explanation} Технически: ${original}`;
+}
+
 function normalizeSearchText(value) {
   return String(value ?? '')
     .normalize('NFKC')
@@ -1686,8 +1727,11 @@ function render(res, view, params = {}) {
     countryFlagText: getCountryFlagFromParts,
     countryFlagByName: getCountryFlag,
     countryCodeByName: getCountryCodeByName,
-    nodeFlagText: getNodeFlag
+    nodeFlagText: getNodeFlag,
+    humanizeError: humanizeOperationalError
   };
+
+  if (data.error) data.error = humanizeOperationalError(data.error);
 
   res.render(view, data, (err, html) => {
     if (!err) return res.send(html);
@@ -10546,14 +10590,22 @@ async function getOnlineClientsForDashboard() {
   const items = new Map();
   const errors = [];
 
-  for (const node of nodes) {
-    let emails = [];
-    try {
-      emails = await fetchOnlineEmailsFromNode(node);
-    } catch (err) {
-      errors.push(`${getNodePublicName(node)}: ${err.message || err}`);
-      continue;
+  // A 10-second UI refresh must not wait for every node serially. Four
+  // concurrent checks keep the panel responsive without creating a request
+  // burst against all remote 3x-ui/Remnawave instances at once.
+  const nodeResults = await runWithConcurrency(nodes, 4, async node => ({
+    node,
+    emails: await fetchOnlineEmailsFromNode(node)
+  }));
+
+  nodeResults.forEach((result, index) => {
+    const node = nodes[index];
+    if (!node) return;
+    if (!result || result.status !== 'fulfilled') {
+      errors.push(`${getNodePublicName(node)}: ${String(result?.reason?.message || result?.reason || 'ошибка проверки')}`);
+      return;
     }
+    const emails = Array.isArray(result.value?.emails) ? result.value.emails : [];
 
     for (const email of emails) {
       const client = db.prepare(`
@@ -10566,11 +10618,12 @@ async function getOnlineClientsForDashboard() {
       `).get(email, email, email);
 
       if (!client) continue;
-      markClientSeenOnline(client.id);
+      const seenAt = markClientSeenOnline(client.id);
       const key = String(client.id);
       const old = items.get(key) || { ...client, nodes: [] };
+      old.last_online_at = seenAt || old.last_online_at || '';
       const transport = getInboundTransportInfo(getCachedInbound(node));
-      old.nodes.push({
+      if (!old.nodes.some(item => Number(item.id) === Number(node.id))) old.nodes.push({
         id: node.id,
         name: getNodeDisplayName(node),
         publicName: getNodePublicName(node),
@@ -10583,7 +10636,7 @@ async function getOnlineClientsForDashboard() {
       });
       items.set(key, old);
     }
-  }
+  });
 
   return { clients: Array.from(items.values()), errors: errors.slice(0, 8) };
 }
@@ -11494,44 +11547,102 @@ function buildHealthOverview() {
 }
 
 
+let dashboardHealthSweepPromise = null;
+
+async function runDashboardHealthSweep() {
+  if (dashboardHealthSweepPromise) return dashboardHealthSweepPromise;
+
+  dashboardHealthSweepPromise = (async () => {
+    const nodes = db.prepare(`SELECT * FROM nodes ORDER BY ${nodeOrderSql()}`).all();
+    const checks = [];
+
+    // Проверяем строго по одному узлу. Так один медленный сервер не создаёт
+    // всплеск одновременных подключений ко всем 3x-ui/Remnawave панелям.
+    for (const node of nodes) {
+      const base = {
+        nodeId: Number(node.id),
+        title: getNodePublicName(node),
+        editUrl: `/nodes/${Number(node.id)}/edit`
+      };
+      if (Number(node.enabled) === 0) {
+        checks.push({ ...base, ok: false, status: 'disabled', statusLabel: 'Отключён', ms: 0, error: '' });
+        continue;
+      }
+
+      const startedAt = Date.now();
+      try {
+        const probe = await checkNode(node, {
+          timeoutMs: Math.min(NODE_HEALTHCHECK_TIMEOUT_MS, 5000),
+          lightweight: true
+        });
+        const rawError = probe.ok ? '' : String(probe.error || 'нет ответа');
+        checks.push({
+          ...base,
+          ok: !!probe.ok,
+          status: probe.ok ? 'online' : 'offline',
+          statusLabel: probe.ok ? 'В сети' : 'Не в сети',
+          ms: Date.now() - startedAt,
+          error: rawError ? humanizeOperationalError(rawError) : '',
+          technicalError: rawError
+        });
+      } catch (err) {
+        const rawError = String(err?.message || err || 'нет ответа');
+        checks.push({
+          ...base,
+          ok: false,
+          status: 'offline',
+          statusLabel: 'Не в сети',
+          ms: Date.now() - startedAt,
+          error: humanizeOperationalError(rawError),
+          technicalError: rawError
+        });
+      }
+    }
+
+    const redirectRules = (() => {
+      try { return getRedirectRules(false); } catch (_) { return []; }
+    })();
+    const rawRedirectStatus = (() => {
+      try { return getRedirectStatus(); } catch (err) { return { ok: false, error: String(err?.message || err) }; }
+    })();
+    const redirectConfigured = redirectRules.length > 0;
+    const redirectProblem = String(
+      rawRedirectStatus.staleMessage ||
+      rawRedirectStatus.error ||
+      rawRedirectStatus.message ||
+      ''
+    ).trim();
+    const redirectOk = !redirectConfigured || (rawRedirectStatus.ok !== false && !rawRedirectStatus.stale);
+    const redirect = {
+      configured: redirectConfigured,
+      ok: redirectOk,
+      status: !redirectConfigured ? 'not-configured' : (redirectOk ? 'online' : 'offline'),
+      statusLabel: !redirectConfigured ? 'Не настроено' : (redirectOk ? 'Работает' : 'Ошибка'),
+      message: !redirectConfigured
+        ? 'Активных правил перенаправления нет.'
+        : (redirectOk ? (redirectProblem || 'Helper применил правила.') : humanizeOperationalError(redirectProblem || 'Helper не подтвердил применение правил.')),
+      technicalError: redirectOk ? '' : redirectProblem,
+      url: '/redirects',
+      updatedAt: rawRedirectStatus.updatedAt || rawRedirectStatus.generatedAt || null
+    };
+
+    return { ok: true, generatedAt: new Date().toISOString(), checks, redirect };
+  })();
+
+  try {
+    return await dashboardHealthSweepPromise;
+  } finally {
+    dashboardHealthSweepPromise = null;
+  }
+}
+
 app.get('/dashboard/node-status.json', requireAuth, async (req, res) => {
   try {
-    const nodes = db.prepare(`SELECT * FROM nodes ORDER BY ${nodeOrderSql()}`).all();
-    const activeNodes = nodes.filter(node => Number(node.enabled) !== 0);
-    const results = await runWithConcurrency(activeNodes, 4, async node => {
-      const startedAt = Date.now();
-      const probe = await checkNode(node, {
-        timeoutMs: Math.min(NODE_HEALTHCHECK_TIMEOUT_MS, 5000),
-        lightweight: true
-      });
-      return {
-        nodeId: node.id,
-        ok: !!probe.ok,
-        status: probe.ok ? 'online' : 'offline',
-        ms: Date.now() - startedAt,
-        error: probe.ok ? '' : String(probe.error || 'нет ответа')
-      };
-    });
-    const activeChecks = new Map();
-    results.forEach((result, index) => {
-      const node = activeNodes[index];
-      if (!node) return;
-      if (result?.status === 'fulfilled') activeChecks.set(String(node.id), result.value);
-      else activeChecks.set(String(node.id), {
-        nodeId: node.id,
-        ok: false,
-        status: 'offline',
-        ms: 0,
-        error: String(result?.reason?.message || result?.reason || 'нет ответа')
-      });
-    });
-    const checks = nodes.map(node => Number(node.enabled) === 0
-      ? { nodeId: node.id, ok: false, status: 'disabled', ms: 0, error: '' }
-      : (activeChecks.get(String(node.id)) || { nodeId: node.id, ok: false, status: 'unknown', ms: 0, error: 'нет данных' }));
     res.setHeader('Cache-Control', 'no-store');
-    res.json({ ok: true, generatedAt: new Date().toISOString(), checks });
+    res.json(await runDashboardHealthSweep());
   } catch (err) {
-    res.status(500).json({ ok: false, error: String(err.message || err), checks: [] });
+    const original = String(err?.message || err || 'Ошибка проверки узлов');
+    res.status(500).json({ ok: false, error: humanizeOperationalError(original), technicalError: original, checks: [] });
   }
 });
 
@@ -11661,6 +11772,7 @@ app.get('/dashboard/live-client-traffic-probe.json', requireAuth, async (req, re
 app.get('/dashboard/online-clients.json', requireAuth, async (req, res) => {
   try {
     const result = await getOnlineClientsForDashboard();
+    res.setHeader('Cache-Control', 'no-store');
     res.json({
       ok: true,
       generatedAt: new Date().toISOString(),
@@ -11711,13 +11823,16 @@ app.get('/dashboard', requireAuth, async (req, res) => {
   };
 
   const now = Date.now();
-  const week = now + 7 * 24 * 60 * 60 * 1000;
+  // The dashboard switches the deadline horizon in the browser (7/14/30
+  // days), so load the largest supported window once and filter it without a
+  // full page refresh. Expired clients are intentionally kept in the result.
+  const expiryWindow = now + 30 * 24 * 60 * 60 * 1000;
   const expiringClients = db.prepare(`
     SELECT * FROM clients
     WHERE enabled = 1 AND expiry_time > 0 AND expiry_time <= ?
     ORDER BY expiry_time ASC
-    LIMIT 50
-  `).all(week);
+    LIMIT 200
+  `).all(expiryWindow);
 
   const showOnlineClients = req.query.online === '1';
   const onlineResult = showOnlineClients
@@ -11731,6 +11846,10 @@ app.get('/dashboard', requireAuth, async (req, res) => {
   const nodeTrafficReport = buildNodeTrafficReport(req.query.traffic_period, req.query.traffic_metric);
   const liveClientTrafficReport = buildLiveClientTrafficReport(10, 0.1);
   const topClientUsageRows = getTopClientUsageReport(20);
+  const dashboardHealth = buildHealthOverview();
+  const redirectStatus = (() => {
+    try { return getRedirectStatus(); } catch (err) { return { ok: false, message: String(err.message || err) }; }
+  })();
 
   render(res, 'dashboard', {
     stats,
@@ -11739,6 +11858,8 @@ app.get('/dashboard', requireAuth, async (req, res) => {
     nodeTrafficReport,
     liveClientTrafficReport,
     topClientUsageRows,
+    dashboardHealth,
+    redirectStatus,
     expiringClients,
     limitedClients,
     showOnlineClients,

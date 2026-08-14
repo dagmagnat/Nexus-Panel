@@ -50,6 +50,10 @@
       .replace(/\s*\/\s*/g, ' / ')
       .trim() || raw;
   }
+  function activityLabel(value) {
+    const key = String(value || 'unknown').toLowerCase();
+    return ({ online: 'В сети', offline: 'Не в сети', disabled: 'Отключён', unknown: 'Нет данных', checking: 'Проверяю' })[key] || 'Нет данных';
+  }
 %>
 
 <%- include('partials_header', { pageTitle: 'Узлы', pageSubtitle: 'Добавление, проверка и управление 3x-ui и Remnawave', activePage: 'nodes', hidePageHeader: true }) %>
@@ -78,7 +82,7 @@
 <div class="grid">
   <section class="card span-12 tab-panel <%= activeNodeTab === 'add' ? 'is-active' : '' %>" data-tab-panel="add">
     <h2>Добавить узел</h2>
-    <form method="post" action="/nodes" class="js-long-action auth-token-active" data-loading-title="Добавляю узел" data-loading-text="Проверяю узел и при включённом создании добавляю существующих клиентов агрегатора в новый узел.">
+    <form method="post" action="/nodes" class="js-long-action auth-token-active" data-node-add-form data-loading-title="Добавляю узел" data-loading-text="Проверяю подключение, читаю параметры выбранного inbound и сохраняю узел.">
       <div class="form-grid">
         <div class="field">
           <label>Страна</label>
@@ -348,10 +352,9 @@
               const nodeTypeLabel = node.node_type_label || (isRemnawave ? 'Remnawave Panel' : '3x-ui');
               const transportLabel = node.transport_label || 'не загружено';
               const transportCompact = compactTransportLabel(transportLabel);
-              const inboundTrafficText = node.transport_loaded ? (node.inbound_used_text || '0 МБ') : '';
-              const transportRowText = isRemnawave ? 'Remnawave API' : (inboundTrafficText ? `${inboundTrafficText} · ${transportCompact}` : transportCompact);
+              const transportRowText = isRemnawave ? 'Remnawave API' : transportCompact;
               const activityStatus = node.last_status || 'unknown';
-              const searchText = [node.id, displayName, nodeTypeLabel, node.panel_url, node.panel_path, node.sub_base_url, node.inbound_id, transportLabel, inboundTrafficText, activityStatus, node.last_error].join(' ').toLowerCase();
+              const searchText = [node.id, displayName, nodeTypeLabel, node.panel_url, node.panel_path, node.sub_base_url, node.inbound_id, transportLabel, activityStatus, node.last_error].join(' ').toLowerCase();
             %>
               <div
                 class="node-list-row <%= idx === 0 ? 'is-selected' : '' %> <%= isEnabled ? '' : 'muted-row' %>"
@@ -363,14 +366,16 @@
                 data-node-search="<%= searchText %>"
               >
                 <button type="button" class="drag-handle" title="Перетащить узел" aria-label="Перетащить узел">⠿</button>
-                <button type="button" class="node-row-select" data-select-node="<%= node.id %>" aria-label="Открыть детали узла <%= displayName %>">
+                <button type="button" class="node-row-select" data-select-node="<%= node.id %>" data-node-edit-url="/nodes/<%= node.id %>/edit" aria-label="Редактировать узел <%= displayName %>">
                   <span class="node-row-id"><%= node.id %></span>
                   <span class="node-row-name"><strong><%- flagHtml(node.country_code, node.country_flag, node.country_name_ru || node.name, node.node_type) %><span><%= displayName %></span></strong></span>
                   <span class="node-row-type"><%= nodeTypeLabel %></span>
-                  <span class="transport-chip transport-chip-full" title="<%= isRemnawave ? 'Remnawave API' : `${transportCompact}${inboundTrafficText ? ` · потрачено ${inboundTrafficText}` : ''}` %>"><%= transportRowText %></span><span class="transport-chip transport-chip-mobile" title="<%= isRemnawave ? 'Remnawave API' : `${transportCompact}${inboundTrafficText ? ` · потрачено ${inboundTrafficText}` : ''}` %>"><%= transportRowText %></span>
+                  <span class="transport-chip transport-chip-full" title="<%= transportRowText %>"><%= transportRowText %></span><span class="transport-chip transport-chip-mobile" title="<%= transportRowText %>"><%= transportRowText %></span>
                   <span class="badge <%= isEnabled ? 'online' : 'offline' %>"><%= isEnabled ? 'Включён' : 'Отключён' %></span>
-                  <span class="node-row-activity"><span class="badge <%= activityStatus %>"><%= activityStatus %></span><span class="signal-bars" aria-hidden="true"><i></i><i></i><i></i></span></span>
+                  <span class="node-row-activity" data-node-live-status="<%= node.id %>"><span class="badge <%= activityStatus %>" data-node-live-badge><%= activityLabel(activityStatus) %></span><span class="signal-bars" aria-hidden="true"><i></i><i></i><i></i></span></span>
+                  <span class="node-row-error <%= node.last_error ? '' : 'hidden' %>" data-node-live-error="<%= node.id %>" title="<%= node.last_error ? humanizeError(node.last_error) : '' %>"><%= node.last_error ? humanizeError(node.last_error) : '' %></span>
                   <span class="node-row-chevron" aria-hidden="true">›</span>
+                  <span class="node-mobile-edit-hint" aria-hidden="true">Изменить</span>
                 </button>
                 <div class="node-mobile-order-controls" aria-label="Изменить порядок узла">
                   <button type="button" class="secondary mobile-order-btn" data-mobile-move="up" title="Поднять выше">↑</button>
@@ -516,14 +521,6 @@
                       <code><%= node.inbound_fingerprint %></code>
                     </div>
                   <% } %>
-                  <div class="node-detail-kv-row node-traffic-row">
-                    <span>Потрачено в Inbound #<%= node.inbound_id %></span>
-                    <strong><%= node.inbound_used_text || '0 МБ' %></strong>
-                  </div>
-                  <div class="node-detail-kv-row">
-                    <span>Трафик ↓ / ↑</span>
-                    <code><%= node.inbound_download_text || '0 МБ' %> / <%= node.inbound_upload_text || '0 МБ' %></code>
-                  </div>
                 <% } else { %>
                   <div class="node-detail-kv-row danger-row">
                     <span>Параметры inbound</span>
@@ -533,7 +530,7 @@
                 <% if (node.last_error) { %>
                   <div class="node-detail-kv-row danger-row">
                     <span>Ошибка</span>
-                    <code><%= node.last_error %></code>
+                    <code><%= humanizeError(node.last_error) %></code>
                   </div>
                 <% } %>
               </div>
@@ -542,17 +539,7 @@
                 <h3>Статус и активность</h3>
                 <div class="node-status-grid">
                   <div><span>Статус</span><strong class="badge <%= isEnabled ? 'online' : 'offline' %>"><%= isEnabled ? 'Включён' : 'Отключён' %></strong></div>
-                  <div><span>Активность</span><strong class="badge <%= activityStatus %>"><%= activityStatus %></strong></div>
-                </div>
-              </div>
-
-              <div class="node-detail-section">
-                <h3>Метки</h3>
-                <div class="node-tags">
-                  <span><%= isRemnawave ? 'remnawave' : '3x-ui' %></span>
-                  <span><%= isEnabled ? 'enabled' : 'disabled' %></span>
-                  <% if (node.transport_security) { %><span><%= node.transport_security %></span><% } %>
-                  <% if (node.country_code) { %><span><%= String(node.country_code).toLowerCase() %></span><% } %>
+                  <div><span>Активность</span><strong class="badge <%= activityStatus %>" data-node-detail-live-status="<%= node.id %>"><%= activityLabel(activityStatus) %></strong></div>
                 </div>
               </div>
 
@@ -572,7 +559,6 @@
                   <% } %>
                 </form>
               </div>
-              <p class="node-detail-last muted">Последний статус: <%= activityStatus %></p>
             </article>
           <% }) %>
         </aside>
@@ -586,6 +572,12 @@
     <div class="loader-ring"></div>
     <h2 id="loadingTitle">Загрузка</h2>
     <p class="muted" id="loadingText">Операция выполняется. Не закрывайте страницу.</p>
+    <div class="node-add-progress" id="nodeAddProgress" hidden>
+      <div class="node-add-progress-head"><strong id="nodeAddProgressLabel">Подготовка</strong><span id="nodeAddProgressPercent">0%</span></div>
+      <div class="node-add-progress-track"><i id="nodeAddProgressBar"></i></div>
+      <div class="node-add-progress-meta"><span id="nodeAddElapsed">Прошло: 0 сек.</span><span id="nodeAddEta">Осталось примерно: 1 мин.</span></div>
+      <p class="node-add-warning">Не закрывайте эту вкладку. Проверка API и перенос клиентов выполняются последовательно.</p>
+    </div>
   </div>
 </div>
 
@@ -700,6 +692,10 @@ function isMobileNodesLayout() {
   return window.matchMedia && window.matchMedia('(max-width: 900px)').matches;
 }
 
+function isNodeDrawerLayout() {
+  return window.matchMedia && window.matchMedia('(max-width: 1120px)').matches;
+}
+
 function closeNodeDetailsPanel(event) {
   if (event) {
     event.preventDefault();
@@ -707,8 +703,8 @@ function closeNodeDetailsPanel(event) {
   }
   const layout = document.getElementById('nodesModernLayout');
   if (!layout) return false;
-  if (isMobileNodesLayout()) layout.classList.remove('mobile-details-open');
-  else layout.classList.add('details-hidden');
+  layout.classList.remove('mobile-details-open', 'detail-open');
+  if (!isNodeDrawerLayout()) layout.classList.add('details-hidden');
   return false;
 }
 window.closeNodeDetailsPanel = closeNodeDetailsPanel;
@@ -718,11 +714,9 @@ function selectNodeDetails(id, opts) {
   const openMobile = !!(opts && opts.openMobile);
   if (layout) {
     layout.classList.remove('details-hidden');
-    if (isMobileNodesLayout()) {
-      layout.classList.toggle('mobile-details-open', openMobile);
-    } else {
-      layout.classList.remove('mobile-details-open');
-    }
+    const shouldOpenDrawer = isNodeDrawerLayout() && openMobile;
+    layout.classList.toggle('detail-open', shouldOpenDrawer);
+    layout.classList.toggle('mobile-details-open', shouldOpenDrawer && isMobileNodesLayout());
   }
   document.querySelectorAll('.node-list-row').forEach(row => {
     row.classList.toggle('is-selected', String(row.dataset.nodeId) === String(id));
@@ -780,6 +774,11 @@ function initNodeDetailsPanel() {
     const selector = event.target.closest('[data-select-node]');
     if (selector) {
       event.preventDefault();
+      if (isMobileNodesLayout()) {
+        const editUrl = selector.dataset.nodeEditUrl || `/nodes/${encodeURIComponent(selector.dataset.selectNode)}/edit`;
+        window.location.assign(editUrl);
+        return;
+      }
       selectNodeDetails(selector.dataset.selectNode, { openMobile: true });
       return;
     }
@@ -809,14 +808,7 @@ function initNodeDetailsPanel() {
     if (search) search.value = '';
     if (type) type.value = 'all';
     if (state) state.value = 'all';
-    const activeStateFilter = String(document.getElementById('nodeStateFilter')?.value || 'all');
-    if (activeStateFilter === 'online' || activeStateFilter === 'offline') {
-      const previousPage = nodeCurrentPage;
-      applyNodeFilters();
-      nodeCurrentPage = previousPage;
-      renderNodePagination();
-      ensureSelectedNodeOnVisiblePage();
-    }
+    applyNodeFilters();
   });
   updateVisibleNodesCount();
 }
@@ -884,49 +876,6 @@ function initMobileNodeOrder() {
     }
   });
 }
-
-let nodeActivityRefreshRunning = false;
-let nodeActivityRefreshTimer = null;
-
-function setNodeActivityBadge(badge, state, label) {
-  if (!badge) return;
-  ['online', 'offline', 'unknown', 'checking', 'disabled'].forEach(name => badge.classList.remove(name));
-  badge.classList.add(state);
-  badge.textContent = label;
-}
-
-async function refreshNodeActivity() {
-  if (nodeActivityRefreshRunning || document.hidden || !document.getElementById('nodesOrderBody')) return;
-  nodeActivityRefreshRunning = true;
-  try {
-    const response = await fetch('/dashboard/node-status.json', {
-      headers: { 'Accept': 'application/json' },
-      cache: 'no-store'
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok || !data.ok) throw new Error(data.error || 'Не удалось проверить узлы');
-    const checks = new Map((data.checks || []).map(item => [String(item.nodeId), item]));
-    getNodeRows().forEach(row => {
-      const check = checks.get(String(row.dataset.nodeId));
-      if (!check) return;
-      const disabled = check.status === 'disabled' || row.dataset.nodeEnabled === 'disabled';
-      const state = disabled ? 'unknown' : (check.ok ? 'online' : 'offline');
-      const label = disabled ? '—' : state;
-      row.dataset.nodeActivity = state;
-      setNodeActivityBadge(row.querySelector('.node-row-activity .badge'), state, label);
-      const detail = document.querySelector(`[data-detail-node-id="${CSS.escape(String(row.dataset.nodeId))}"]`);
-      setNodeActivityBadge(detail?.querySelector('.node-status-grid > div:nth-child(2) .badge'), state, label);
-      const last = detail?.querySelector('.node-detail-last');
-      if (last) last.textContent = `Последний статус: ${label} · автопроверка ${new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`;
-    });
-    applyNodeFilters();
-  } catch (_) {
-    // Оставляем последний известный статус и повторяем проверку через минуту.
-  } finally {
-    nodeActivityRefreshRunning = false;
-  }
-}
-
 function showLoading(title, text) {
   const modal = document.getElementById('loadingModal');
   if (!modal) return;
@@ -934,22 +883,97 @@ function showLoading(title, text) {
   document.getElementById('loadingText').textContent = text || 'Операция выполняется. Не закрывайте страницу.';
   modal.classList.remove('hidden');
 }
+
+let nodeAddProgressTimer = null;
+function startNodeAddProgress(form) {
+  const box = document.getElementById('nodeAddProgress');
+  const bar = document.getElementById('nodeAddProgressBar');
+  const percent = document.getElementById('nodeAddProgressPercent');
+  const label = document.getElementById('nodeAddProgressLabel');
+  const elapsed = document.getElementById('nodeAddElapsed');
+  const eta = document.getElementById('nodeAddEta');
+  if (!box || !bar || !percent || !label || !elapsed || !eta) return;
+  box.hidden = false;
+  const syncClients = Boolean(form.querySelector('[name="create_existing_clients_on_node"]:checked') || form.querySelector('[name="import_clients_from_node"]:checked'));
+  const estimateSeconds = syncClients ? 95 : 35;
+  const started = Date.now();
+  const stages = syncClients
+    ? [[8, 'Проверяю адрес и API'], [28, 'Читаю параметры inbound'], [48, 'Сохраняю подключение'], [68, 'Сверяю существующих клиентов'], [88, 'Добавляю отсутствующих клиентов']]
+    : [[10, 'Проверяю адрес и API'], [38, 'Читаю параметры inbound'], [66, 'Сохраняю подключение'], [88, 'Завершаю проверку']];
+  const render = () => {
+    const seconds = Math.max(0, Math.floor((Date.now() - started) / 1000));
+    const ratio = Math.min(.92, seconds / estimateSeconds);
+    const value = Math.max(3, Math.round(ratio * 100));
+    const stage = stages.reduce((current, item) => value >= item[0] ? item : current, stages[0]);
+    bar.style.width = value + '%';
+    percent.textContent = value + '%';
+    label.textContent = stage[1];
+    elapsed.textContent = `Прошло: ${seconds} сек.`;
+    eta.textContent = ratio >= .92 ? 'Завершаю — ответ сервера может занять ещё немного времени' : `Осталось примерно: ${Math.max(1, estimateSeconds - seconds)} сек.`;
+  };
+  render();
+  if (nodeAddProgressTimer) window.clearInterval(nodeAddProgressTimer);
+  nodeAddProgressTimer = window.setInterval(render, 1000);
+  window.addEventListener('beforeunload', () => {
+    if (nodeAddProgressTimer) window.clearInterval(nodeAddProgressTimer);
+    bar.style.width = '100%';
+    percent.textContent = '100%';
+    label.textContent = 'Готово';
+  }, { once: true });
+}
+
+let nodeStatusRefreshPending = false;
+async function refreshNodeStatuses() {
+  if (nodeStatusRefreshPending || document.hidden) return;
+  nodeStatusRefreshPending = true;
+  try {
+    const response = await fetch('/dashboard/node-status.json', { headers: { Accept: 'application/json' } });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || 'Не удалось проверить узлы');
+    (data.checks || []).forEach(check => {
+      const state = ['online', 'offline', 'disabled'].includes(String(check.status)) ? String(check.status) : 'unknown';
+      const label = check.statusLabel || ({ online: 'В сети', offline: 'Не в сети', disabled: 'Отключён', unknown: 'Нет данных' })[state] || 'Нет данных';
+      document.querySelectorAll(`[data-node-live-status="${check.nodeId}"]`).forEach(container => {
+        container.closest('.node-list-row')?.setAttribute('data-node-activity', state);
+        const badge = container.querySelector('[data-node-live-badge]');
+        if (badge) {
+          badge.className = `badge ${state}`;
+          badge.textContent = label;
+          badge.title = check.error || (check.ms ? `${check.ms} мс` : '');
+        }
+      });
+      document.querySelectorAll(`[data-node-live-error="${check.nodeId}"]`).forEach(errorEl => {
+        const text = String(check.error || '').trim();
+        errorEl.textContent = text;
+        errorEl.title = text;
+        errorEl.classList.toggle('hidden', !text || state === 'online' || state === 'disabled');
+      });
+      document.querySelectorAll(`[data-node-detail-live-status="${check.nodeId}"]`).forEach(badge => {
+        badge.className = `badge ${state}`;
+        badge.textContent = label;
+        badge.title = check.error || (check.ms ? `${check.ms} мс` : '');
+      });
+    });
+    if (typeof applyNodeFilters === 'function') applyNodeFilters();
+  } catch (err) {
+    console.warn('Автопроверка узлов:', err);
+    if (typeof window.showNexusNotice === 'function') window.showNexusNotice(err, 'err');
+  } finally {
+    nodeStatusRefreshPending = false;
+  }
+}
 document.addEventListener('DOMContentLoaded', () => {
   initNodeDragOrder();
   initMobileNodeOrder();
   initNodeDetailsPanel();
-  window.setTimeout(refreshNodeActivity, 800);
-  nodeActivityRefreshTimer = window.setInterval(refreshNodeActivity, 60000);
-  document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) refreshNodeActivity();
-  });
-  window.addEventListener('pagehide', () => {
-    if (nodeActivityRefreshTimer) window.clearInterval(nodeActivityRefreshTimer);
-    nodeActivityRefreshTimer = null;
-  }, { once: true });
   document.querySelectorAll('form.js-long-action').forEach(form => {
-    form.addEventListener('submit', () => showLoading(form.dataset.loadingTitle, form.dataset.loadingText));
+    form.addEventListener('submit', () => {
+      showLoading(form.dataset.loadingTitle, form.dataset.loadingText);
+      if (form.matches('[data-node-add-form]')) startNodeAddProgress(form);
+    });
   });
+  window.setTimeout(refreshNodeStatuses, 1500);
+  window.setInterval(refreshNodeStatuses, 60000);
 });
 </script>
 

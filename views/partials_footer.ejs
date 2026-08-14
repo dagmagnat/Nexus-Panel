@@ -5,6 +5,52 @@
 (function(){
   const body = document.body;
 
+  function nexusHumanizeError(value){
+    const original = String((value && value.message) || value || '').trim();
+    if (!original) return 'Неизвестная ошибка. Повтори действие и проверь журнал панели.';
+    const lower = original.toLowerCase();
+    let explanation = '';
+    if (/self[- ]signed certificate|depth_zero_self_signed_cert/.test(lower)) explanation = 'Узел использует самоподписанный TLS-сертификат. Установи действующий сертификат для домена узла.';
+    else if (/certificate has expired|cert_has_expired/.test(lower)) explanation = 'TLS-сертификат узла истёк. Обнови сертификат на сервере узла.';
+    else if (/hostname.*does not match|altname|certificate.*name/.test(lower)) explanation = 'Сертификат выпущен для другого домена. Проверь URL узла и сертификат сервера.';
+    else if (/econnrefused|connection refused/.test(lower)) explanation = 'Соединение отклонено. Проверь адрес, порт, firewall и запущена ли удалённая панель.';
+    else if (/enotfound|eai_again|getaddrinfo|name or service not known/.test(lower)) explanation = 'Домен не найден через DNS. Проверь DNS-запись и адрес сервера.';
+    else if (/etimedout|timed out|timeout|aborterror|aborted/.test(lower)) explanation = 'Удалённый сервер не ответил вовремя. Проверь доступность, порт и сетевые правила.';
+    else if (/401|unauthori[sz]ed|authentication failed|invalid token/.test(lower)) explanation = 'Ошибка авторизации. Проверь API-токен, логин, пароль и Panel Path.';
+    else if (/403|forbidden|access denied/.test(lower)) explanation = 'Удалённая панель запретила доступ. Проверь права API-токена и разрешённые IP.';
+    else if (/404|not found|cannot get|cannot post|no route/.test(lower)) explanation = 'Адрес API не найден. Проверь URL, Panel Path, версию панели и Inbound ID.';
+    else if (/duplicate|unique constraint|already exists/.test(lower)) explanation = 'Такая запись уже существует. Проверь логин, email или UUID клиента.';
+    else if (/network error|fetch failed|socket hang up|econnreset/.test(lower)) explanation = 'Сетевое соединение оборвалось. Проверь сервер и повтори действие.';
+    if (!explanation) return /[А-Яа-яЁё]/.test(original) ? original : 'Операция не выполнена. Технически: ' + original;
+    return original.startsWith(explanation) ? original : explanation + ' Технически: ' + original;
+  }
+  window.nexusHumanizeError = nexusHumanizeError;
+
+  window.showNexusNotice = function(message, type){
+    let stack = document.querySelector('.agg-toast-stack');
+    if (!stack) {
+      stack = document.createElement('div');
+      stack.className = 'agg-toast-stack';
+      document.body.appendChild(stack);
+    }
+    const isError = type !== 'ok';
+    const alert = document.createElement('div');
+    alert.className = 'alert ' + (isError ? 'err' : 'ok');
+    alert.setAttribute('role', isError ? 'alert' : 'status');
+    alert.setAttribute('aria-live', isError ? 'assertive' : 'polite');
+    alert.textContent = isError ? nexusHumanizeError(message) : String(message || 'Готово');
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'agg-toast-close';
+    close.setAttribute('aria-label', 'Закрыть уведомление');
+    close.textContent = '×';
+    close.addEventListener('click', () => alert.remove());
+    alert.appendChild(close);
+    stack.appendChild(alert);
+    window.setTimeout(() => { if (alert.isConnected) alert.remove(); }, isError ? 15000 : 5000);
+    return alert;
+  };
+
   const themeModes = ['dark', 'light'];
   const themeLabels = { light: 'светлая', dark: 'тёмная' };
   const themeIcons = { light: '☀', dark: '☾' };
@@ -773,6 +819,11 @@
   }
 
   async function openClientQuickCard(id){
+    const localEditor = document.getElementById('clientEditor-' + id);
+    if (localEditor && typeof window.openClientEditor === 'function') {
+      window.openClientEditor(id);
+      return false;
+    }
     const modal = ensureClientQuickModal();
     const bodyEl = modal.querySelector('[data-client-quick-body]');
     const pendingOnlineContext = window.__aggOnlineClientContext;
@@ -905,7 +956,6 @@
     }
     const quick = e.target.closest('[data-client-quick]');
     if (quick) {
-      if (quick.matches('[data-mobile-client-card]') && e.target.closest('button, a, input, label, select, textarea, form')) return;
       e.preventDefault();
       openClientQuickCard(quick.getAttribute('data-client-quick'));
       return;
@@ -2003,8 +2053,9 @@
   if (!alerts.length) return;
   const stack = document.createElement('div');
   stack.className = 'agg-toast-stack';
-  stack.setAttribute('role', 'status');
-  stack.setAttribute('aria-live', 'polite');
+  const hasError = alerts.some(alert => alert.classList.contains('err'));
+  stack.setAttribute('role', hasError ? 'alert' : 'status');
+  stack.setAttribute('aria-live', hasError ? 'assertive' : 'polite');
   document.body.appendChild(stack);
   alerts.forEach(alert => {
     stack.appendChild(alert);
@@ -2022,7 +2073,7 @@
     }
     close.addEventListener('click', hide);
     const isError = alert.classList.contains('err');
-    hideTimer = setTimeout(hide, isError ? 9000 : 4500);
+    hideTimer = setTimeout(hide, isError ? 15000 : 5000);
     alert.addEventListener('mouseenter', () => clearTimeout(hideTimer), { once: true });
   });
 })();

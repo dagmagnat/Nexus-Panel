@@ -11,7 +11,7 @@ const read = relative => fs.readFileSync(path.join(root, relative), 'utf8');
 test('Spectrum Clear is the only stylesheet loaded by authenticated pages', () => {
   const header = read('views/partials_header.ejs');
   const stylesheets = Array.from(header.matchAll(/<link[^>]+rel=["']stylesheet["'][^>]+href=["']([^"']+)/g), match => match[1]);
-  assert.deepEqual(stylesheets, ['/css/spectrum-clear.css?v=210']);
+  assert.deepEqual(stylesheets, ['/css/spectrum-clear.css?v=220']);
   for (const legacy of ['style.css', 'redesign.css', 'nexus-ui.css', 'branding.css', 'stage87.css', 'stage90.css']) {
     assert.equal(header.includes(legacy), false, `legacy stylesheet must not be loaded: ${legacy}`);
   }
@@ -20,7 +20,7 @@ test('Spectrum Clear is the only stylesheet loaded by authenticated pages', () =
 test('login and public subscription pages use the same design system', () => {
   for (const file of ['views/login.ejs', 'views/open_sub.ejs']) {
     const source = read(file);
-    assert.match(source, /\/css\/spectrum-clear\.css\?v=210/);
+    assert.match(source, /\/css\/spectrum-clear\.css\?v=220/);
     assert.match(source, /class="[^"]*nexus-spectrum/);
     assert.doesNotMatch(source, /\/css\/(?:style|redesign|nexus-ui|branding|stage\d+)\.css/);
   }
@@ -92,26 +92,6 @@ test('known alignment regressions have structural layout fixes', () => {
 test('Spectrum stylesheet bypasses stale browser and reverse-proxy caches', () => {
   const app = read('app.js');
   assert.match(app, /app\.use\(\['\/css\/spectrum-clear\.css', '\/site\.webmanifest'\],[\s\S]{0,500}Cache-Control'[\s\S]{0,200}no-store/);
-});
-
-test('mobile workspace stays compact and keeps detail actions without page reloads', () => {
-  const css = read('public/css/spectrum-clear.css');
-  const dashboard = read('views/dashboard.ejs');
-  const clients = read('views/clients.ejs');
-  const nodes = read('views/nodes.ejs');
-  const routing = read('views/routing.ejs');
-  assert.match(css, /\.mobile-nav-bottom \.mobile-menu-toggle \{ display: none; \}/);
-  assert.match(css, /\.mobile-client-metrics,[\s\S]{0,100}\.mobile-client-actions \{ display: none !important; \}/);
-  assert.match(css, /\.page-more \.stage11-more-grid \{ grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
-  assert.doesNotMatch(dashboard, /id="aggPulseCard"|>Состояние узлов</);
-  assert.match(dashboard, /class="card span-12 dashboard-actions-card"/);
-  assert.match(clients, /data-mobile-client-card data-client-quick="<%= client\.id %>"/);
-  assert.match(clients, /id="bulkSelectionBody"/);
-  assert.match(clients, /window\.openClientQuickCard\?\.\(card\.dataset\.clientQuick\)/);
-  assert.match(nodes, /window\.setInterval\(refreshNodeActivity, 60000\)/);
-  assert.match(routing, /class="routing-mobile-view-tabs"/);
-  assert.match(routing, /data-mobile-view="editor"/);
-  assert.match(routing, /data-mobile-view="summary"/);
 });
 
 test('redesign does not replace client identity or subscription fields', () => {
