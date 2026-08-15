@@ -43,6 +43,7 @@
     const raw = String(label || '').trim();
     if (!raw) return 'не загружено';
     return raw
+      .replace(/^\s*\d+(?:[.,]\d+)?\s*(?:Б|КБ|МБ|ГБ|ТБ|ПБ|PB)\s*[·•|/-]\s*/i, '')
       .replace(/\s*\/\s*RAW/gi, '')
       .replace(/\s*\/\s*TCP/gi, '')
       .replace(/\s*\/\s*JSON/gi, '')
@@ -417,7 +418,7 @@
                 <div class="node-detail-flag"><%- flagHtml(node.country_code, node.country_flag, node.country_name_ru || node.name, node.node_type) %></div>
                 <div class="node-detail-title">
                   <div><strong><%= displayName %></strong> <span class="badge <%= isEnabled ? 'online' : 'offline' %>"><%= isEnabled ? 'Включён' : 'Отключён' %></span></div>
-                  <small>ID: <%= node.id %> · Тип: <%= nodeTypeLabel %> · Транспорт: <%= transportLabel %></small>
+                  <small>ID: <%= node.id %> · Тип: <%= nodeTypeLabel %> · Транспорт: <%= transportCompact %></small>
                 </div>
               </div>
 

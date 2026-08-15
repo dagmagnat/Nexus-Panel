@@ -392,11 +392,11 @@
         <tbody>
           <% (sniProfiles || []).forEach(profile => { %>
             <tr>
-              <td><strong><%= profile.name %></strong><% if (profile.is_builtin) { %><br><small>встроенный</small><% } %></td>
-              <td><code><%= profile.sni %></code></td>
-              <td><span class="status <%= profile.last_status === 'ok' ? 'ok' : (profile.last_status === 'error' ? 'off' : '') %>"><%= profile.last_status || 'не проверен' %></span></td>
-              <td><small><%= profile.comment || '' %></small></td>
-              <td>
+              <td data-label="Название"><strong><%= profile.name %></strong><% if (profile.is_builtin) { %><br><small>встроенный</small><% } %></td>
+              <td data-label="SNI"><code><%= profile.sni %></code></td>
+              <td data-label="Статус"><span class="status <%= profile.last_status === 'ok' ? 'ok' : (profile.last_status === 'error' ? 'off' : '') %>"><%= profile.last_status || 'не проверен' %></span></td>
+              <td data-label="Комментарий"><small><%= profile.comment || '—' %></small></td>
+              <td data-label="Действие" class="<%= profile.is_builtin ? 'sni-action-empty' : '' %>">
                 <% if (!profile.is_builtin) { %>
                   <form method="post" action="/settings/sni-profiles/<%= profile.id %>/delete" onsubmit="return confirm('Удалить SNI-профиль?')"><button type="submit" class="danger small">Удалить</button></form>
                 <% } %>

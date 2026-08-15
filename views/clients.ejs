@@ -286,40 +286,43 @@
     <button type="button" data-mobile-client-filter="disabled">Отключены <span><%= offCount %></span></button>
   </div>
 
-    <div class="bulk-selection-panel" aria-label="Массовые действия с клиентами">
+    <div class="bulk-selection-panel" id="bulkSelectionPanel" data-actions-open="0" aria-label="Массовые действия с клиентами">
       <div class="bulk-selection-head">
         <div class="bulk-selection-actions">
           <button type="button" class="btn-secondary" data-client-select-action="all" onclick="return setAllClientSelection(true)">Выбрать все</button>
           <button type="button" class="btn-secondary" data-client-select-action="none" onclick="return setAllClientSelection(false)">Снять выбор</button>
           <span class="bulk-selected-count" id="bulkSelectedCount">Выбрано: 0</span>
+          <button type="button" class="btn-main bulk-actions-toggle" id="bulkActionsToggle" aria-controls="bulkActionDetails" aria-expanded="false" onclick="return toggleBulkActions()" hidden>Действия</button>
         </div>
         <small class="hint bulk-selection-hint">Выбор применяется только к клиентам текущего поиска и фильтра.</small>
       </div>
 
-      <div class="bulk-node-action-row">
-        <div class="bulk-node-action-field">
-          <label for="bulkRemoveNodeId" id="bulkRemoveNodeLabel">Удалить выбранных клиентов из узла</label>
-          <select name="bulk_node_id" id="bulkRemoveNodeId">
-            <option value="">Выберите узел</option>
-            <% nodes.forEach(node => { %>
-              <option value="<%= node.id %>" data-node-type="<%= String(node.node_type || '3xui') %>"><%= flagText(node.country_code, node.country_flag, node.country_name_ru || node.name) %> <%= nodeName(node) %> (<%= nodeEndpointLabel(node) %>)</option>
-            <% }) %>
-          </select>
-          <small class="hint bulk-action-hint" id="bulkRemoveNodeHint">Сначала меняется удалённый узел, затем удаляется локальная связь. Сам клиент в Nexus сохраняется.</small>
+      <div class="bulk-action-details" id="bulkActionDetails" hidden>
+        <div class="bulk-node-action-row">
+          <div class="bulk-node-action-field">
+            <label for="bulkRemoveNodeId" id="bulkRemoveNodeLabel">Удалить выбранных клиентов из узла</label>
+            <select name="bulk_node_id" id="bulkRemoveNodeId">
+              <option value="">Выберите узел</option>
+              <% nodes.forEach(node => { %>
+                <option value="<%= node.id %>" data-node-type="<%= String(node.node_type || '3xui') %>"><%= flagText(node.country_code, node.country_flag, node.country_name_ru || node.name) %> <%= nodeName(node) %> (<%= nodeEndpointLabel(node) %>)</option>
+              <% }) %>
+            </select>
+            <small class="hint bulk-action-hint" id="bulkRemoveNodeHint">Сначала меняется удалённый узел, затем удаляется локальная связь. Сам клиент в Nexus сохраняется.</small>
+          </div>
+          <button class="danger bulk-node-remove-btn" id="bulkRemoveNodeButton" type="submit" formaction="/clients/bulk-remove-node" data-bulk-action="remove-node">Удалить из узла</button>
         </div>
-        <button class="danger bulk-node-remove-btn" id="bulkRemoveNodeButton" type="submit" formaction="/clients/bulk-remove-node" data-bulk-action="remove-node">Удалить из узла</button>
-      </div>
 
-      <div class="bulk-row compact-bulk-row">
-        <div>
-          <label>Режим удаления выбранных клиентов</label>
-          <select name="delete_mode">
-            <option value="aggregator">Только из агрегатора</option>
-            <option value="secondary">Из агрегатора и вторичных узлов</option>
-            <option value="all">Из агрегатора и всех узлов</option>
-          </select>
+        <div class="bulk-row compact-bulk-row">
+          <div>
+            <label>Режим удаления выбранных клиентов</label>
+            <select name="delete_mode">
+              <option value="aggregator">Только из агрегатора</option>
+              <option value="secondary">Из агрегатора и вторичных узлов</option>
+              <option value="all">Из агрегатора и всех узлов</option>
+            </select>
+          </div>
+          <button class="danger" type="submit" data-bulk-action="delete-clients">Удалить выбранных клиентов</button>
         </div>
-        <button class="danger" type="submit" data-bulk-action="delete-clients">Удалить выбранных клиентов</button>
       </div>
     </div>
 
@@ -935,12 +938,13 @@
       <h2>Клиент: <%= compactTitle(client) %></h2>
       <p class="muted">Подробная информация и редактор клиента в одном окне.</p>
       <div class="client-detail-summary client-editor-summary">
-        <div><span>ID</span><strong><%= client.id %></strong></div>
-        <div class="client-summary-uuid"><span>UUID</span><code><%= client.uuid %></code></div>
+        <div class="client-summary-id"><span>ID</span><strong><%= client.id %></strong></div>
         <div><span>Статус</span><strong class="badge <%= clientStatusMeta(client).key %>"><%= clientStatusMeta(client).label %></strong></div>
-        <div><span>Срок</span><strong><%= termShort(client) %> дн.</strong><small>до: <%= expiryDateTime(client.expiry_time) %></small></div>
+        <div><span>Срок</span><strong><%= termShort(client) %> дн.</strong><small>до <%= expiryDateTime(client.expiry_time) %></small></div>
         <div><span>Общий лимит</span><strong><%= client.traffic_gb && client.traffic_gb > 0 ? client.traffic_gb + ' ГБ' : '∞' %></strong></div>
         <div><span>Лимит IP</span><strong><%= client.limit_ip && Number(client.limit_ip) > 0 ? client.limit_ip : '∞' %></strong></div>
+        <div><span>Узлов</span><strong><%= clientAssignedNodes(client).length %></strong></div>
+        <div class="client-summary-uuid"><span>UUID</span><code><%= client.uuid %></code></div>
         <div>
           <span><%= canShowSubInEditor ? 'SUB / JSON' : 'JSON' %></span>
           <div class="client-summary-link-actions">
@@ -1397,6 +1401,21 @@ function syncClientCheckboxCopies(source) {
 function updateBulkSelectionUi() {
   const selected = getUniqueClientSelection();
   const all = getAllClientIdsOnPage();
+  const panel = document.getElementById('bulkSelectionPanel');
+  const toggle = document.getElementById('bulkActionsToggle');
+  const details = document.getElementById('bulkActionDetails');
+  const hasSelection = selected.size > 0;
+  if (panel) {
+    panel.classList.toggle('has-selection', hasSelection);
+    if (!hasSelection) panel.dataset.actionsOpen = '0';
+  }
+  const actionsOpen = Boolean(hasSelection && panel && panel.dataset.actionsOpen === '1');
+  if (toggle) {
+    toggle.hidden = !hasSelection;
+    toggle.setAttribute('aria-expanded', actionsOpen ? 'true' : 'false');
+    toggle.textContent = actionsOpen ? 'Скрыть действия' : 'Действия';
+  }
+  if (details) details.hidden = !actionsOpen;
   const count = document.getElementById('bulkSelectedCount');
   if (count) count.textContent = `Выбрано: ${selected.size}`;
   document.querySelectorAll('[data-client-select-action="all"]').forEach(btn => {
@@ -1415,6 +1434,16 @@ function updateBulkSelectionUi() {
     applyButton.disabled = selected.size === 0;
     applyButton.textContent = selected.size ? `Применить к выбранным (${selected.size})` : 'Применить к выбранным';
   }
+}
+function toggleBulkActions() {
+  const panel = document.getElementById('bulkSelectionPanel');
+  if (!panel || getUniqueClientSelection().size === 0) return false;
+  panel.dataset.actionsOpen = panel.dataset.actionsOpen === '1' ? '0' : '1';
+  updateBulkSelectionUi();
+  if (panel.dataset.actionsOpen === '1') {
+    document.getElementById('bulkActionDetails')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+  return false;
 }
 function setAllClientSelection(checked) {
   const visibleIds = getAllClientIdsOnPage();
