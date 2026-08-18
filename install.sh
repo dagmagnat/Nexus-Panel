@@ -89,11 +89,33 @@ ui_step_success() {
   printf "${GREEN}  ✓${NC} ${DIM}%02d${NC}  %-48s ${DIM}%ss${NC}\n" "$number" "$label" "$elapsed"
 }
 
+ui_error_hint() {
+  local source="${1:-}"
+  if grep -Eqi 'could not get lock|unable to acquire.*lock|dpkg frontend lock' "$source" 2>/dev/null; then
+    printf '  │  Пояснение: apt/dpkg занят другим обновлением. Дождись его завершения и повтори команду.\n' >&2
+  elif grep -Eqi 'no space left|disk quota exceeded' "$source" 2>/dev/null; then
+    printf '  │  Пояснение: на диске закончилось место. Освободи место (особенно /var/lib/docker) и повтори установку.\n' >&2
+  elif grep -Eqi 'could not resolve|temporary failure in name resolution|name or service not known' "$source" 2>/dev/null; then
+    printf '  │  Пояснение: сервер не может разрешить DNS-имя. Проверь DNS и доступ в интернет.\n' >&2
+  elif grep -Eqi 'connection refused|connection timed out|operation timed out|network is unreachable' "$source" 2>/dev/null; then
+    printf '  │  Пояснение: сетевое соединение недоступно. Проверь firewall, маршрут и доступ VPS в интернет.\n' >&2
+  elif grep -Eqi 'address already in use|port .*already|bind.*failed' "$source" 2>/dev/null; then
+    printf '  │  Пояснение: требуемый порт уже занят. Посмотри владельца порта командой ss -ltnp.\n' >&2
+  elif grep -Eqi 'permission denied|must be run as root|run as root' "$source" 2>/dev/null; then
+    printf '  │  Пояснение: не хватает прав. Запусти команду после sudo -i.\n' >&2
+  elif grep -Eqi 'docker daemon|cannot connect to the docker|failed to start docker' "$source" 2>/dev/null; then
+    printf '  │  Пояснение: Docker не запущен или повреждён. Проверь systemctl status docker.\n' >&2
+  else
+    printf '  │  Пояснение: этап завершился ненулевым кодом. Точная причина находится в строках ниже и полном журнале.\n' >&2
+  fi
+}
+
 ui_step_failure() {
   local number="$1" label="$2" status="$3" step_log="$4"
   NEXUS_UI_ERROR_SHOWN=1
   printf "${RED}  ✕ %02d  %s${NC} ${DIM}(код %s)${NC}\n" "$number" "$label" "$status" >&2
   printf "${RED}  ├─ Ошибка команды. Последние строки:${NC}\n" >&2
+  ui_error_hint "$step_log"
   if [ -s "$step_log" ]; then
     tail -n "${NEXUS_INSTALLER_ERROR_LINES:-80}" "$step_log" | sed 's/^/  │  /' >&2
   else
@@ -176,6 +198,7 @@ ui_unhandled_error() {
   printf "${RED}  ╭─ Установка остановлена${NC}\n" >&2
   printf "${RED}  │  Код ошибки: %s · строка install.sh: %s${NC}\n" "$status" "$line" >&2
   if [ -n "$NEXUS_UI_LAST_STEP_LOG" ] && [ -s "$NEXUS_UI_LAST_STEP_LOG" ]; then
+    ui_error_hint "$NEXUS_UI_LAST_STEP_LOG"
     printf "${RED}  │  Последние строки:${NC}\n" >&2
     tail -n "${NEXUS_INSTALLER_ERROR_LINES:-80}" "$NEXUS_UI_LAST_STEP_LOG" | sed 's/^/  │  /' >&2
   fi
@@ -559,7 +582,6 @@ load_existing_config() {
   ADMIN_PASS="${ADMIN_PASS:-}"
   APP_SECRET_VALUE="${APP_SECRET_VALUE:-}"
   SESSION_SECRET_VALUE="${SESSION_SECRET_VALUE:-}"
-  PANEL_ACCESS_KEY_VALUE="${PANEL_ACCESS_KEY_VALUE:-}"
   PANEL_PUBLIC_URL="${PANEL_PUBLIC_URL:-}"
   SUB_PUBLIC_URL="${SUB_PUBLIC_URL:-}"
   SUB_URL_MODE="${SUB_URL_MODE:-custom}"
@@ -575,13 +597,12 @@ load_existing_config() {
         ADMIN_PASSWORD) ADMIN_PASS="$value" ;;
         APP_SECRET) APP_SECRET_VALUE="$value" ;;
         SESSION_SECRET) SESSION_SECRET_VALUE="$value" ;;
-        PANEL_ACCESS_KEY) PANEL_ACCESS_KEY_VALUE="$value" ;;
         PANEL_PUBLIC_URL) PANEL_PUBLIC_URL="$value" ;;
         SUB_PUBLIC_URL) SUB_PUBLIC_URL="$value" ;;
         SUB_URL_MODE) SUB_URL_MODE="$value" ;;
         INSTALL_BIND_IP) BIND_IP="$value" ;;
       esac
-    done < <(grep -E '^(PORT|ADMIN_USERNAME|ADMIN_PASSWORD|APP_SECRET|SESSION_SECRET|PANEL_ACCESS_KEY|PANEL_PUBLIC_URL|SUB_PUBLIC_URL|SUB_URL_MODE|INSTALL_BIND_IP)=' "$ENV_FILE" || true)
+    done < <(grep -E '^(PORT|ADMIN_USERNAME|ADMIN_PASSWORD|APP_SECRET|SESSION_SECRET|PANEL_PUBLIC_URL|SUB_PUBLIC_URL|SUB_URL_MODE|INSTALL_BIND_IP)=' "$ENV_FILE" || true)
   fi
 
 
@@ -599,23 +620,6 @@ load_existing_config() {
   SUB_DOMAIN="${SUB_DOMAIN:-}"
   SUB_IP="${SUB_IP:-}"
   BIND_IP="${BIND_IP:-}"
-}
-
-get_effective_panel_access_key() {
-  local access_key=""
-
-  # app_settings is the runtime source of truth and can differ from .env after
-  # a key change in the web UI or a database restore. Read it inside the
-  # running application container so every printed login URL is actually valid.
-  if command -v docker >/dev/null 2>&1 && docker inspect "$AGG_CONTAINER_NAME" >/dev/null 2>&1; then
-    access_key="$(docker exec "$AGG_CONTAINER_NAME" node /app/scripts/print-panel-access-key.js 2>/dev/null || true)"
-  fi
-
-  if [ -z "$access_key" ] && [ -f "$ENV_FILE" ]; then
-    access_key="$(grep -E '^PANEL_ACCESS_KEY=' "$ENV_FILE" 2>/dev/null | head -n1 | cut -d= -f2- || true)"
-  fi
-
-  printf '%s' "$access_key"
 }
 
 save_install_conf() {
@@ -647,10 +651,6 @@ write_env_file() {
     SESSION_SECRET_VALUE="$(openssl rand -hex 32)"
   fi
 
-  if [ -z "${PANEL_ACCESS_KEY_VALUE:-}" ]; then
-    PANEL_ACCESS_KEY_VALUE="$(openssl rand -hex 16)"
-  fi
-
   local trust_proxy_value="0"
   local session_secure_value="0"
   if [ "${PANEL_MODE}" = "domain" ] || [ "${PANEL_MODE}" = "domain_port" ]; then
@@ -665,7 +665,6 @@ write_env_file() {
 PORT=${APP_PORT}
 APP_SECRET=${APP_SECRET_VALUE}
 SESSION_SECRET=${SESSION_SECRET_VALUE}
-PANEL_ACCESS_KEY=${PANEL_ACCESS_KEY_VALUE}
 TRUST_PROXY=${trust_proxy_value}
 SESSION_SECURE=${session_secure_value}
 ADMIN_USERNAME=${ADMIN_USER}
@@ -1636,7 +1635,7 @@ prompt_subscription_public_url() {
 
   echo
   say "Публичный адрес подписок JSON/SUB:"
-  warn "Secret-key и адрес панели с портом не добавляются в клиентские ссылки."
+  warn "Адрес панели с портом не добавляется в клиентские ссылки автоматически."
   warn "Для ссылок без порта домен должен открываться на 443 и попадать в агрегатор."
 
   SUB_PUBLIC_URL="$(ask 'Публичный адрес подписок' "${SUB_PUBLIC_URL:-$default_sub}")"
@@ -2010,17 +2009,13 @@ fresh_install_flow() {
 }
 
 print_result() {
-  local effective_access_key=""
-  effective_access_key="$(get_effective_panel_access_key)"
   printf '\n'
   printf "${GREEN}  ╭────────────────────────────────────────────────────────────╮${NC}\n"
   printf "${GREEN}  │  ✓  NEXUS PANEL УСТАНОВЛЕНА                              │${NC}\n"
   printf "${GREEN}  ╰────────────────────────────────────────────────────────────╯${NC}\n"
   printf "${DIM}  Экземпляр${NC}       %s\n" "${INSTANCE_NAME}"
   printf "${DIM}  Адрес панели${NC}    %s\n" "${PANEL_PUBLIC_URL}"
-  if [ -n "$effective_access_key" ]; then
-    printf "${DIM}  Адрес входа${NC}     ${CYAN}%s/mobile-login?key=%s${NC}\n" "${PANEL_PUBLIC_URL}" "$effective_access_key"
-  fi
+  printf "${DIM}  Адрес входа${NC}     ${CYAN}%s/login${NC}\n" "${PANEL_PUBLIC_URL%/}"
   printf "${DIM}  Подписки${NC}        %s\n" "${SUB_PUBLIC_URL}"
   if [ -n "${BIND_IP:-}" ]; then
     printf "${DIM}  Caddy bind IP${NC}   %s\n" "${BIND_IP}"
@@ -2030,7 +2025,8 @@ print_result() {
   printf "${DIM}  Журнал${NC}          %s\n" "${NEXUS_UI_LOG_FILE:-/root/nexus-panel-install.log}"
   echo
   warn "Адрес входа панели и публичный адрес подписок могут отличаться."
-  warn "JSON/SUB-ссылки строятся от публичного адреса подписок, без secret-key."
+  warn "Админка защищена логином, паролем, сессией и ограничением попыток; дополнительного ключа в URL больше нет."
+  warn "JSON/SUB-ссылки строятся от публичного адреса подписок."
   if [ "$PANEL_MODE" = "domain" ] || [ "$SUB_MODE" = "domain" ]; then
     warn "Для обычного доменного режима порты 80 и 443 должны быть свободны."
   fi
@@ -2040,9 +2036,6 @@ print_result() {
     else
       warn "Если домен + порт используется без обычного 443 для этого же домена, Caddy применит локальный сертификат tls internal. Браузер может показать предупреждение о доверии."
     fi
-  fi
-  if [ -n "$effective_access_key" ]; then
-    warn "Сохрани мобильный адрес входа выше. Старые ярлыки /login после обновлений автоматически откроют форму входа, а не 404."
   fi
   warn "Быстрый запуск меню: agg (или agg-${INSTANCE_NAME} для этого экземпляра)"
 }
@@ -2152,18 +2145,13 @@ PYDIAG
 
   say "6/6 Адреса входа:"
   load_existing_config || true
-  local access_key=""
-  access_key="$(get_effective_panel_access_key)"
   local public_url="${PANEL_PUBLIC_URL:-}"
   if [ -z "$public_url" ] && [ -f "$ENV_FILE" ]; then
     public_url="$(grep -E '^PANEL_PUBLIC_URL=' "$ENV_FILE" 2>/dev/null | head -n1 | cut -d= -f2- || true)"
   fi
   [ -n "$public_url" ] || public_url="http://${PANEL_IP:-$(get_public_server_ip)}:${APP_PORT:-3000}"
-  say "Панель: ${public_url}"
-  if [ -n "$access_key" ]; then
-    say "Вход: ${public_url%/}/mobile-login?key=${access_key}"
-    warn "Старые адреса /login автоматически открывают безопасную форму входа и больше не застревают на 404."
-  fi
+  say "Панель: ${public_url%/}/login"
+  warn "Дополнительный URL-ключ не используется. Старые ссылки с ?key= открывают обычную форму входа и больше не дают 404."
   warn "Если после диагностики всё ещё 502/404 — пришли вывод: cd $APP_DIR && docker compose ps && docker logs --tail=120 $AGG_CONTAINER_NAME"
 }
 
@@ -2383,19 +2371,43 @@ settings_transfer_cli() {
 }
 
 main_menu() {
-  echo >&2
-  printf "${CYAN}  ╭─ Обнаружена существующая установка ───────────────╮${NC}\n" >&2
-  printf '  │  1  Новая установка / ещё один экземпляр        │\n' >&2
-  printf '  │  2  Обновить файлы, сохранив настройки           │\n' >&2
-  printf '  │  3  Изменить настройки и обновить                │\n' >&2
-  printf '  │  4  Переустановить заново                         │\n' >&2
-  printf '  │  5  Создать резервную копию                       │\n' >&2
-  printf '  │  6  Восстановить резервную копию                  │\n' >&2
-  printf '  │  7  Удалить проект                                │\n' >&2
-  printf '  │  8  Диагностика и восстановление доступа          │\n' >&2
-  printf '  │  0  Выход                                         │\n' >&2
-  printf "${CYAN}  ╰────────────────────────────────────────────────────╯${NC}\n" >&2
-  ask 'Выбери действие' '2'
+  local choice
+  while true; do
+    echo >&2
+    printf "${CYAN}  ╭─ Управление Nexus Panel ──────────────────────────╮${NC}\n" >&2
+    printf '  │  1  Установить ещё одну панель                   │\n' >&2
+    printf '  │  2  Обновить проект, сохранив данные             │\n' >&2
+    printf '  │  3  Изменить параметры панели                    │\n' >&2
+    printf '  │  4  Переустановить панель                        │\n' >&2
+    printf '  │  5  Создать резервную копию                      │\n' >&2
+    printf '  │  6  Восстановить из копии                        │\n' >&2
+    printf '  │  7  Удалить проект                               │\n' >&2
+    printf '  │  8  Диагностика и автоматическое восстановление  │\n' >&2
+    printf '  │  0  Выход                                        │\n' >&2
+    printf "${CYAN}  ╰───────────────────────────────────────────────────╯${NC}\n" >&2
+    choice="$(ask 'Выбери действие (Enter ничего не запускает)' '')"
+    choice="$(trim "$choice")"
+    case "$choice" in
+      0|1|2|3|4|5|6|7|8) printf '%s\n' "$choice"; return 0 ;;
+      '') warn "Действие не выбрано. Ничего не изменено." >&2 ;;
+      *) err "Нет такого пункта: $choice" >&2 ;;
+    esac
+  done
+}
+
+confirm_action() {
+  local text="$1" answer
+  answer="$(ask "$text (введи ДА)" '')"
+  answer="$(printf '%s' "$answer" | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]')"
+  [ "$answer" = "ДА" ] || [ "$answer" = "YES" ]
+}
+
+prepare_server_for_deploy() {
+  ui_section "Подготовка сервера"
+  install_packages
+  install_docker_if_needed
+  ensure_dir
+  load_existing_config
 }
 
 main() {
@@ -2408,10 +2420,6 @@ main() {
   refresh_runtime_paths
   load_source_config
   refresh_runtime_paths
-  ui_section "Подготовка сервера"
-  install_packages
-  install_docker_if_needed
-  ensure_dir
   load_existing_config
 
   if [ -f "$ENV_FILE" ] || [ -f "$INSTALL_CONF" ]; then
@@ -2421,24 +2429,33 @@ main() {
 
     case "$action" in
       1)
+        prepare_server_for_deploy
         fresh_install_flow
         ;;
       2)
+        prepare_server_for_deploy
         update_files_only
         ;;
       3)
+        prepare_server_for_deploy
         change_settings_and_update
         ;;
       4)
+        if ! confirm_action 'Текущие файлы панели будут заменены'; then warn "Переустановка отменена."; exit 0; fi
+        prepare_server_for_deploy
         reinstall_full
         ;;
       5)
         create_backup
+        exit 0
         ;;
       6)
+        if ! confirm_action 'Текущие данные будут заменены данными из выбранной копии'; then warn "Восстановление отменено."; exit 0; fi
         restore_from_backup
+        exit 0
         ;;
       7)
+        if ! confirm_action 'Панель и её рабочие данные будут удалены'; then warn "Удаление отменено."; exit 0; fi
         delete_project
         ;;
       8)
@@ -2455,6 +2472,7 @@ main() {
         ;;
     esac
   else
+    prepare_server_for_deploy
     fresh_install_flow
   fi
 
@@ -2483,6 +2501,22 @@ fi
 if [ "${1:-}" = "settings" ]; then
   shift || true
   settings_transfer_cli "$@"
+  exit $?
+fi
+
+if [ "${1:-}" = "repair-shortcut" ]; then
+  require_root
+  refresh_runtime_paths
+  load_source_config
+  refresh_runtime_paths
+  install_shortcut_command
+  say "Команды agg и agg-${INSTANCE_NAME} восстановлены."
+  exit 0
+fi
+
+if [ "${1:-}" = "menu" ]; then
+  shift || true
+  main "$@"
   exit $?
 fi
 

@@ -6,7 +6,7 @@
 
 Nexus Panel — панель агрегации и управления узлами **3x-ui** и **Remnawave**: клиенты, SUB/JSON-подписки, маршрутизация, трафик, Telegram и синхронизация выбранного inbound.
 
-[![Version](https://img.shields.io/badge/version-2.3.0-blue)](https://github.com/dagmagnat/Nexus-Panel)
+[![Version](https://img.shields.io/badge/version-2.4.0-blue)](https://github.com/dagmagnat/Nexus-Panel)
 ![Node.js](https://img.shields.io/badge/node-%3E%3D22-gray)
 ![License](https://img.shields.io/badge/license-MIT-gray)
 
@@ -40,6 +40,8 @@ Nexus Panel — панель агрегации и управления узла
 
 Версия 2.3.0 исправляет `0 ГБ` в v2RayTun/Hiddify/Happ: расход суммируется по всем назначенным узлам, включая узлы без собственного лимита, а несколько ссылок одного inbound больше не удваивают статистику. Та же SUB-ссылка в приложении отдаёт конфигурацию, а в браузере открывает фирменную страницу клиента со сроком, остатком трафика, локациями и кнопками Happ, v2RayTun и Hiddify. UUID, `sub_slug` и ранее выданные адреса не меняются.
 
+Версия 2.4.0 добавляет группы и цветные метки клиентов, раздельный расход и лимиты по каждому серверу, полный редактор JSON inbound, скорость правил перенаправления и прямой вход без дополнительного URL-ключа. Расход узла без лимита больше не прибавляется к лимиту LTE-узла.
+
 Старые `style.css`, `redesign.css`, `nexus-ui.css` и `stage*.css` больше не подключаются, поэтому разные разделы не получают конфликтующие цвета и размеры. Источник интерфейса один: `public/css/spectrum-clear.css`.
 
 Редизайн не меняет `data/app.db`, `.env`, UUID клиентов и `sub_slug`. Уже выданные ссылки подписок сохраняются. Подробные критерии и контракт: [`docs/NEXUS_PRODUCT_SPEC.md`](docs/NEXUS_PRODUCT_SPEC.md) и [`docs/DATA_COMPATIBILITY.md`](docs/DATA_COMPATIBILITY.md).
@@ -50,15 +52,7 @@ Nexus Panel — панель агрегации и управления узла
 
 ```bash
 sudo -i
-unset NEXUS_INSTALLER_LIBRARY_ONLY
-apt-get update
-apt-get install -y ca-certificates curl
-curl --fail --show-error --location --retry 5 --retry-delay 2 --connect-timeout 20 \
-  https://raw.githubusercontent.com/dagmagnat/Nexus-Panel/main/install.sh \
-  -o /tmp/nexus-panel-install.sh \
-  && test -s /tmp/nexus-panel-install.sh \
-  && grep -q '^#!/usr/bin/env bash' /tmp/nexus-panel-install.sh \
-  && bash /tmp/nexus-panel-install.sh 2>&1 | tee /root/nexus-panel-install.log
+curl -fsSL --retry 5 https://raw.githubusercontent.com/dagmagnat/Nexus-Panel/main/install.sh -o /tmp/nexus-install.sh && bash /tmp/nexus-install.sh
 ```
 
 Если приглашение уже имеет вид `root@server:~#`, повторять `sudo -i` не нужно.
@@ -67,7 +61,7 @@ SSH X11 forwarding, а не к Nexus Panel, и не мешает установ�
 запускает пустой или ошибочно загруженный файл и сохраняет полный журнал в
 `/root/nexus-panel-install.log`.
 
-Установщик сам скачает `dagmagnat/Nexus-Panel`, создаст конфигурацию, установит Docker при необходимости и покажет точный адрес входа с ключом.
+Установщик сам скачает `dagmagnat/Nexus-Panel`, создаст конфигурацию, установит Docker при необходимости и покажет точный адрес входа. Дополнительный ключ в URL не нужен.
 
 ### Терминальный интерфейс установщика
 

@@ -1052,7 +1052,12 @@ function requirePanelAccessKey(req, res, next) {
   return res.status(404).send('Not found');
 }
 
-app.use(requirePanelAccessKey);
+// Вход в админку защищается обычной сессией, паролем, ограничением попыток и
+// (при желании) списком разрешённых IP. Исторический secret-key в URL был
+// отдельным скрытым шлюзом и становился причиной случайного `Not found` на
+// новых устройствах, после смены IP и у старых ярлыков. Значение в базе пока
+// сохраняем только для совместимости со старыми backup-файлами, но доступ оно
+// больше не ограничивает.
 
 function buildLoginRedirectPath(message = '') {
   const params = new URLSearchParams();
@@ -1139,7 +1144,29 @@ function initDb() {
       comment TEXT NOT NULL DEFAULT '',
       flow TEXT NOT NULL DEFAULT '',
       last_online_at TEXT NOT NULL DEFAULT '',
+      group_id INTEGER DEFAULT NULL,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS client_groups (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT COLLATE NOCASE UNIQUE NOT NULL,
+      color TEXT NOT NULL DEFAULT '#64748b',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS client_tags (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT COLLATE NOCASE UNIQUE NOT NULL,
+      color TEXT NOT NULL DEFAULT '#3b82f6',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS client_tag_assignments (
+      client_id INTEGER NOT NULL,
+      tag_id INTEGER NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (client_id, tag_id)
     );
 
     CREATE TABLE IF NOT EXISTS client_nodes (
@@ -1335,6 +1362,7 @@ function initDb() {
   addColumnIfMissing('clients', 'enabled', 'INTEGER NOT NULL DEFAULT 1');
   addColumnIfMissing('clients', 'comment', "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing('clients', 'flow', "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing('clients', 'group_id', 'INTEGER DEFAULT NULL');
 
   addColumnIfMissing('client_nodes', 'remote_sub_url', "TEXT DEFAULT ''");
   addColumnIfMissing('client_nodes', 'traffic_gb', 'INTEGER NOT NULL DEFAULT 0');
@@ -4790,11 +4818,42 @@ function defaultInboundSettingsForProtocol(protocol) {
 
 function ensureInboundSettingsPayload(inbound) {
   const protocol = normalizeInboundProtocol(inbound?.protocol || 'vless');
-  const parsed = safeParseJsonField(inbound?.settings, null);
+  const original = inbound?.settings;
+  const parsed = safeParseJsonField(original, null);
   const settings = parsed && typeof parsed === 'object' ? parsed : defaultInboundSettingsForProtocol(protocol);
   if (!Array.isArray(settings.clients) && ['vless', 'trojan', 'hysteria'].includes(protocol)) settings.clients = [];
   if (protocol === 'vless' && !settings.decryption) settings.decryption = 'none';
-  return stringifyInboundField(settings);
+  return typeof original === 'string' ? stringifyInboundField(settings) : settings;
+}
+
+function encodeInboundStructuredField(original, value) {
+  return typeof original === 'string' ? stringifyInboundField(value) : value;
+}
+
+function parseAdvancedInboundPayload(form, node, liveInbound) {
+  if (form.apply_inbound_advanced_json !== '1') return null;
+  const raw = String(form.inbound_advanced_json || '').trim();
+  if (!raw) throw new Error('Полный JSON inbound пуст. Открой «Все настройки» и вставь конфигурацию.');
+  if (Buffer.byteLength(raw, 'utf8') > 1024 * 1024) throw new Error('Полный JSON inbound больше 1 МБ. Проверь, что вставлена только одна конфигурация inbound.');
+  let payload;
+  try {
+    payload = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`Полный JSON inbound содержит ошибку: ${err.message || err}`);
+  }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('Полный JSON inbound должен быть объектом.');
+  const expectedId = Number(liveInbound?.id || node?.inbound_id || 0);
+  const actualId = Number(payload.id || 0);
+  if (!actualId || actualId !== expectedId) throw new Error(`Полный JSON относится к inbound #${actualId || 'не указан'}, а узел настроен на inbound #${expectedId}.`);
+  if (!String(payload.protocol || '').trim()) throw new Error('В полном JSON отсутствует protocol.');
+  const port = assertInboundPortAllowed(payload.port, node.id);
+  payload.port = port;
+  for (const key of ['settings', 'streamSettings', 'sniffing']) {
+    const value = payload[key];
+    const parsed = parseInboundJsonField(value, null);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error(`Поле ${key} должно содержать JSON-объект.`);
+  }
+  return payload;
 }
 
 async function updateInboundBasicSettings(node, form) {
@@ -4802,6 +4861,14 @@ async function updateInboundBasicSettings(node, form) {
     throw new Error('H1Cloud 3x-ui: параметры провайдерского inbound доступны только для чтения и не могут быть изменены агрегатором.');
   }
   const inbound = await getInbound(node, 15000);
+  const advancedPayload = parseAdvancedInboundPayload(form, node, inbound);
+  if (advancedPayload) {
+    const data = await apiPost(node, `/panel/api/inbounds/update/${encodeURIComponent(advancedPayload.id)}`, advancedPayload, true);
+    saveInboundCache(node, advancedPayload);
+    return data;
+  }
+  const originalStreamSettings = inbound.streamSettings;
+  const originalSniffing = inbound.sniffing;
   const stream = parseInboundJsonField(inbound.streamSettings, {});
   const sniffing = parseInboundJsonField(inbound.sniffing, {});
   const reality = stream.realitySettings || {};
@@ -4845,7 +4912,7 @@ async function updateInboundBasicSettings(node, form) {
     if (fingerprint) tls.fingerprint = fingerprint;
   }
 
-  if (form.inbound_sniffing_enabled !== undefined) {
+  if (form.inbound_sniffing_present === '1' || form.inbound_sniffing_enabled !== undefined) {
     sniffing.enabled = form.inbound_sniffing_enabled === '1';
   }
   if (form.inbound_sniffing_dest !== undefined) {
@@ -4853,8 +4920,8 @@ async function updateInboundBasicSettings(node, form) {
     if (dest.length) sniffing.destOverride = dest;
   }
 
-  inbound.streamSettings = stringifyInboundField(stream);
-  inbound.sniffing = stringifyInboundField(sniffing && typeof sniffing === 'object' ? sniffing : {});
+  inbound.streamSettings = encodeInboundStructuredField(originalStreamSettings, stream);
+  inbound.sniffing = encodeInboundStructuredField(originalSniffing, sniffing && typeof sniffing === 'object' ? sniffing : {});
   inbound.settings = ensureInboundSettingsPayload(inbound);
 
   const payload = { ...inbound };
@@ -8363,13 +8430,13 @@ function buildSubscriptionUsageSummary(entries, clientRow) {
   const downloadBytes = nodes.reduce((sum, node) => sum + clampByteNumber(node.downloadBytes), 0);
   const usedBytes = clampByteNumber(uploadBytes + downloadBytes);
 
-  // The client card is the source of truth for the account-wide allowance.
-  // If it is unlimited, keep support for installations that set only per-node
-  // limits by summing each unique node once.
+  // The client card is the only source of truth for an account-wide allowance.
+  // Per-node allowances are independent quotas and must never be summed into a
+  // synthetic global quota: that made traffic from unlimited nodes consume an
+  // LTE node's allowance in the subscription portal.
   const clientTotalBytes = toTotalGbBytes(clientRow?.traffic_gb || 0);
-  const totalBytes = clientTotalBytes > 0
-    ? clientTotalBytes
-    : nodes.reduce((sum, node) => sum + clampByteNumber(node.totalBytes), 0);
+  const totalBytes = clientTotalBytes > 0 ? clientTotalBytes : 0;
+  const limitedNodes = nodes.filter(node => clampByteNumber(node.totalBytes) > 0);
 
   const clientExpiry = normalizeEpochMillis(clientRow?.expiry_time || 0);
   const nodeExpiries = nodes.map(node => node.expiryTimeMs).filter(Boolean);
@@ -8384,6 +8451,8 @@ function buildSubscriptionUsageSummary(entries, clientRow) {
     totalBytes: clampByteNumber(totalBytes),
     remainingBytes: totalBytes > 0 ? clampByteNumber(Math.max(0, totalBytes - usedBytes)) : 0,
     expiryTimeMs,
+    quotaMode: totalBytes > 0 ? 'global' : (limitedNodes.length ? 'per-node' : 'unlimited'),
+    limitedNodeCount: limitedNodes.length,
     nodes
   };
 }
@@ -8454,6 +8523,8 @@ function buildSubscriptionPortalModel(entries, clientRow) {
     totalText: summary.totalBytes > 0 ? formatTrafficBytes(summary.totalBytes) : '∞',
     remainingText: summary.totalBytes > 0 ? formatTrafficBytes(summary.remainingBytes) : '∞',
     progressPercent: Number(percent.toFixed(2)),
+    quotaMode: summary.quotaMode,
+    limitedNodeCount: summary.limitedNodeCount,
     nodes,
     updatedAt: new Date().toISOString()
   };
@@ -8793,6 +8864,46 @@ function upsertLocalClientFromRemote(rc, sourceNode = null) {
 function normalizePostedNodeIds(value) {
   const list = Array.isArray(value) ? value : (value === undefined || value === null || value === '' ? [] : [value]);
   return uniqueList(list.map(v => Number(v)).filter(v => Number.isInteger(v) && v > 0));
+}
+
+function normalizeClientMetaName(value, label = 'Название') {
+  const name = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!name) throw new Error(`${label} не может быть пустым`);
+  if (name.length > 64) throw new Error(`${label} не должно быть длиннее 64 символов`);
+  return name;
+}
+
+function normalizeClientMetaColor(value, fallback = '#64748b') {
+  const color = String(value || '').trim().toLowerCase();
+  return /^#[0-9a-f]{6}$/.test(color) ? color : fallback;
+}
+
+function getClientGroups() {
+  return db.prepare('SELECT id, name, color FROM client_groups ORDER BY name COLLATE NOCASE ASC, id ASC').all();
+}
+
+function getClientTags() {
+  return db.prepare('SELECT id, name, color FROM client_tags ORDER BY name COLLATE NOCASE ASC, id ASC').all();
+}
+
+function normalizeClientGroupId(value) {
+  const id = Number(value || 0);
+  if (!Number.isInteger(id) || id <= 0) return null;
+  return db.prepare('SELECT id FROM client_groups WHERE id = ?').get(id)?.id || null;
+}
+
+function replaceClientTags(clientId, values) {
+  const tagIds = normalizePostedNodeIds(values);
+  const validIds = tagIds.length
+    ? db.prepare(`SELECT id FROM client_tags WHERE id IN (${tagIds.map(() => '?').join(',')})`).all(...tagIds).map(row => Number(row.id))
+    : [];
+  const replace = db.transaction(() => {
+    db.prepare('DELETE FROM client_tag_assignments WHERE client_id = ?').run(clientId);
+    const insert = db.prepare('INSERT OR IGNORE INTO client_tag_assignments (client_id, tag_id) VALUES (?, ?)');
+    for (const tagId of validIds) insert.run(clientId, tagId);
+  });
+  replace();
+  return validIds;
 }
 
 function getEnabledNodesByIds(nodeIds, excludeIds = []) {
@@ -10804,6 +10915,11 @@ async function getOnlineClientsForDashboard() {
       const old = items.get(key) || { ...client, nodes: [] };
       old.last_online_at = seenAt || old.last_online_at || '';
       const transport = getInboundTransportInfo(getCachedInbound(node));
+      const mapping = db.prepare('SELECT * FROM client_nodes WHERE client_id = ? AND node_id = ?').get(client.id, node.id);
+      const usage = mapping
+        ? readUsageForClientNode(node, { uuid: mapping.remote_uuid || client.uuid, login: mapping.remote_email || client.login }, mapping)
+        : { usedBytes: 0 };
+      const trafficGb = Math.max(0, Number(mapping?.traffic_gb || 0));
       if (!old.nodes.some(item => Number(item.id) === Number(node.id))) old.nodes.push({
         id: node.id,
         name: getNodeDisplayName(node),
@@ -10813,7 +10929,11 @@ async function getOnlineClientsForDashboard() {
         countryNameRu: node.country_name_ru || node.name || '',
         labelSuffix: node.label_suffix || '',
         flag: getNodeFlag(node),
-        transportLabel: transport.label
+        transportLabel: transport.label,
+        trafficGb,
+        usedBytes: Math.max(0, Number(usage.usedBytes || 0)),
+        usedText: formatTrafficBytes(usage.usedBytes || 0),
+        limitText: trafficGb > 0 ? `${trafficGb} ГБ` : '∞'
       });
       items.set(key, old);
     }
@@ -11253,6 +11373,7 @@ async function deleteClientEverywhere(client, deleteMode, options = {}) {
 
   const tx = db.transaction(() => {
     db.prepare('DELETE FROM client_nodes WHERE client_id = ?').run(client.id);
+    db.prepare('DELETE FROM client_tag_assignments WHERE client_id = ?').run(client.id);
     db.prepare('DELETE FROM clients WHERE id = ?').run(client.id);
   });
   tx();
@@ -11262,8 +11383,6 @@ async function deleteClientEverywhere(client, deleteMode, options = {}) {
 app.get('/', requireAuth, (req, res) => res.redirect('/dashboard'));
 
 app.get('/mobile-login', requireAllowedAdminIp, (req, res) => {
-  const accessKey = getCurrentPanelAccessKey();
-  if (accessKey && req.session?.panelAccessGranted === true) setPanelRememberCookie(res, accessKey);
   if (req.session?.userId) return res.redirect('/dashboard');
   return res.redirect('/login');
 });
@@ -11292,15 +11411,12 @@ app.post('/login', requireAllowedAdminIp, (req, res) => {
   }
 
   loginFailures.delete(failure.key);
-  const panelAccessWasGranted = req.session?.panelAccessGranted === true;
   req.session.regenerate((err) => {
     if (err) return render(res, 'login', { error: 'Не удалось создать сессию' });
     req.session.userId = user.id;
-    req.session.panelAccessGranted = panelAccessWasGranted;
     req.session.loginIp = getClientIp(req);
     req.session.lastActivity = Date.now();
     req.session.cookie.maxAge = 30 * 24 * 60 * 60 * 1000;
-    if (panelAccessWasGranted) setPanelRememberCookie(res, getCurrentPanelAccessKey());
     res.redirect('/dashboard');
   });
 });
@@ -11794,6 +11910,10 @@ async function runDashboardHealthSweep() {
       ''
     ).trim();
     const redirectOk = !redirectConfigured || (rawRedirectStatus.ok !== false && !rawRedirectStatus.stale);
+    const redirectNetwork = rawRedirectStatus.systemNetwork || {};
+    const redirectTotalMbps = Math.max(0, Number(redirectNetwork.totalMbps || 0));
+    const redirectRuleCount = redirectRules.length;
+    const redirectRuntimeSummary = `${redirectRuleCount} прав. · ${redirectTotalMbps.toFixed(2)} Мбит/с`;
     const redirect = {
       configured: redirectConfigured,
       ok: redirectOk,
@@ -11801,10 +11921,15 @@ async function runDashboardHealthSweep() {
       statusLabel: !redirectConfigured ? 'Не настроено' : (redirectOk ? 'Работает' : 'Ошибка'),
       message: !redirectConfigured
         ? 'Активных правил перенаправления нет.'
-        : (redirectOk ? (redirectProblem || 'Helper применил правила.') : humanizeOperationalError(redirectProblem || 'Helper не подтвердил применение правил.')),
+        : (redirectOk
+          ? `${redirectRuntimeSummary}${redirectProblem ? ` · ${redirectProblem}` : ''}`
+          : humanizeOperationalError(redirectProblem || 'Helper не подтвердил применение правил.')),
       technicalError: redirectOk ? '' : redirectProblem,
       url: '/redirects',
-      updatedAt: rawRedirectStatus.updatedAt || rawRedirectStatus.generatedAt || null
+      updatedAt: rawRedirectStatus.updatedAt || rawRedirectStatus.generatedAt || null,
+      rulesCount: redirectRuleCount,
+      totalMbps: redirectTotalMbps,
+      backend: rawRedirectStatus.backend || rawRedirectStatus.iptables || ''
     };
 
     return { ok: true, generatedAt: new Date().toISOString(), checks, redirect };
@@ -12565,9 +12690,9 @@ app.get('/settings', requireAuth, async (req, res) => {
     telegramBackupEnabled: getSetting('telegram_backup_enabled', '0') === '1',
     telegramBackupChatId: getSetting('telegram_backup_chat_id', ''),
     panelPublicUrl: getPanelPublicUrl(),
-    panelLoginUrl: `${getPanelPublicUrl()}/login${getCurrentPanelAccessKey() ? `?key=${encodeURIComponent(getCurrentPanelAccessKey())}` : ''}`,
-    panelMobileLoginUrl: `${getPanelPublicUrl()}/mobile-login${getCurrentPanelAccessKey() ? `?key=${encodeURIComponent(getCurrentPanelAccessKey())}` : ''}`,
-    panelAccessKey: getCurrentPanelAccessKey(),
+    panelLoginUrl: `${getPanelPublicUrl()}/login`,
+    panelMobileLoginUrl: `${getPanelPublicUrl()}/mobile-login`,
+    panelAccessKey: '',
     subUrlMode: getSubscriptionUrlMode(),
     subPublicUrl: getSetting('sub_public_url', process.env.SUB_PUBLIC_URL || BASE_URL),
     publicSubBaseUrl: getPublicSubBaseUrl(),
@@ -12947,17 +13072,9 @@ app.post('/settings', requireAuth, (req, res) => {
     const subUrlMode = ['custom', 'panel', 'panel_without_port'].includes(String(req.body.sub_url_mode || 'custom'))
       ? String(req.body.sub_url_mode || 'custom')
       : 'custom';
-    const panelAccessKey = String(req.body.panel_access_key || '').trim();
-    if (panelAccessKey && panelAccessKey.length < 8) throw new Error('Secret-key должен быть минимум 8 символов или пустым для отключения');
-
     setSetting('panel_public_url', panelPublicUrl);
     setSetting('sub_public_url', subPublicUrl);
     setSetting('sub_url_mode', subUrlMode);
-    setSetting('panel_access_key', panelAccessKey);
-    // A key chosen in the authenticated UI is authoritative. Record the
-    // current deployment fingerprint so an older PANEL_ACCESS_KEY from .env
-    // cannot silently become a fallback key after this manual change.
-    markPanelAccessKeyEnvironmentReconciled();
 
     setSetting('subscription_show_limits', req.body.subscription_show_limits === '1' ? '1' : '0');
 
@@ -13154,12 +13271,12 @@ app.post('/settings/telegram-test', requireAuth, async (req, res) => {
 });
 
 function exportBackupPayload(req = null) {
-  const tables = ['app_users', 'app_settings', 'nodes', 'clients', 'client_nodes', 'node_inbound_cache', 'sni_profiles', 'telegram_users', 'telegram_orders', 'telegram_tickets', 'telegram_ticket_messages', 'telegram_announcements', 'vpn_hosts', 'vpn_services', 'vpn_clients', 'vpn_jobs'];
+  const tables = ['app_users', 'app_settings', 'nodes', 'client_groups', 'client_tags', 'clients', 'client_tag_assignments', 'client_nodes', 'node_inbound_cache', 'sni_profiles', 'telegram_users', 'telegram_orders', 'telegram_tickets', 'telegram_ticket_messages', 'telegram_announcements', 'vpn_hosts', 'vpn_services', 'vpn_clients', 'vpn_jobs'];
   const data = {};
   for (const table of tables) data[table] = db.prepare(`SELECT * FROM ${table}`).all();
   return {
     app: '3xui-aggregator',
-    version: 2,
+    version: 3,
     created_at: new Date().toISOString(),
     panel_host: req ? getRequestPanelHost(req) : '',
     panel_identity: req ? getBackupPanelIdentity(req) : safeFileSegment(BASE_URL, 'panel'),
@@ -13180,8 +13297,8 @@ function ensureAdminUserExists() {
 
 function restoreBackupPayload(payload) {
   if (!payload || payload.app !== '3xui-aggregator' || !payload.data) throw new Error('Неверный файл резервной копии');
-  const deleteTables = ['vpn_jobs', 'vpn_clients', 'vpn_services', 'vpn_hosts', 'telegram_ticket_messages', 'telegram_tickets', 'telegram_orders', 'telegram_announcements', 'telegram_users', 'sni_profiles', 'node_inbound_cache', 'client_nodes', 'clients', 'nodes', 'app_settings', 'app_users'];
-  const restoreTables = ['app_users', 'app_settings', 'nodes', 'clients', 'client_nodes', 'node_inbound_cache', 'sni_profiles', 'telegram_users', 'telegram_orders', 'telegram_tickets', 'telegram_ticket_messages', 'telegram_announcements', 'vpn_hosts', 'vpn_services', 'vpn_clients', 'vpn_jobs'];
+  const deleteTables = ['vpn_jobs', 'vpn_clients', 'vpn_services', 'vpn_hosts', 'telegram_ticket_messages', 'telegram_tickets', 'telegram_orders', 'telegram_announcements', 'telegram_users', 'sni_profiles', 'node_inbound_cache', 'client_nodes', 'client_tag_assignments', 'clients', 'client_tags', 'client_groups', 'nodes', 'app_settings', 'app_users'];
+  const restoreTables = ['app_users', 'app_settings', 'nodes', 'client_groups', 'client_tags', 'clients', 'client_tag_assignments', 'client_nodes', 'node_inbound_cache', 'sni_profiles', 'telegram_users', 'telegram_orders', 'telegram_tickets', 'telegram_ticket_messages', 'telegram_announcements', 'vpn_hosts', 'vpn_services', 'vpn_clients', 'vpn_jobs'];
   const columnCache = new Map();
   const tx = db.transaction(() => {
     for (const table of deleteTables) db.prepare(`DELETE FROM ${table}`).run();
@@ -14002,7 +14119,8 @@ app.post('/nodes/:id/edit', requireAuth, async (req, res) => {
     if (preflightInbound) saveInboundCache(updatedNode, preflightInbound);
     else if (normalizedNodeType !== NODE_TYPE_3XUI) db.prepare('DELETE FROM node_inbound_cache WHERE node_id = ?').run(nodeId);
     let inboundPortWarning = '';
-    if (normalizedNodeType === NODE_TYPE_3XUI && req.body.apply_inbound_settings === '1') {
+    const shouldApplyInbound = req.body.apply_inbound_settings === '1' || req.body.apply_inbound_advanced_json === '1';
+    if (normalizedNodeType === NODE_TYPE_3XUI && shouldApplyInbound) {
       const beforeInbound = existingCachedInbound;
       const oldInboundPort = normalizePortNumber(beforeInbound?.port || 0);
       const newInboundPort = normalizePortNumber(req.body.inbound_port || oldInboundPort);
@@ -14023,7 +14141,7 @@ app.post('/nodes/:id/edit', requireAuth, async (req, res) => {
     const checkSuffix = check.ok
       ? (isRemnawaveType ? ` Remnawave API отвечает${Number.isFinite(Number(check.providerInfo?.usersTotal)) ? `, пользователей: ${Number(check.providerInfo.usersTotal)}.` : '.'}` : '')
       : ` Проверка не прошла: ${check.error || 'узел офлайн'}.`;
-    const editMsg = (normalizedNodeType === NODE_TYPE_3XUI && req.body.apply_inbound_settings === '1'
+    const editMsg = (normalizedNodeType === NODE_TYPE_3XUI && shouldApplyInbound
       ? 'Узел и параметры inbound обновлены.'
       : 'Узел обновлён.') + checkSuffix + inboundPortWarning;
     res.redirect('/nodes?tab=list&message=' + encodeURIComponent(editMsg));
@@ -14116,6 +14234,8 @@ app.get('/clients', requireAuth, (req, res) => {
   const qNorm = normalizeSearchText(q);
   const allClients = db.prepare(`
         SELECT c.*,
+          cg.name AS group_name,
+          cg.color AS group_color,
           (
             SELECT cn.remote_sub_url
             FROM client_nodes cn
@@ -14125,14 +14245,28 @@ app.get('/clients', requireAuth, (req, res) => {
             LIMIT 1
           ) AS source_sub_url
         FROM clients c
+        LEFT JOIN client_groups cg ON cg.id = c.group_id
         ORDER BY c.id DESC
       `).all();
   // Reality/Xray clients are intentionally rendered as one local directory.
   // Search, node filtering and sorting are performed in the browser without a
   // page reload so the input never loses focus while the administrator types.
   const clients = clientType !== 'xray' ? [] : allClients;
+  const clientGroups = getClientGroups();
+  const clientTags = getClientTags();
+  const tagsByClient = new Map();
+  for (const row of db.prepare(`
+    SELECT a.client_id, t.id, t.name, t.color
+    FROM client_tag_assignments a
+    JOIN client_tags t ON t.id = a.tag_id
+    ORDER BY t.name COLLATE NOCASE ASC, t.id ASC
+  `).all()) {
+    if (!tagsByClient.has(Number(row.client_id))) tagsByClient.set(Number(row.client_id), []);
+    tagsByClient.get(Number(row.client_id)).push({ id: row.id, name: row.name, color: row.color });
+  }
 
   for (const client of clients) {
+    client.tags = tagsByClient.get(Number(client.id)) || [];
     client.node_limits = db.prepare(`
       SELECT
         n.id AS node_id,
@@ -14221,6 +14355,8 @@ app.get('/clients', requireAuth, (req, res) => {
   render(res, 'clients', {
     clients,
     nodes,
+    clientGroups,
+    clientTags,
     clientType,
     xrayCount: allClients.length,
     vpnClients,
@@ -14239,6 +14375,60 @@ app.get('/clients', requireAuth, (req, res) => {
   } catch (err) {
     console.error('Clients page failed:', err);
     res.status(500).send(`Ошибка открытия списка клиентов: ${htmlEscape(String(err.message || err))}<br><br>Проверь логи командой:<br><code>docker logs --tail=100 3xui-aggregator</code>`);
+  }
+});
+
+app.post('/client-groups', requireAuth, (req, res) => {
+  try {
+    const name = normalizeClientMetaName(req.body.name, 'Название группы');
+    const color = normalizeClientMetaColor(req.body.color, '#64748b');
+    db.prepare('INSERT INTO client_groups (name, color) VALUES (?, ?)').run(name, color);
+    res.redirect('/clients?message=' + encodeURIComponent(`Группа «${name}» создана`));
+  } catch (err) {
+    const text = String(err.message || err).includes('UNIQUE') ? 'Группа с таким названием уже существует' : String(err.message || err);
+    res.redirect('/clients?error=' + encodeURIComponent(text));
+  }
+});
+
+app.post('/client-groups/:id/delete', requireAuth, (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const group = db.prepare('SELECT name FROM client_groups WHERE id = ?').get(id);
+    if (!group) throw new Error('Группа не найдена');
+    db.transaction(() => {
+      db.prepare('UPDATE clients SET group_id = NULL WHERE group_id = ?').run(id);
+      db.prepare('DELETE FROM client_groups WHERE id = ?').run(id);
+    })();
+    res.redirect('/clients?message=' + encodeURIComponent(`Группа «${group.name}» удалена, клиенты сохранены`));
+  } catch (err) {
+    res.redirect('/clients?error=' + encodeURIComponent(String(err.message || err)));
+  }
+});
+
+app.post('/client-tags', requireAuth, (req, res) => {
+  try {
+    const name = normalizeClientMetaName(req.body.name, 'Название метки');
+    const color = normalizeClientMetaColor(req.body.color, '#3b82f6');
+    db.prepare('INSERT INTO client_tags (name, color) VALUES (?, ?)').run(name, color);
+    res.redirect('/clients?message=' + encodeURIComponent(`Метка «${name}» создана`));
+  } catch (err) {
+    const text = String(err.message || err).includes('UNIQUE') ? 'Метка с таким названием уже существует' : String(err.message || err);
+    res.redirect('/clients?error=' + encodeURIComponent(text));
+  }
+});
+
+app.post('/client-tags/:id/delete', requireAuth, (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const tag = db.prepare('SELECT name FROM client_tags WHERE id = ?').get(id);
+    if (!tag) throw new Error('Метка не найдена');
+    db.transaction(() => {
+      db.prepare('DELETE FROM client_tag_assignments WHERE tag_id = ?').run(id);
+      db.prepare('DELETE FROM client_tags WHERE id = ?').run(id);
+    })();
+    res.redirect('/clients?message=' + encodeURIComponent(`Метка «${tag.name}» удалена`));
+  } catch (err) {
+    res.redirect('/clients?error=' + encodeURIComponent(String(err.message || err)));
   }
 });
 
@@ -14278,6 +14468,7 @@ app.post('/clients', requireAuth, async (req, res) => {
     const cleanDurationDays = Math.max(0, Number(duration_days || 0));
     const cleanTrafficGb = Math.max(0, Number(traffic_gb || 0));
     const totalGbBytes = toTotalGbBytes(cleanTrafficGb);
+    const groupId = normalizeClientGroupId(req.body.group_id);
 
     const expiryTime = cleanDurationDays > 0
       ? expiryAtMidnightAfterDays(cleanDurationDays)
@@ -14288,11 +14479,12 @@ app.post('/clients', requireAuth, async (req, res) => {
     const subSlug = sharedSubId;
 
     const clientInfo = db.prepare(`
-      INSERT INTO clients (login, display_name, uuid, sub_slug, duration_days, traffic_gb, limit_ip, expiry_time, comment)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(cleanLogin, cleanDisplayName, uuid, subSlug, cleanDurationDays, cleanTrafficGb, cleanLimitIp, expiryTime, cleanComment);
+      INSERT INTO clients (login, display_name, uuid, sub_slug, duration_days, traffic_gb, limit_ip, expiry_time, comment, group_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(cleanLogin, cleanDisplayName, uuid, subSlug, cleanDurationDays, cleanTrafficGb, cleanLimitIp, expiryTime, cleanComment, groupId);
 
     const clientId = clientInfo.lastInsertRowid;
+    replaceClientTags(clientId, req.body.tag_ids);
 
     const createdClient = db.prepare('SELECT * FROM clients WHERE id = ?').get(clientId);
 
@@ -14645,6 +14837,12 @@ app.get('/clients/:id/summary.json', requireAuth, async (req, res) => {
         cleanName = String(cleanName || '').replace(/^🌐\s*/u, '').trim();
         if (!cleanName || cleanName === 'Узел') return null;
         if (suffix && !cleanName.includes(suffix)) cleanName = /^\d+$/.test(suffix) ? `${cleanName}-${suffix}` : `${cleanName} / ${suffix}`;
+        const usage = readUsageForClientNode(
+          { id: row.node_id, inbound_id: row.inbound_id },
+          { uuid: row.remote_uuid || client.uuid, login: row.remote_email || client.login },
+          row
+        );
+        const trafficGb = Math.max(0, Number(row.traffic_gb || 0));
         return {
           id: row.node_id,
           name: cleanName,
@@ -14656,7 +14854,11 @@ app.get('/clients/:id/summary.json', requireAuth, async (req, res) => {
           inboundId: row.inbound_id || '',
           enabled: Number(row.enabled) !== 0,
           limitIp: row.limit_ip ?? null,
-          trafficGb: row.traffic_gb || 0
+          trafficGb,
+          usedBytes: Math.max(0, Number(usage.usedBytes || 0)),
+          usedText: formatTrafficBytes(usage.usedBytes || 0),
+          limitText: trafficGb > 0 ? `${trafficGb} ГБ` : '∞',
+          usageText: trafficGb > 0 ? `${formatTrafficBytes(usage.usedBytes || 0)} / ${trafficGb} ГБ` : `${formatTrafficBytes(usage.usedBytes || 0)} / ∞`
         };
       })
       .filter(Boolean);
@@ -14736,6 +14938,7 @@ app.post('/clients/:id/edit', requireAuth, async (req, res) => {
       : Math.max(0, Number(client.duration_days || 0));
     const trafficGb = Math.max(0, Number(req.body.traffic_gb || 0));
     const comment = String(req.body.comment || "").trim();
+    const groupId = normalizeClientGroupId(req.body.group_id);
     const expiryTime = durationWasChanged
       ? (durationDays > 0 ? expiryAtMidnightAfterDays(durationDays) : 0)
       : Math.max(0, Number(client.expiry_time || 0));
@@ -14753,9 +14956,10 @@ app.post('/clients/:id/edit', requireAuth, async (req, res) => {
 
     db.prepare(`
       UPDATE clients
-      SET login = ?, display_name = ?, limit_ip = ?, duration_days = ?, traffic_gb = ?, expiry_time = ?, comment = ?
+      SET login = ?, display_name = ?, limit_ip = ?, duration_days = ?, traffic_gb = ?, expiry_time = ?, comment = ?, group_id = ?
       WHERE id = ?
-    `).run(login, displayName, limitIp, durationDays, trafficGb, expiryTime, comment, clientId);
+    `).run(login, displayName, limitIp, durationDays, trafficGb, expiryTime, comment, groupId, clientId);
+    replaceClientTags(clientId, req.body.tag_ids);
 
     const updatedClient = db.prepare('SELECT * FROM clients WHERE id = ?').get(clientId);
     const nodesForEdit = db.prepare(`SELECT * FROM nodes WHERE enabled = 1 ORDER BY ${nodeOrderSql()}`).all().filter(isClientManagedNode);
