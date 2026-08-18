@@ -276,6 +276,19 @@ function getNodesPageSize() {
   return [10, 12, 15].includes(n) ? n : 10;
 }
 
+function getAutoRefreshSeconds(key, fallback = 10) {
+  const n = Number(getSetting(key, String(fallback)));
+  return [0, 10, 30, 60].includes(n) ? n : fallback;
+}
+
+function getNodeAutoRefreshSeconds() {
+  return getAutoRefreshSeconds('node_auto_refresh_seconds', 10);
+}
+
+function getClientAutoRefreshSeconds() {
+  return getAutoRefreshSeconds('client_auto_refresh_seconds', 10);
+}
+
 const DATA_DIR = path.resolve(__dirname, process.env.DATA_DIR || 'data');
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
@@ -4559,15 +4572,37 @@ function hasInboundAggregateTraffic(inbound) {
 }
 
 function getNodeInboundTrafficInfo(node, inbound) {
-  if (hasInboundAggregateTraffic(inbound)) {
-    const uploadBytes = clampByteNumber(numericField(inbound, ['up', 'upload', 'uplink', 'uploadBytes', 'uplinkBytes'], 0));
-    const downloadBytes = clampByteNumber(numericField(inbound, ['down', 'download', 'downlink', 'downloadBytes', 'downlinkBytes'], 0));
+  const hasAggregate = hasInboundAggregateTraffic(inbound);
+  const uploadBytes = clampByteNumber(numericField(inbound, ['up', 'upload', 'uplink', 'uploadBytes', 'uplinkBytes'], 0));
+  const downloadBytes = clampByteNumber(numericField(inbound, ['down', 'download', 'downlink', 'downloadBytes', 'downlinkBytes'], 0));
+  const usedBytes = clampByteNumber(uploadBytes + downloadBytes);
+  if (hasAggregate && usedBytes > 0) {
+    return { uploadBytes, downloadBytes, usedBytes, source: 'inbound' };
+  }
+
+  // Some 3x-ui builds report zero or omit aggregate inbound fields while
+  // clientStats already contains the real counters (seen especially after
+  // upgrades and on xHTTP inbounds). Prefer the non-zero per-client sum in
+  // that case instead of showing a misleading 0 B for the whole server.
+  const clientStats = [
+    ...normalizeObjectArray(inbound?.clientStats),
+    ...normalizeObjectArray(inbound?.client_stats),
+    ...normalizeObjectArray(inbound?.clientTraffics)
+  ];
+  const clientUploadBytes = clientStats.reduce((sum, stat) => sum + clampByteNumber(numericField(stat, ['up', 'upload', 'uplink', 'uploadBytes', 'uplinkBytes'], 0)), 0);
+  const clientDownloadBytes = clientStats.reduce((sum, stat) => sum + clampByteNumber(numericField(stat, ['down', 'download', 'downlink', 'downloadBytes', 'downlinkBytes'], 0)), 0);
+  const clientUsedBytes = clampByteNumber(clientUploadBytes + clientDownloadBytes);
+  if (clientUsedBytes > 0) {
     return {
-      uploadBytes,
-      downloadBytes,
-      usedBytes: clampByteNumber(uploadBytes + downloadBytes),
-      source: 'inbound'
+      uploadBytes: clientUploadBytes,
+      downloadBytes: clientDownloadBytes,
+      usedBytes: clientUsedBytes,
+      source: 'clientStats'
     };
+  }
+
+  if (hasAggregate) {
+    return { uploadBytes, downloadBytes, usedBytes, source: 'inbound' };
   }
 
   // Совместимость со старыми fork/API: если агрегатных up/down в inbound нет,
@@ -4579,12 +4614,12 @@ function getNodeInboundTrafficInfo(node, inbound) {
     FROM client_nodes
     WHERE node_id = ?
   `).get(Number(node.id)) : null;
-  const uploadBytes = clampByteNumber(row?.upload_bytes || 0);
-  const downloadBytes = clampByteNumber(row?.download_bytes || 0);
+  const localUploadBytes = clampByteNumber(row?.upload_bytes || 0);
+  const localDownloadBytes = clampByteNumber(row?.download_bytes || 0);
   return {
-    uploadBytes,
-    downloadBytes,
-    usedBytes: clampByteNumber(uploadBytes + downloadBytes),
+    uploadBytes: localUploadBytes,
+    downloadBytes: localDownloadBytes,
+    usedBytes: clampByteNumber(localUploadBytes + localDownloadBytes),
     source: 'local'
   };
 }
@@ -11845,11 +11880,14 @@ function buildHealthOverview() {
 
 
 let dashboardHealthSweepPromise = null;
+let dashboardHealthDetailedSweepPromise = null;
 
-async function runDashboardHealthSweep() {
-  if (dashboardHealthSweepPromise) return dashboardHealthSweepPromise;
+async function runDashboardHealthSweep(options = {}) {
+  const detailed = options.detailed === true;
+  if (detailed && dashboardHealthDetailedSweepPromise) return dashboardHealthDetailedSweepPromise;
+  if (!detailed && dashboardHealthSweepPromise) return dashboardHealthSweepPromise;
 
-  dashboardHealthSweepPromise = (async () => {
+  const sweepPromise = (async () => {
     const nodes = db.prepare(`SELECT * FROM nodes ORDER BY ${nodeOrderSql()}`).all();
     const checks = [];
 
@@ -11870,15 +11908,25 @@ async function runDashboardHealthSweep() {
       try {
         const probe = await checkNode(node, {
           timeoutMs: Math.min(NODE_HEALTHCHECK_TIMEOUT_MS, 5000),
-          lightweight: true
+          lightweight: !detailed
         });
         const rawError = probe.ok ? '' : String(probe.error || 'нет ответа');
+        const inboundTraffic = probe.inboundTraffic || null;
         checks.push({
           ...base,
           ok: !!probe.ok,
           status: probe.ok ? 'online' : 'offline',
           statusLabel: probe.ok ? 'В сети' : 'Не в сети',
           ms: Date.now() - startedAt,
+          inboundTraffic: inboundTraffic ? {
+            uploadBytes: clampByteNumber(inboundTraffic.uploadBytes || 0),
+            downloadBytes: clampByteNumber(inboundTraffic.downloadBytes || 0),
+            usedBytes: clampByteNumber(inboundTraffic.usedBytes || 0),
+            uploadText: formatTrafficBytes(inboundTraffic.uploadBytes || 0),
+            downloadText: formatTrafficBytes(inboundTraffic.downloadBytes || 0),
+            usedText: formatTrafficBytes(inboundTraffic.usedBytes || 0),
+            source: inboundTraffic.source || 'inbound'
+          } : null,
           error: rawError ? humanizeOperationalError(rawError) : '',
           technicalError: rawError
         });
@@ -11935,17 +11983,21 @@ async function runDashboardHealthSweep() {
     return { ok: true, generatedAt: new Date().toISOString(), checks, redirect };
   })();
 
+  if (detailed) dashboardHealthDetailedSweepPromise = sweepPromise;
+  else dashboardHealthSweepPromise = sweepPromise;
+
   try {
-    return await dashboardHealthSweepPromise;
+    return await sweepPromise;
   } finally {
-    dashboardHealthSweepPromise = null;
+    if (detailed) dashboardHealthDetailedSweepPromise = null;
+    else dashboardHealthSweepPromise = null;
   }
 }
 
 app.get('/dashboard/node-status.json', requireAuth, async (req, res) => {
   try {
     res.setHeader('Cache-Control', 'no-store');
-    res.json(await runDashboardHealthSweep());
+    res.json(await runDashboardHealthSweep({ detailed: String(req.query.details || '') === '1' }));
   } catch (err) {
     const original = String(err?.message || err || 'Ошибка проверки узлов');
     res.status(500).json({ ok: false, error: humanizeOperationalError(original), technicalError: original, checks: [] });
@@ -12173,6 +12225,8 @@ app.get('/dashboard', requireAuth, async (req, res) => {
     onlinePerPage: String(req.query.online_per_page || '') === '9999' ? 9999 : 10,
     onlineClients: onlineResult.clients,
     onlineErrors: onlineResult.errors,
+    nodeAutoRefreshSeconds: getNodeAutoRefreshSeconds(),
+    clientAutoRefreshSeconds: getClientAutoRefreshSeconds(),
     now,
     baseUrl: getPublicSubBaseUrl(),
     message: req.query.message || '',
@@ -12246,11 +12300,15 @@ app.post('/routing', requireAuth, (req, res) => {
     const parsedAdBlockDomains = parseRoutingLines(req.body.adblock_domains || '', 'domain');
     const parsedAdBlockIps = parseRoutingLines(req.body.adblock_ips || '', 'ip');
     const geodataSourceRaw = String(req.body.geodata_source || 'loyalsoldier').trim().toLowerCase();
-    const geodataSource = ['official', 'loyalsoldier', 'custom'].includes(geodataSourceRaw) ? geodataSourceRaw : 'loyalsoldier';
+    const geodataSource = ROUTING_GEODATA_SOURCES.has(geodataSourceRaw) ? geodataSourceRaw : 'loyalsoldier';
     const geositeUrl = String(req.body.geosite_url || '').trim();
     const geoipUrl = String(req.body.geoip_url || '').trim();
-    const effectiveGeositeUrl = geodataSource === 'loyalsoldier' ? LOYALSOLDIER_GEOSITE_URL : (geodataSource === 'custom' ? geositeUrl : '');
-    const effectiveGeoipUrl = geodataSource === 'loyalsoldier' ? LOYALSOLDIER_GEOIP_URL : (geodataSource === 'custom' ? geoipUrl : '');
+    const effectiveGeositeUrl = geodataSource === 'loyalsoldier'
+      ? LOYALSOLDIER_GEOSITE_URL
+      : (geodataSource === 'russia' ? RUNETFREEDOM_GEOSITE_URL : (geodataSource === 'custom' ? geositeUrl : ''));
+    const effectiveGeoipUrl = geodataSource === 'loyalsoldier'
+      ? LOYALSOLDIER_GEOIP_URL
+      : (geodataSource === 'russia' ? RUNETFREEDOM_GEOIP_URL : (geodataSource === 'custom' ? geoipUrl : ''));
     const geodataUrls = uniqueList([effectiveGeositeUrl, effectiveGeoipUrl, ...parsePlainLines(req.body.geodata_urls || '')].filter(v => /^https?:\/\//i.test(v))); 
     const dnsPreset = String(req.body.dns_preset || 'cloudflare').trim();
     const dnsCustom = parsePlainLines(req.body.dns_custom || '').join('\n');
@@ -12715,6 +12773,8 @@ app.get('/settings', requireAuth, async (req, res) => {
     panelMobileUiScale: getPanelMobileUiScale(),
     panelMobileClientCompact: getPanelMobileClientCompact(),
     nodesPageSize: getNodesPageSize(),
+    nodeAutoRefreshSeconds: getNodeAutoRefreshSeconds(),
+    clientAutoRefreshSeconds: getClientAutoRefreshSeconds(),
     sniProfiles: getSniProfiles(),
     message: req.query.message || '',
     error: req.query.error || '',
@@ -12778,6 +12838,10 @@ app.post('/settings/panel-ui', requireAuth, (req, res) => {
     setSetting('panel_mobile_client_compact', req.body.panel_mobile_client_compact === '1' ? '1' : '0');
     const nodesPageSize = [10, 12, 15].includes(Number(req.body.nodes_page_size)) ? Number(req.body.nodes_page_size) : 10;
     setSetting('nodes_page_size', String(nodesPageSize));
+    const nodeAutoRefreshSeconds = [0, 10, 30, 60].includes(Number(req.body.node_auto_refresh_seconds)) ? Number(req.body.node_auto_refresh_seconds) : 10;
+    const clientAutoRefreshSeconds = [0, 10, 30, 60].includes(Number(req.body.client_auto_refresh_seconds)) ? Number(req.body.client_auto_refresh_seconds) : 10;
+    setSetting('node_auto_refresh_seconds', String(nodeAutoRefreshSeconds));
+    setSetting('client_auto_refresh_seconds', String(clientAutoRefreshSeconds));
     res.redirect('/settings?message=' + encodeURIComponent('Настройки панели сохранены.'));
   } catch (err) {
     res.redirect('/settings?error=' + encodeURIComponent(String(err.message || err)));
@@ -12926,11 +12990,15 @@ app.post('/settings/happ-control', requireAuth, (req, res) => {
     if (errors.length) throw new Error(errors.join(' | '));
 
     const geodataSourceRaw = String(req.body.geodata_source || 'loyalsoldier').trim().toLowerCase();
-    const geodataSource = ['official', 'loyalsoldier', 'custom'].includes(geodataSourceRaw) ? geodataSourceRaw : 'loyalsoldier';
+    const geodataSource = ROUTING_GEODATA_SOURCES.has(geodataSourceRaw) ? geodataSourceRaw : 'loyalsoldier';
     const geositeUrl = String(req.body.geosite_url || '').trim();
     const geoipUrl = String(req.body.geoip_url || '').trim();
-    const effectiveGeositeUrl = geodataSource === 'loyalsoldier' ? LOYALSOLDIER_GEOSITE_URL : (geodataSource === 'custom' ? geositeUrl : '');
-    const effectiveGeoipUrl = geodataSource === 'loyalsoldier' ? LOYALSOLDIER_GEOIP_URL : (geodataSource === 'custom' ? geoipUrl : '');
+    const effectiveGeositeUrl = geodataSource === 'loyalsoldier'
+      ? LOYALSOLDIER_GEOSITE_URL
+      : (geodataSource === 'russia' ? RUNETFREEDOM_GEOSITE_URL : (geodataSource === 'custom' ? geositeUrl : ''));
+    const effectiveGeoipUrl = geodataSource === 'loyalsoldier'
+      ? LOYALSOLDIER_GEOIP_URL
+      : (geodataSource === 'russia' ? RUNETFREEDOM_GEOIP_URL : (geodataSource === 'custom' ? geoipUrl : ''));
     const geodataUrls = uniqueList([effectiveGeositeUrl, effectiveGeoipUrl, ...parsePlainLines(req.body.geodata_urls || '')].filter(v => /^https?:\/\//i.test(v)));
 
     const oldRouting = getRoutingConfig();
@@ -13500,6 +13568,7 @@ app.get('/nodes', requireAuth, (req, res) => {
     nodes,
     countries: getSortedCountriesRu(),
     nodePageSize: getNodesPageSize(),
+    nodeAutoRefreshSeconds: getNodeAutoRefreshSeconds(),
     sniProfiles: getSniProfiles(),
     nodeActiveTab: ['list', 'add', 'help'].includes(requestedTab) ? requestedTab : 'list',
     message: req.query.message || '',
@@ -15508,7 +15577,9 @@ function uniqueList(items) {
 
 const LOYALSOLDIER_GEOSITE_URL = 'https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat';
 const LOYALSOLDIER_GEOIP_URL = 'https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat';
-const ROUTING_GEODATA_SOURCES = new Set(['official', 'loyalsoldier', 'custom']);
+const RUNETFREEDOM_GEOSITE_URL = 'https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/geosite.dat';
+const RUNETFREEDOM_GEOIP_URL = 'https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/geoip.dat';
+const ROUTING_GEODATA_SOURCES = new Set(['official', 'loyalsoldier', 'russia', 'custom']);
 
 
 function loadIplistDomains(serviceName) {
@@ -15542,6 +15613,7 @@ function getRoutingGeositeUrl() {
   const source = getRoutingGeodataSource();
   if (source === 'official') return '';
   if (source === 'loyalsoldier') return LOYALSOLDIER_GEOSITE_URL;
+  if (source === 'russia') return RUNETFREEDOM_GEOSITE_URL;
   return String(cfg.geositeUrl || '').trim();
 }
 
@@ -15550,6 +15622,7 @@ function getRoutingGeoipUrl() {
   const source = getRoutingGeodataSource();
   if (source === 'official') return '';
   if (source === 'loyalsoldier') return LOYALSOLDIER_GEOIP_URL;
+  if (source === 'russia') return RUNETFREEDOM_GEOIP_URL;
   return String(cfg.geoipUrl || '').trim();
 }
 
@@ -15701,7 +15774,9 @@ const GEOSITE_CATALOG_FALLBACK = uniqueList([
   'category-payment-cn', 'category-public-tracker', 'category-scholar-!cn', 'category-search-engines',
   'category-social-media-!cn', 'category-social-media-cn', 'category-speedtest', 'category-streaming',
   'category-tech-cn', 'category-travel-cn', 'category-vpnservices', 'geolocation-!cn', 'geolocation-cn',
-  'category-ru', 'ru', 'private', 'cn', 'tld-cn', 'gfw', 'greatfire', 'china-list', 'apple-cn', 'google-cn',
+  'category-ru', 'ru', 'ru-blocked', 'ru-blocked-all', 'ru-available-only-inside',
+  'antifilter-download', 'antifilter-download-community', 'refilter',
+  'private', 'cn', 'tld-cn', 'gfw', 'greatfire', 'china-list', 'apple-cn', 'google-cn',
   'win-spy', 'win-update', 'win-extra', 'apple', 'icloud', 'itunes', 'google', 'youtube', 'googlefcm',
   'android', 'api', 'facebook', 'instagram', 'whatsapp', 'meta', 'twitter', 'x', 'telegram', 'discord', 'slack',
   'zoom', 'skype', 'teams', 'microsoft', 'office365', 'windows', 'github', 'gitlab', 'docker', 'npmjs',
@@ -15717,7 +15792,8 @@ const GEOIP_ISO_ALPHA2_CODES = [
 ];
 
 const GEOIP_CATALOG_FALLBACK = uniqueList([
-  'private', 'cloudflare', 'cloudfront', 'facebook', 'meta', 'instagram', 'whatsapp', 'mailru', 'vk', 'yandex', 'fastly', 'google', 'youtube', 'netflix', 'telegram', 'twitter', 'tor',
+  'private', 'ru-blocked', 'ru-blocked-community', 're-filter', 'ru-whitelist',
+  'cloudflare', 'cloudfront', 'facebook', 'meta', 'instagram', 'whatsapp', 'mailru', 'vk', 'yandex', 'ddos-guard', 'fastly', 'google', 'youtube', 'netflix', 'telegram', 'twitter', 'tor',
   ...GEOIP_ISO_ALPHA2_CODES
 ]);
 

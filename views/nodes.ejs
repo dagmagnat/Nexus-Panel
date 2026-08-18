@@ -438,7 +438,7 @@
                   <strong><%= inboundValue %></strong>
                 </div>
                 <% if (!isRemnawave && node.transport_loaded) { %>
-                  <div class="node-detail-kv-row node-inbound-traffic-row">
+                  <div class="node-detail-kv-row node-inbound-traffic-row" data-node-inbound-usage="<%= node.id %>">
                     <span>Потрачено в Inbound #<%= node.inbound_id %></span>
                     <strong><%= node.inbound_used_text || '0 Б' %></strong>
                     <small><%= node.inbound_download_text || '0 Б' %> / <%= node.inbound_upload_text || '0 Б' %> · скачано / отдано</small>
@@ -935,7 +935,7 @@ async function refreshNodeStatuses() {
   if (nodeStatusRefreshPending || document.hidden) return;
   nodeStatusRefreshPending = true;
   try {
-    const response = await fetch('/dashboard/node-status.json', { headers: { Accept: 'application/json' } });
+    const response = await fetch('/dashboard/node-status.json?details=1', { headers: { Accept: 'application/json' }, cache: 'no-store' });
     const data = await response.json();
     if (!response.ok || !data.ok) throw new Error(data.error || 'Не удалось проверить узлы');
     (data.checks || []).forEach(check => {
@@ -950,6 +950,14 @@ async function refreshNodeStatuses() {
           badge.title = check.error || (check.ms ? `${check.ms} мс` : '');
         }
       });
+      if (check.inboundTraffic) {
+        document.querySelectorAll(`[data-node-inbound-usage="${check.nodeId}"]`).forEach(row => {
+          const total = row.querySelector('strong');
+          const split = row.querySelector('small');
+          if (total) total.textContent = check.inboundTraffic.usedText || '0 Б';
+          if (split) split.textContent = `${check.inboundTraffic.downloadText || '0 Б'} / ${check.inboundTraffic.uploadText || '0 Б'} · скачано / отдано`;
+        });
+      }
       document.querySelectorAll(`[data-node-live-error="${check.nodeId}"]`).forEach(errorEl => {
         const text = String(check.error || '').trim();
         errorEl.textContent = text;
@@ -981,7 +989,8 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
   window.setTimeout(refreshNodeStatuses, 1500);
-  window.setInterval(refreshNodeStatuses, 60000);
+  const nodeRefreshSeconds = <%- JSON.stringify(Number(nodeAutoRefreshSeconds || 10)) %>;
+  if (nodeRefreshSeconds > 0) window.setInterval(refreshNodeStatuses, nodeRefreshSeconds * 1000);
 });
 </script>
 

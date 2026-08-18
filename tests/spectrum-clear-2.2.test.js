@@ -8,13 +8,13 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 const read = relative => fs.readFileSync(path.join(root, relative), 'utf8');
 
-test('mobile node cards open the real editor and refresh sequentially once a minute', () => {
+test('mobile node cards open the real editor and refresh sequentially at the configured interval', () => {
   const app = read('app.js');
   const nodes = read('views/nodes.ejs');
   assert.match(nodes, /data-node-edit-url="\/nodes\/<%= node\.id %>\/edit"/);
   assert.match(nodes, /window\.location\.assign\(editUrl\)/);
-  assert.match(nodes, /setInterval\(refreshNodeStatuses, 60000\)/);
-  assert.match(app, /async function runDashboardHealthSweep\(\)[\s\S]*for \(const node of nodes\)/);
+  assert.match(nodes, /setInterval\(refreshNodeStatuses, nodeRefreshSeconds \* 1000\)/);
+  assert.match(app, /async function runDashboardHealthSweep\(options = \{\}\)[\s\S]*for \(const node of nodes\)/);
   assert.doesNotMatch(app, /runDashboardHealthSweep\([\s\S]{0,3000}runWithConcurrency/);
 });
 
@@ -37,7 +37,7 @@ test('dashboard leads with online and expiry and exposes health failures in plac
   assert.match(dashboard, /id="dashboardNodesHealth"/);
   assert.match(dashboard, /id="dashboardRedirectHealth"/);
   assert.match(dashboard, /id="dashboardNodeIssues"/);
-  assert.match(dashboard, /window\.setInterval\(refreshDashboardNodeCounts, 60000\)/);
+  assert.match(dashboard, /window\.setInterval\(refreshDashboardNodeCounts, dashboardNodeRefreshSeconds \* 1000\)/);
   assert.match(dashboard, /notifyDashboardHealthOnce/);
 });
 

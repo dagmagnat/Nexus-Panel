@@ -317,8 +317,8 @@
     </div>
     <div class="online-modal-controls">
       <button type="button" class="btn-main" id="onlineRefreshBtn">Обновить</button>
-      <label class="online-auto-toggle"><input type="checkbox" id="onlineAutoRefresh" checked /><span>Автообновление</span></label>
-      <label class="online-auto-interval"><span>Каждые</span><select id="onlineRefreshInterval"><option value="10">10 сек.</option><option value="30">30 сек.</option><option value="60">60 сек.</option></select></label>
+      <label class="online-auto-toggle"><input type="checkbox" id="onlineAutoRefresh" <%= Number(clientAutoRefreshSeconds) > 0 ? 'checked' : '' %> /><span>Автообновление</span></label>
+      <label class="online-auto-interval"><span>Каждые</span><select id="onlineRefreshInterval"><option value="10" <%= Number(clientAutoRefreshSeconds) === 10 ? 'selected' : '' %>>10 сек.</option><option value="30" <%= Number(clientAutoRefreshSeconds) === 30 ? 'selected' : '' %>>30 сек.</option><option value="60" <%= Number(clientAutoRefreshSeconds) === 60 ? 'selected' : '' %>>60 сек.</option></select></label>
     </div>
     <div id="onlineClientsStatus" class="hint">Загружаю онлайн-клиентов…</div>
     <div id="onlineClientsList" class="dashboard-client-list online-list"></div>
@@ -738,6 +738,7 @@ let onlineClientsRefreshPending = false;
 let onlineClientsAutoTimer = null;
 let dashboardNodeRefreshPending = false;
 let dashboardLastHealthNotice = '';
+const dashboardNodeRefreshSeconds = <%- JSON.stringify(Number(nodeAutoRefreshSeconds || 10)) %>;
 
 function notifyDashboardHealthOnce(message){
   const text = String(message || '').trim();
@@ -840,10 +841,6 @@ function configureOnlineClientsAutoRefresh() {
   if (onlineClientsAutoTimer) window.clearInterval(onlineClientsAutoTimer);
   onlineClientsAutoTimer = null;
   select.disabled = !toggle.checked;
-  try {
-    localStorage.setItem('nexus.dashboard.onlineAuto', toggle.checked ? '1' : '0');
-    localStorage.setItem('nexus.dashboard.onlineInterval', String(select.value || '10'));
-  } catch (_) {}
   if (!toggle.checked) return;
   const seconds = [10, 30, 60].includes(Number(select.value)) ? Number(select.value) : 10;
   onlineClientsAutoTimer = window.setInterval(() => {
@@ -965,17 +962,14 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('onlineRefreshBtn')?.addEventListener('click', refreshOnlineClients);
   const onlineAuto = document.getElementById('onlineAutoRefresh');
   const onlineInterval = document.getElementById('onlineRefreshInterval');
-  try {
-    if (onlineAuto) onlineAuto.checked = localStorage.getItem('nexus.dashboard.onlineAuto') !== '0';
-    const savedInterval = localStorage.getItem('nexus.dashboard.onlineInterval');
-    if (onlineInterval && ['10', '30', '60'].includes(savedInterval)) onlineInterval.value = savedInterval;
-  } catch (_) {}
   onlineAuto?.addEventListener('change', configureOnlineClientsAutoRefresh);
   onlineInterval?.addEventListener('change', configureOnlineClientsAutoRefresh);
   configureOnlineClientsAutoRefresh();
   refreshOnlineClients();
-  window.setTimeout(refreshDashboardNodeCounts, 1500);
-  window.setInterval(refreshDashboardNodeCounts, 60000);
+  if (dashboardNodeRefreshSeconds > 0) {
+    window.setTimeout(refreshDashboardNodeCounts, 1500);
+    window.setInterval(refreshDashboardNodeCounts, dashboardNodeRefreshSeconds * 1000);
+  }
   document.getElementById('openExpiryDashboard')?.addEventListener('click', openExpiryWorkspace);
   setupMobileDashboardTabs();
 });
@@ -1119,8 +1113,10 @@ function normalizeDashboardSearchText(value) {
   }
 
   btn.addEventListener('click', refreshNodeStatus);
-  timer = window.setInterval(refreshNodeStatus, 10000);
-  window.setTimeout(refreshNodeStatus, 500);
+  if (dashboardNodeRefreshSeconds > 0) {
+    timer = window.setInterval(refreshNodeStatus, dashboardNodeRefreshSeconds * 1000);
+    window.setTimeout(refreshNodeStatus, 500);
+  }
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) refreshNodeStatus();
   });

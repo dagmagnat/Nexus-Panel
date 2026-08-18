@@ -70,13 +70,29 @@ ui_init() {
   fi
 }
 
+ui_box_rule() {
+  local left="$1" fill="$2" right="$3" width="$4"
+  local rule=''
+  printf -v rule '%*s' "$width" ''
+  rule="${rule// /$fill}"
+  printf "${CYAN}        %s%s%s${NC}\n" "$left" "$rule" "$right"
+}
+
+ui_box_line() {
+  local width="$1" visible="$2" styled="${3:-$2}" padding
+  padding=$((width - ${#visible}))
+  [ "$padding" -lt 0 ] && padding=0
+  printf "${CYAN}        │${NC} %s%*s ${CYAN}│${NC}\n" "$styled" "$padding" ''
+}
+
 ui_banner() {
   ui_init
+  local width=42
   printf '\n'
-  printf "${CYAN}        ╭──────────────────────────────────────╮${NC}\n"
-  printf "${CYAN}        │${NC} ${MAGENTA}◆${NC}  ${BOLD}N E X U S   P A N E L${NC}           ${CYAN}│${NC}\n"
-  printf "${CYAN}        │${NC}    ${DIM}Spectrum installer · safe deploy${NC}    ${CYAN}│${NC}\n"
-  printf "${CYAN}        ╰──────────────────────────────────────╯${NC}\n"
+  ui_box_rule '╭' '─' '╮' $((width + 2))
+  ui_box_line "$width" '◆  N E X U S   P A N E L' "${MAGENTA}◆${NC}  ${BOLD}N E X U S   P A N E L${NC}"
+  ui_box_line "$width" '   Spectrum installer · safe deploy' "   ${DIM}Spectrum installer · safe deploy${NC}"
+  ui_box_rule '╰' '─' '╯' $((width + 2))
   printf "${DIM}        Клиенты, UUID, ссылки и data сохраняются${NC}\n\n"
   printf 'Nexus Panel installer started: %s\n' "$(date -Is)" >> "$NEXUS_UI_LOG_FILE"
 }
@@ -699,7 +715,7 @@ install_packages() {
   ui_run "Установка системных компонентов" env DEBIAN_FRONTEND=noninteractive \
     apt-get install -y ca-certificates curl git lsb-release openssl \
     apt-transport-https software-properties-common iproute2 iptables nftables \
-    netcat-openbsd python3 openssh-server sudo
+    netcat-openbsd python3 unzip openssh-server sudo
 }
 
 install_vpn_local_ssh_access() {
@@ -2430,17 +2446,20 @@ main_menu() {
   local choice
   while true; do
     echo >&2
-    printf "${CYAN}  ╭─ Управление Nexus Panel ──────────────────────────╮${NC}\n" >&2
-    printf '  │  1  Установить ещё одну панель                   │\n' >&2
-    printf '  │  2  Обновить проект, сохранив данные             │\n' >&2
-    printf '  │  3  Изменить параметры панели                    │\n' >&2
-    printf '  │  4  Переустановить панель                        │\n' >&2
-    printf '  │  5  Создать резервную копию                      │\n' >&2
-    printf '  │  6  Восстановить из копии                        │\n' >&2
-    printf '  │  7  Удалить проект                               │\n' >&2
-    printf '  │  8  Диагностика и автоматическое восстановление  │\n' >&2
-    printf '  │  0  Выход                                        │\n' >&2
-    printf "${CYAN}  ╰───────────────────────────────────────────────────╯${NC}\n" >&2
+    local menu_width=58
+    ui_box_rule '╭' '─' '╮' $((menu_width + 2)) >&2
+    ui_box_line "$menu_width" 'Управление Nexus Panel' "${BOLD}Управление Nexus Panel${NC}" >&2
+    ui_box_line "$menu_width" '' '' >&2
+    ui_box_line "$menu_width" '1  Установить ещё одну панель' >&2
+    ui_box_line "$menu_width" '2  Обновить проект, сохранив данные' >&2
+    ui_box_line "$menu_width" '3  Изменить параметры панели' >&2
+    ui_box_line "$menu_width" '4  Переустановить панель' >&2
+    ui_box_line "$menu_width" '5  Создать резервную копию' >&2
+    ui_box_line "$menu_width" '6  Восстановить из копии' >&2
+    ui_box_line "$menu_width" '7  Удалить проект' >&2
+    ui_box_line "$menu_width" '8  Диагностика и автоматическое восстановление' >&2
+    ui_box_line "$menu_width" '0  Выход' >&2
+    ui_box_rule '╰' '─' '╯' $((menu_width + 2)) >&2
     choice="$(ask 'Выбери действие (Enter ничего не запускает)' '')"
     choice="$(trim "$choice")"
     case "$choice" in

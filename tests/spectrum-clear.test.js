@@ -11,7 +11,7 @@ const read = relative => fs.readFileSync(path.join(root, relative), 'utf8');
 test('Spectrum Clear is the only stylesheet loaded by authenticated pages', () => {
   const header = read('views/partials_header.ejs');
   const stylesheets = Array.from(header.matchAll(/<link[^>]+rel=["']stylesheet["'][^>]+href=["']([^"']+)/g), match => match[1]);
-  assert.deepEqual(stylesheets, ['/css/spectrum-clear.css?v=242']);
+  assert.deepEqual(stylesheets, ['/css/spectrum-clear.css?v=250']);
   for (const legacy of ['style.css', 'redesign.css', 'nexus-ui.css', 'branding.css', 'stage87.css', 'stage90.css']) {
     assert.equal(header.includes(legacy), false, `legacy stylesheet must not be loaded: ${legacy}`);
   }
@@ -20,7 +20,7 @@ test('Spectrum Clear is the only stylesheet loaded by authenticated pages', () =
 test('login and public subscription pages use the same design system', () => {
   for (const file of ['views/login.ejs', 'views/open_sub.ejs']) {
     const source = read(file);
-    assert.match(source, /\/css\/spectrum-clear\.css\?v=242/);
+    assert.match(source, /\/css\/spectrum-clear\.css\?v=250/);
     assert.match(source, /class="[^"]*nexus-spectrum/);
     assert.doesNotMatch(source, /\/css\/(?:style|redesign|nexus-ui|branding|stage\d+)\.css/);
   }
@@ -101,4 +101,33 @@ test('redesign does not replace client identity or subscription fields', () => {
   assert.match(app, /sub_slug TEXT UNIQUE NOT NULL/);
   assert.match(app, /app\.get\('\/sub\/:slug'/);
   assert.match(app, /app\.get\('\/json\/:slug'/);
+});
+
+test('daily monitoring, 3x-ui traffic fallback and responsive actions stay configurable', () => {
+  const app = read('app.js');
+  const settings = read('views/settings.ejs');
+  const nodes = read('views/nodes.ejs');
+  const clients = read('views/clients.ejs');
+  const nodeEdit = read('views/node_edit.ejs');
+  const css = read('public/css/spectrum-clear.css');
+  assert.match(app, /node_auto_refresh_seconds/);
+  assert.match(app, /client_auto_refresh_seconds/);
+  assert.match(app, /inbound\.clientStats/);
+  assert.match(settings, /Автопроверка узлов/);
+  assert.match(settings, /Показывать расход ГБ и срок в подписках/);
+  assert.match(nodes, /dashboard\/node-status\.json\?details=1/);
+  assert.match(clients, />Продлить<\/button>/);
+  assert.match(nodeEdit, /class="node-delete-form"[\s\S]{0,180}confirm\('/);
+  assert.match(css, /\.node-edit-primary-actions/);
+  assert.match(css, /\.project-update-progress/);
+});
+
+test('routing offers current Russia geodata source and manual catalog refresh', () => {
+  const app = read('app.js');
+  const routing = read('views/routing.ejs');
+  assert.match(app, /runetfreedom\/russia-v2ray-rules-dat\/release\/geosite\.dat/);
+  assert.match(app, /'ru-blocked-community'/);
+  assert.match(app, /'ru-whitelist'/);
+  assert.match(routing, /option value="russia"/);
+  assert.match(routing, /loadGeodataCatalog\(true\)/);
 });

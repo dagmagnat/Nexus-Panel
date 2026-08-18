@@ -10,6 +10,7 @@ const Database = require('better-sqlite3');
 const projectRoot = path.resolve(__dirname, '..');
 const toolPath = path.join(projectRoot, 'scripts', 'client-transfer.py');
 const testTempRoot = path.join(projectRoot, 'tmp');
+const pythonCommand = process.env.PYTHON || 'python3';
 
 function createTempDirectory(prefix) {
   fs.mkdirSync(testTempRoot, { recursive: true });
@@ -17,7 +18,7 @@ function createTempDirectory(prefix) {
 }
 
 function runTool(args, expectedStatus = 0) {
-  const result = spawnSync('python3', ['-B', toolPath, ...args], { encoding: 'utf8' });
+  const result = spawnSync(pythonCommand, ['-B', toolPath, ...args], { encoding: 'utf8' });
   assert.equal(result.status, expectedStatus, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
   const text = (expectedStatus === 0 ? result.stdout : result.stderr).trim();
   return text ? JSON.parse(text) : null;

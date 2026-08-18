@@ -35,12 +35,12 @@ test('client directory refreshes only online state and keeps bulk actions compac
   assert.doesNotMatch(clients, /class="modern-speed-cell"/);
 });
 
-test('nodes show per-inbound traffic, progress and refresh availability every minute', () => {
+test('nodes show per-inbound traffic, progress and configurable refresh availability', () => {
   const nodes = read('views/nodes.ejs');
   assert.match(nodes, /id="nodeAddProgressPercent"/);
   assert.match(nodes, /id="nodeAddEta"/);
   assert.match(nodes, /name="create_existing_clients_on_node"/);
-  assert.match(nodes, /setInterval\(refreshNodeStatuses, 60000\)/);
+  assert.match(nodes, /setInterval\(refreshNodeStatuses, nodeRefreshSeconds \* 1000\)/);
   assert.match(nodes, /Потрачено в Inbound/);
   assert.match(nodes, /скачано \/ отдано/);
 });

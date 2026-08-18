@@ -224,12 +224,29 @@ test('terminal fd setup keeps stderr visible and agg explicitly opens menu', () 
   assert.match(installer, /unset NEXUS_INSTALLER_LIBRARY_ONLY/);
 });
 
+test('installer and web updater can unpack releases without hanging on a missing unzip command', () => {
+  const installer = fs.readFileSync(installerPath, 'utf8');
+  const updater = fs.readFileSync(path.join(projectRoot, 'scripts', 'web_updater.sh'), 'utf8');
+  assert.match(installer, /netcat-openbsd python3 unzip openssh-server sudo/);
+  assert.match(updater, /command -v unzip/);
+  assert.match(updater, /python3 -m zipfile -e/);
+  assert.match(updater, /extract_archive "\$zip" "\$tmp\/unpacked"/);
+});
+
+test('installer banner and menu use one padded box renderer', () => {
+  const installer = fs.readFileSync(installerPath, 'utf8');
+  assert.match(installer, /ui_box_rule\(\)/);
+  assert.match(installer, /ui_box_line\(\)/);
+  assert.match(installer, /local menu_width=58/);
+  assert.match(installer, /ui_box_line "\$menu_width" '8  Диагностика и автоматическое восстановление'/);
+});
+
 test('all public version sources identify the same release', () => {
   const packageJson = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8'));
   const packageLock = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package-lock.json'), 'utf8'));
   const update = JSON.parse(fs.readFileSync(path.join(projectRoot, 'update.json'), 'utf8'));
   const version = fs.readFileSync(path.join(projectRoot, 'VERSION'), 'utf8').trim();
-  assert.equal(packageJson.version, '2.4.4');
+  assert.equal(packageJson.version, '2.5.0');
   assert.equal(packageLock.version, packageJson.version);
   assert.equal(packageLock.packages[''].version, packageJson.version);
   assert.equal(update.version, packageJson.version);

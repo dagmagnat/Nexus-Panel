@@ -57,6 +57,21 @@ except Exception:
 PY
 }
 
+extract_archive() {
+  local archive="$1" destination="$2" log="$3"
+  mkdir -p "$destination"
+  if command -v unzip >/dev/null 2>&1; then
+    unzip -q "$archive" -d "$destination" >>"$log" 2>&1
+    return $?
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -m zipfile -e "$archive" "$destination" >>"$log" 2>&1
+    return $?
+  fi
+  printf '%s\n' 'Не найден распаковщик ZIP: нужны unzip или python3.' >>"$log"
+  return 127
+}
+
 run_once() {
   [ -f "$REQUEST_FILE" ] || return 0
   local status archive_url req_id
@@ -90,8 +105,8 @@ run_once() {
   fi
 
   write_status installing "Архив скачан. Запускаю обновление файлов без изменения настроек..." "" "" "$archive_url"
-  if ! unzip -q "$zip" -d "$tmp/unpacked" >>"$log" 2>&1; then
-    write_status failed "Не удалось распаковать архив обновления" "unzip failed" "$(tail -n 80 "$log" 2>/dev/null || true)" "$archive_url"
+  if ! extract_archive "$zip" "$tmp/unpacked" "$log"; then
+    write_status failed "Не удалось распаковать архив обновления" "Не найден или не сработал распаковщик ZIP" "$(tail -n 80 "$log" 2>/dev/null || true)" "$archive_url"
     mv -f "$REQUEST_FILE" "$REQUEST_FILE.failed.$(date +%s)" || true
     rm -rf "$tmp"
     return 0

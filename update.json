@@ -1,15 +1,16 @@
 {
-  "version": "2.4.4",
-  "name": "Nexus Panel 2.4.4 — reliable short bootstrap installer",
+  "version": "2.5.0",
+  "name": "Nexus Panel 2.5.0 — traffic, updater and responsive control",
   "repository": "https://github.com/dagmagnat/Nexus-Panel",
   "archive_url": "https://github.com/dagmagnat/Nexus-Panel/archive/refs/heads/main.zip",
   "archive": "Nexus-Panel-main.zip",
   "filename": "Nexus-Panel-main.zip",
   "notes": [
-    "Добавлен короткий bootstrap.sh, который скачивает, проверяет и запускает основной установщик.",
-    "Bootstrap сбрасывает старый NEXUS_INSTALLER_LIBRARY_ONLY и возвращает интерактивный ввод через /dev/tty.",
-    "Команда agg без аргументов явно открывает меню и исправляет CRLF в локальном install.sh.",
-    "README использует одну короткую ссылку для установки и ту же ссылку с repair-shortcut для восстановления agg.",
-    "Клиенты, UUID, sub_slug, старые ссылки, настройки установки, .env и data остаются без изменений."
+    "Исправлено веб-обновление на серверах без unzip: добавлен резервный распаковщик через Python и установка нужного пакета.",
+    "Трафик выбранного 3x-ui inbound теперь берётся из up/down и clientStats, включая LTE и xHTTP.",
+    "Интервалы проверки узлов и онлайн-клиентов настраиваются: 10, 30, 60 секунд или выключено.",
+    "Редактор клиента, узлы, массовые действия, резервные копии и обновление выровнены для компьютера и телефона.",
+    "Добавлен источник Russia rules runetfreedom и актуальные российские GeoSite/GeoIP-категории.",
+    "README сокращён до актуальной установки, возможностей и диагностики; история выпусков остаётся в CHANGELOG.md."
   ]
 }

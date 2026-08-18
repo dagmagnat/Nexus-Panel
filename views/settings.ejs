@@ -58,6 +58,28 @@
       </div>
 
       <div class="field half">
+        <label>Автопроверка узлов</label>
+        <select name="node_auto_refresh_seconds">
+          <option value="10" <%= Number(nodeAutoRefreshSeconds) === 10 ? 'selected' : '' %>>Каждые 10 секунд</option>
+          <option value="30" <%= Number(nodeAutoRefreshSeconds) === 30 ? 'selected' : '' %>>Каждые 30 секунд</option>
+          <option value="60" <%= Number(nodeAutoRefreshSeconds) === 60 ? 'selected' : '' %>>Каждые 60 секунд</option>
+          <option value="0" <%= Number(nodeAutoRefreshSeconds) === 0 ? 'selected' : '' %>>Выключить</option>
+        </select>
+        <small class="hint">Обновляет состояние узлов на странице «Узлы» и на главной.</small>
+      </div>
+
+      <div class="field half">
+        <label>Онлайн-клиенты</label>
+        <select name="client_auto_refresh_seconds">
+          <option value="10" <%= Number(clientAutoRefreshSeconds) === 10 ? 'selected' : '' %>>Каждые 10 секунд</option>
+          <option value="30" <%= Number(clientAutoRefreshSeconds) === 30 ? 'selected' : '' %>>Каждые 30 секунд</option>
+          <option value="60" <%= Number(clientAutoRefreshSeconds) === 60 ? 'selected' : '' %>>Каждые 60 секунд</option>
+          <option value="0" <%= Number(clientAutoRefreshSeconds) === 0 ? 'selected' : '' %>>Только вручную</option>
+        </select>
+        <small class="hint">Интервал списка онлайн-клиентов на дашборде.</small>
+      </div>
+
+      <div class="field half">
         <label class="switch-row compact">
           <input type="checkbox" name="panel_mobile_client_compact" value="1" <%= panelMobileClientCompact ? 'checked' : '' %> />
           <span><strong>Краткие карточки клиентов на телефоне</strong><small>Дополнительная экономия места в списке клиентов.</small></span>
@@ -315,7 +337,7 @@
         <div class="field">
           <label class="switch-row compact">
             <input type="checkbox" name="subscription_show_limits" value="1" <%= showSubscriptionLimits ? 'checked' : '' %> />
-            <span><strong>Показывать лимит и срок в названиях узлов</strong><small>Если у узла задан лимит: Россия · 7/50 ГБ · 15 дн. Если лимита нет: Польша · ∞ · 15 дн.</small></span>
+            <span><strong>Показывать расход ГБ и срок в подписках</strong><small>Отключение скрывает цифры от клиента, но заданные лимиты продолжают действовать. Пример при включении: LTE · 7/50 ГБ · 15 дн.</small></span>
           </label>
         </div>
 
@@ -431,16 +453,19 @@
 
   <section class="card span-6" id="project-update-card" data-settings-key="updates">
     <h2><span class="section-icon" aria-hidden="true">🔄</span>Обновление проекта</h2>
-    <div class="kv-list update-box">
+    <div class="kv-list update-box compact-update-box">
       <div class="kv-item">
-        <strong>Текущая версия</strong>
-        <div class="muted">Репозиторий: <code id="upd-repo"><%= projectUpdateStatus.repo || 'dagmagnat/Nexus-Panel' %></code></div>
-        <div class="muted">Версия: <code id="upd-current-version"><%= projectUpdateStatus.currentVersion || '0.1.0' %></code> · ветка: <code id="upd-branch"><%= projectUpdateStatus.branch %></code> · commit: <code id="upd-current-commit"><%= projectUpdateStatus.current %></code></div>
+        <div class="update-version-row"><span><strong>Установлено</strong><small>Текущая версия панели</small></span><code id="upd-current-version"><%= projectUpdateStatus.currentVersion || '0.1.0' %></code></div>
         <div class="muted" id="upd-remote-line"><% if (projectUpdateStatus.remoteVersion) { %>GitHub version: <code><%= projectUpdateStatus.remoteVersion %></code> · <%= projectUpdateStatus.hasUpdate ? 'доступно обновление' : 'обновлений не найдено' %><% } else { %>Нажми «Проверить», чтобы получить последнюю версию с GitHub.<% } %></div>
-        <div class="muted" id="upd-archive-line"><% if (projectUpdateStatus.archiveUrl) { %>Архив: <code><%= projectUpdateStatus.archiveUrl %></code><% } %></div>
         <div class="muted" id="upd-error-line"><% if (projectUpdateStatus.error) { %>Проверка GitHub не удалась: <%= projectUpdateStatus.error %><% } %></div>
         <ul class="muted" id="upd-notes"><% if (projectUpdateStatus.notes && projectUpdateStatus.notes.length) { projectUpdateStatus.notes.forEach(n => { %><li><%= n %></li><% }) } %></ul>
         <div class="muted" id="upd-runtime-line">Статус обновления: не запущено</div>
+        <details class="update-technical-details">
+          <summary>Технические сведения</summary>
+          <div class="muted">Репозиторий: <code id="upd-repo"><%= projectUpdateStatus.repo || 'dagmagnat/Nexus-Panel' %></code></div>
+          <div class="muted">Ветка: <code id="upd-branch"><%= projectUpdateStatus.branch %></code> · commit: <code id="upd-current-commit"><%= projectUpdateStatus.current %></code></div>
+          <div class="muted" id="upd-archive-line"><% if (projectUpdateStatus.archiveUrl) { %>Архив: <code><%= projectUpdateStatus.archiveUrl %></code><% } %></div>
+        </details>
       </div>
     </div>
     <div class="actions update-actions">
@@ -449,15 +474,18 @@
       <a class="link-btn secondary" href="/backup/download" target="_blank">Скачать backup</a>
       <button type="button" class="secondary" onclick="copyText('agg update', this)">Скопировать agg</button>
     </div>
-    <small class="hint">Кнопка «Обновить» запускает host-updater: он делает backup, скачивает архив GitHub и выполняет обновление как пункт 2 в <code>agg</code>. Если статус не меняется — значит host-updater ещё не установлен; выполни один раз обновление через SSH.</small>
+    <small class="hint">«Обновить» автоматически создаёт backup, заменяет только файлы проекта и перезапускает панель. Клиенты, настройки и база сохраняются.</small>
   </section>
 
   <div class="modal-backdrop" id="project-update-modal" style="display:none;">
-    <div class="modal-card small-modal">
+    <div class="modal-card small-modal project-update-progress-card" data-update-state="queued">
       <button type="button" class="modal-close" onclick="closeProjectUpdateModal()">×</button>
-      <h2><span class="section-icon" aria-hidden="true">🔄</span>Обновление проекта</h2>
-      <p id="project-update-modal-text">Подготовка...</p>
-      <pre id="project-update-log" class="mini-log"></pre>
+      <div class="update-progress-icon"><span class="loader-ring"></span><span class="update-success-mark">✓</span><span class="update-error-mark">!</span></div>
+      <h2>Обновление проекта</h2>
+      <p id="project-update-modal-text" class="muted">Подготовка...</p>
+      <div class="update-progress-track"><i id="project-update-progress-bar"></i></div>
+      <div class="update-progress-steps" aria-label="Этапы обновления"><span data-update-step="queued">Подготовка</span><span data-update-step="downloading">Загрузка</span><span data-update-step="installing">Установка</span><span data-update-step="success">Готово</span></div>
+      <details id="project-update-log-details" class="update-log-details" hidden><summary>Показать технические сведения</summary><pre id="project-update-log" class="mini-log"></pre></details>
     </div>
   </div>
 
@@ -659,11 +687,15 @@ async function checkProjectUpdate(button) {
 async function startProjectUpdate(button) {
   if (!confirm('Запустить обновление проекта? Будет создан backup, скачан архив GitHub и выполнено обновление без изменения настроек.')) return;
   const modal = document.getElementById('project-update-modal');
+  const card = modal && modal.querySelector('.project-update-progress-card');
   const text = document.getElementById('project-update-modal-text');
   const log = document.getElementById('project-update-log');
+  const details = document.getElementById('project-update-log-details');
   if (modal) modal.style.display = 'flex';
+  if (card) card.dataset.updateState = 'queued';
   if (text) text.textContent = 'Отправляю запрос на обновление...';
   if (log) log.textContent = '';
+  if (details) { details.hidden = true; details.open = false; }
   if (button) button.disabled = true;
   try {
     const response = await fetch('/settings/project-update/start.json', {
@@ -675,8 +707,10 @@ async function startProjectUpdate(button) {
     if (!response.ok || payload.ok === false) throw new Error(payload.error || 'Ошибка запуска обновления');
     pollProjectUpdateStatus(true);
   } catch (err) {
+    if (card) card.dataset.updateState = 'failed';
     if (text) text.textContent = 'Ошибка запуска обновления';
     if (log) log.textContent = String(err.message || err);
+    if (details) details.hidden = false;
     if (button) button.disabled = false;
   }
 }
@@ -688,11 +722,16 @@ async function pollProjectUpdateStatus(forceModal) {
     if (payload && payload.ok) renderProjectUpdateStatus(payload);
     const st = payload.runtimeStatus || {};
     const state = String(st.status || 'idle');
+    const safeState = ['queued', 'downloading', 'installing', 'success', 'failed', 'error'].includes(state) ? state : 'queued';
     const text = document.getElementById('project-update-modal-text');
     const log = document.getElementById('project-update-log');
+    const details = document.getElementById('project-update-log-details');
+    const card = document.querySelector('#project-update-modal .project-update-progress-card');
     if (forceModal && document.getElementById('project-update-modal')) document.getElementById('project-update-modal').style.display = 'flex';
+    if (card) card.dataset.updateState = safeState;
     if (text) text.textContent = st.message || state;
-    if (log) log.textContent = [st.updatedAt || '', st.archiveUrl || '', st.error || '', st.logTail || ''].filter(Boolean).join('\n');
+    if (log) log.textContent = [st.updatedAt || '', st.error || '', st.logTail || ''].filter(Boolean).join('\n');
+    if (details) details.hidden = !(['failed', 'error'].includes(state) || Boolean(st.error));
     if (['success'].includes(state)) {
       clearTimeout(projectUpdatePollTimer);
       if (text) text.textContent = 'Обновление успешно произведено. Страница перезагрузится...';
@@ -701,6 +740,7 @@ async function pollProjectUpdateStatus(forceModal) {
     }
     if (['failed', 'error'].includes(state)) {
       clearTimeout(projectUpdatePollTimer);
+      if (text) text.textContent = st.message || 'Обновление не завершено. Открой технические сведения.';
       document.getElementById('project-update-btn')?.removeAttribute('disabled');
       return;
     }

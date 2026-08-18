@@ -341,8 +341,10 @@
     </form>
 
     <div class="node-edit-final-actions">
-      <button type="submit" form="nodeEditForm" class="btn-main">Сохранить</button>
-      <a href="/nodes" class="link-btn secondary">Назад</a>
+      <div class="node-edit-primary-actions">
+        <button type="submit" form="nodeEditForm" class="btn-main">Сохранить</button>
+        <a href="/nodes" class="link-btn secondary">Назад</a>
+      </div>
       <form method="post" action="/nodes/<%= node.id %>/delete" class="node-delete-form" onsubmit="return confirm('Вы действительно хотите удалить узел из панели?')">
         <button type="submit" class="danger">Удалить узел</button>
       </form>

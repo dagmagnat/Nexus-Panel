@@ -200,16 +200,17 @@
       </div>
 
       <h3>GeoSite / GeoIP источники</h3>
-      <div class="alert ok" style="margin-top:12px;">Источник выбирается отдельно: <strong>Loyalsoldier</strong> можно сделать базой по умолчанию, можно переключиться на локальный/официальный источник клиента или указать свои URL. Агрегатор сохраняет эти URL в JSON-метаданных и, если включить бесплатный Happ routing-профиль, передаёт их в Happ. расширенные платные функции полностью исключены.</div>
+      <div class="alert ok" style="margin-top:12px;">Источник выбирается отдельно: универсальный <strong>Loyalsoldier</strong>, обновляемые российские списки <strong>runetfreedom</strong>, локальные данные клиента или свои URL. Агрегатор сохраняет эти URL в JSON-метаданных и, если включить Happ routing-профиль, передаёт их в Happ.</div>
       <div class="form-grid">
         <div class="field">
           <label>Основной источник GeoData</label>
           <select name="geodata_source" id="geodata-source" onchange="syncGeoSourceFields()">
             <option value="official" <%= geodataSource === 'official' ? 'selected' : '' %>>Официальный / локальный источник клиента</option>
-            <option value="loyalsoldier" <%= geodataSource !== 'official' && geodataSource !== 'custom' ? 'selected' : '' %>>Loyalsoldier / V2Ray rules dat</option>
+            <option value="loyalsoldier" <%= geodataSource === 'loyalsoldier' ? 'selected' : '' %>>Loyalsoldier / V2Ray rules dat</option>
+            <option value="russia" <%= geodataSource === 'russia' ? 'selected' : '' %>>Russia rules / runetfreedom</option>
             <option value="custom" <%= geodataSource === 'custom' ? 'selected' : '' %>>Свои URL</option>
           </select>
-          <small class="hint">Если выбран Loyalsoldier, все правила <code>geosite:</code>/<code>geoip:</code> в панели считаются тегами из этих DAT-файлов. Если выбран официальный/локальный источник, URL в Happ-профиль не передаются. Свои URL можно использовать для будущего собственного geosite.dat / geoip.dat.</small>
+          <small class="hint">Russia rules обновляется автором каждые 6 часов и содержит <code>ru-blocked</code>, <code>ru-blocked-community</code>, <code>ru-whitelist</code> и другие российские категории. Кнопка обновления справочника ниже принудительно перечитывает актуальные списки.</small>
         </div>
         <div class="field half">
           <label>GeoSite URL</label>
@@ -349,6 +350,8 @@
 let geodataCatalog = { geosite: [], geoip: [], notes: [] };
 const LOYAL_GEOSITE_URL = 'https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat';
 const LOYAL_GEOIP_URL = 'https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat';
+const RUSSIA_GEOSITE_URL = 'https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/geosite.dat';
+const RUSSIA_GEOIP_URL = 'https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/geoip.dat';
 
 function syncGeoSourceFields() {
   const source = document.getElementById('geodata-source')?.value || 'loyalsoldier';
@@ -358,6 +361,11 @@ function syncGeoSourceFields() {
   if (source === 'loyalsoldier') {
     geosite.value = LOYAL_GEOSITE_URL;
     geoip.value = LOYAL_GEOIP_URL;
+    geosite.readOnly = true;
+    geoip.readOnly = true;
+  } else if (source === 'russia') {
+    geosite.value = RUSSIA_GEOSITE_URL;
+    geoip.value = RUSSIA_GEOIP_URL;
     geosite.readOnly = true;
     geoip.readOnly = true;
   } else if (source === 'official') {
@@ -375,7 +383,7 @@ function syncGeoSourceFields() {
 function setGeoPreset(kind) {
   const presets = {
     loyal: ['loyalsoldier', LOYAL_GEOSITE_URL, LOYAL_GEOIP_URL],
-    ru: ['custom', 'https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/geosite.dat', 'https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/geoip.dat'],
+    ru: ['russia', RUSSIA_GEOSITE_URL, RUSSIA_GEOIP_URL],
     iran: ['custom', 'https://github.com/chocolate4u/Iran-v2ray-rules/releases/latest/download/geosite.dat', 'https://github.com/chocolate4u/Iran-v2ray-rules/releases/latest/download/geoip.dat']
   };
   const chosen = presets[kind];
