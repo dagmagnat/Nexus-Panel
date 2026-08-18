@@ -148,9 +148,11 @@ test('installer cannot silently exit when helper-only variable is exported', () 
   assert.match(source, /"\$@" <\/dev\/null > "\$step_log" 2>&1 &/, 'background steps must never wait for invisible terminal input');
 });
 
-test('README exposes a CRLF-safe single-line installer with retry and a visible temp script', () => {
+test('README exposes CRLF-safe install and agg recovery commands', () => {
   const readme = fs.readFileSync(path.join(projectRoot, 'README.md'), 'utf8');
-  assert.match(readme, /curl -fsSL --retry 5 https:\/\/raw\.githubusercontent\.com\/dagmagnat\/Nexus-Panel\/main\/install\.sh \| sed 's\/\\r\$\/\/' > \/tmp\/nexus-install\.sh && test -s \/tmp\/nexus-install\.sh && bash \/tmp\/nexus-install\.sh/);
+  assert.match(readme, /curl --fail --show-error --location --retry 5 --connect-timeout 20 https:\/\/raw\.githubusercontent\.com\/dagmagnat\/Nexus-Panel\/main\/install\.sh -o \/tmp\/nexus-install\.sh/);
+  assert.match(readme, /sed -i 's\/\\r\$\/\/' \/tmp\/nexus-install\.sh/);
+  assert.match(readme, /\/tmp\/nexus-install\.sh repair-shortcut && agg/);
   assert.match(fs.readFileSync(path.join(projectRoot, '.gitattributes'), 'utf8'), /\*\.sh text eol=lf/);
 });
 
@@ -160,4 +162,26 @@ test('agg menu cannot launch an action on an empty Enter and legacy URL key is r
   assert.match(installer, /''\) warn "Действие не выбрано\. Ничего не изменено\."/);
   assert.doesNotMatch(installer, /^PANEL_ACCESS_KEY=/m);
   assert.match(installer, /Адрес входа[^\n]+\/login/);
+});
+
+test('terminal fd setup keeps stderr visible and agg explicitly opens menu', () => {
+  const installer = fs.readFileSync(installerPath, 'utf8');
+  assert.match(installer, /if \{ exec 9>\/dev\/tty; \} 2>\/dev\/null; then/);
+  assert.doesNotMatch(installer, /if exec 9>\/dev\/tty 2>\/dev\/null; then/);
+  assert.match(installer, /sync_current_installer_to_app\(\)/);
+  assert.match(installer, /sync_current_installer_to_app\s+install_shortcut_command\s+local action/);
+  assert.match(installer, /\[ "\\\$\{#args\[@\]\}" -gt 0 \] \|\| args=\(menu\)/);
+  assert.match(installer, /LC_ALL=C grep -q \$'\\r'/);
+});
+
+test('all public version sources identify the same release', () => {
+  const packageJson = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8'));
+  const packageLock = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package-lock.json'), 'utf8'));
+  const update = JSON.parse(fs.readFileSync(path.join(projectRoot, 'update.json'), 'utf8'));
+  const version = fs.readFileSync(path.join(projectRoot, 'VERSION'), 'utf8').trim();
+  assert.equal(packageJson.version, '2.4.3');
+  assert.equal(packageLock.version, packageJson.version);
+  assert.equal(packageLock.packages[''].version, packageJson.version);
+  assert.equal(update.version, packageJson.version);
+  assert.equal(version, packageJson.version);
 });

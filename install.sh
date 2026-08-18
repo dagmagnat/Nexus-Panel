@@ -61,7 +61,10 @@ ui_init() {
   # Даже если stdout направлен в tee, stdin и /dev/tty остаются терминалом.
   # Поэтому анимация видна пользователю, а обычный текст сохраняется в журнал.
   if [ "${NEXUS_INSTALLER_PLAIN:-0}" != "1" ] && [ -t 0 ] && [ -w /dev/tty ]; then
-    if exec 9>/dev/tty 2>/dev/null; then
+    # Редирект stderr должен действовать только на попытку открыть fd 9.
+    # `exec 9>/dev/tty 2>/dev/null` без группы навсегда отправлял stderr всего
+    # установщика в /dev/null: меню и приглашение ввода становились невидимыми.
+    if { exec 9>/dev/tty; } 2>/dev/null; then
       NEXUS_UI_ANIMATE=1
     fi
   fi
@@ -1408,7 +1411,15 @@ set -euo pipefail
 export APP_DIR="$APP_DIR"
 export AGG_INSTANCE="$INSTANCE_NAME"
 if [ -f "\$APP_DIR/install.sh" ]; then
-  exec bash "\$APP_DIR/install.sh" "\$@"
+  if LC_ALL=C grep -q $'\r' "\$APP_DIR/install.sh"; then
+    clean_file="\$(mktemp)"
+    sed 's/\r$//' "\$APP_DIR/install.sh" > "\$clean_file"
+    install -m 0755 "\$clean_file" "\$APP_DIR/install.sh"
+    rm -f "\$clean_file"
+  fi
+  args=("\$@")
+  [ "\${#args[@]}" -gt 0 ] || args=(menu)
+  exec bash "\$APP_DIR/install.sh" "\${args[@]}"
 fi
 if ! command -v curl >/dev/null 2>&1; then
   echo "curl не найден. Установи curl или запусти установочную команду из README."
@@ -1417,13 +1428,31 @@ fi
 tmp_file="\$(mktemp)"
 trap 'rm -f "\$tmp_file"' EXIT
 curl -fsSL "${INSTALLER_RAW_URL:-$INSTALLER_RAW_URL_DEFAULT}" -o "\$tmp_file"
-exec env APP_DIR="$APP_DIR" AGG_INSTANCE="$INSTANCE_NAME" bash "\$tmp_file" "\$@"
+sed -i 's/\r$//' "\$tmp_file"
+args=("\$@")
+[ "\${#args[@]}" -gt 0 ] || args=(menu)
+exec env APP_DIR="$APP_DIR" AGG_INSTANCE="$INSTANCE_NAME" bash "\$tmp_file" "\${args[@]}"
 EOF
   chmod +x "$instance_shortcut"
 
   cat > "$SHORTCUT_BIN" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+launch_installer() {
+  if [ ! -f "$APP_DIR/install.sh" ]; then
+    echo "install.sh не найден: $APP_DIR/install.sh"
+    exit 1
+  fi
+  if LC_ALL=C grep -q $'\r' "$APP_DIR/install.sh"; then
+    clean_file="$(mktemp)"
+    sed 's/\r$//' "$APP_DIR/install.sh" > "$clean_file"
+    install -m 0755 "$clean_file" "$APP_DIR/install.sh"
+    rm -f "$clean_file"
+  fi
+  args=("$@")
+  [ "${#args[@]}" -gt 0 ] || args=(menu)
+  exec bash "$APP_DIR/install.sh" "${args[@]}"
+}
 mapfile -t dirs < <(find /opt -maxdepth 1 -type d \( -name '3xui-aggregator' -o -name '3xui-aggregator-*' \) | sort)
 if [ "${#dirs[@]}" -eq 0 ]; then
   echo "Установки Nexus Panel не найдены. Запусти установочную команду из README."
@@ -1433,13 +1462,13 @@ if [ "${#dirs[@]}" -eq 1 ]; then
   export APP_DIR="${dirs[0]}"
   base="$(basename "$APP_DIR")"
   if [ "$base" = "3xui-aggregator" ]; then export AGG_INSTANCE="default"; else export AGG_INSTANCE="${base#3xui-aggregator-}"; fi
-  exec bash "$APP_DIR/install.sh" "$@"
+  launch_installer "$@"
 fi
 if [ "$#" -gt 0 ] && [ -d "/opt/3xui-aggregator-$1" ]; then
   export AGG_INSTANCE="$1"
   export APP_DIR="/opt/3xui-aggregator-$1"
   shift
-  exec bash "$APP_DIR/install.sh" "$@"
+  launch_installer "$@"
 fi
 echo "Выбери экземпляр Nexus Panel:"
 i=1
@@ -1460,7 +1489,7 @@ fi
 export APP_DIR="${dirs[$idx]}"
 base="$(basename "$APP_DIR")"
 if [ "$base" = "3xui-aggregator" ]; then export AGG_INSTANCE="default"; else export AGG_INSTANCE="${base#3xui-aggregator-}"; fi
-exec bash "$APP_DIR/install.sh" "$@"
+launch_installer "$@"
 EOF
   chmod +x "$SHORTCUT_BIN"
 }
@@ -1888,6 +1917,31 @@ script_source_dir() {
     [[ "$src" != /* ]] && src="$dir/$src"
   done
   cd -P "$(dirname "$src")" >/dev/null 2>&1 && pwd
+}
+
+sync_current_installer_to_app() {
+  local source_path target_path clean_file
+  source_path="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || printf '%s' "${BASH_SOURCE[0]}")"
+  target_path="$APP_DIR/install.sh"
+
+  [ -f "$source_path" ] || return 0
+  mkdir -p "$APP_DIR"
+
+  if [ -f "$target_path" ]; then
+    local resolved_target
+    resolved_target="$(readlink -f "$target_path" 2>/dev/null || printf '%s' "$target_path")"
+    [ "$source_path" != "$resolved_target" ] || return 0
+  fi
+
+  clean_file="$(mktemp)"
+  sed 's/\r$//' "$source_path" > "$clean_file"
+  if ! grep -q '^#!/usr/bin/env bash' "$clean_file"; then
+    rm -f "$clean_file"
+    err "Не удалось проверить свежую копию install.sh."
+    return 1
+  fi
+  install -m 0755 "$clean_file" "$target_path"
+  rm -f "$clean_file"
 }
 
 can_update_from_local_bundle() {
@@ -2425,6 +2479,10 @@ main() {
   load_existing_config
 
   if [ -f "$ENV_FILE" ] || [ -f "$INSTALL_CONF" ]; then
+    # Запуск свежего install.sh из /tmp или клона сразу чинит установленную
+    # копию и ярлык agg — ещё до выбора пункта меню.
+    sync_current_installer_to_app
+    install_shortcut_command
     local action
     action="$(main_menu)"
     action="$(trim "$action")"
@@ -2511,6 +2569,11 @@ if [ "${1:-}" = "repair-shortcut" ]; then
   refresh_runtime_paths
   load_source_config
   refresh_runtime_paths
+  if [ ! -d "$APP_DIR" ]; then
+    err "Установленная Nexus Panel не найдена: $APP_DIR"
+    exit 1
+  fi
+  sync_current_installer_to_app
   install_shortcut_command
   say "Команды agg и agg-${INSTANCE_NAME} восстановлены."
   exit 0

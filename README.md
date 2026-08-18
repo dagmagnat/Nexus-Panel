@@ -6,7 +6,7 @@
 
 Nexus Panel — панель агрегации и управления узлами **3x-ui** и **Remnawave**: клиенты, SUB/JSON-подписки, маршрутизация, трафик, Telegram и синхронизация выбранного inbound.
 
-[![Version](https://img.shields.io/badge/version-2.4.2-blue)](https://github.com/dagmagnat/Nexus-Panel)
+[![Version](https://img.shields.io/badge/version-2.4.3-blue)](https://github.com/dagmagnat/Nexus-Panel)
 ![Node.js](https://img.shields.io/badge/node-%3E%3D22-gray)
 ![License](https://img.shields.io/badge/license-MIT-gray)
 
@@ -44,6 +44,8 @@ Nexus Panel — панель агрегации и управления узла
 
 Версия 2.4.2 исправляет запуск установщика с Windows-переносами строк и скрытое ожидание Enter у фоновых команд. Каталог клиентов, редактор клиента, QR, форма узла, рейтинг трафика, сроки, онлайн-список и маршрутизация получили более плотную и ровную компоновку для компьютера и телефона.
 
+Версия 2.4.3 исправляет невидимое меню установщика: открытие терминального дескриптора больше не отключает `stderr`. Свежий запуск автоматически заменяет повреждённую CRLF-копию установщика, восстанавливает ярлык, а команда `agg` без аргументов явно открывает меню.
+
 Устаревшие `style.css`, `redesign.css`, `nexus-ui.css` и `stage*.css` удалены, чтобы разные разделы не получали конфликтующие цвета и размеры. Источник интерфейса один: `public/css/spectrum-clear.css`.
 
 Редизайн не меняет `data/app.db`, `.env`, UUID клиентов и `sub_slug`. Уже выданные ссылки подписок сохраняются. Подробные критерии и контракт: [`docs/NEXUS_PRODUCT_SPEC.md`](docs/NEXUS_PRODUCT_SPEC.md) и [`docs/DATA_COMPATIBILITY.md`](docs/DATA_COMPATIBILITY.md).
@@ -53,14 +55,15 @@ Nexus Panel — панель агрегации и управления узла
 Требуется VPS с Linux, root-доступом и открытыми портами. Для автоматического HTTPS домен должен указывать на этот сервер, а порты `80` и `443` не должны быть заняты другим Nginx, Apache или Caddy.
 
 ```bash
-curl -fsSL --retry 5 https://raw.githubusercontent.com/dagmagnat/Nexus-Panel/main/install.sh | sed 's/\r$//' > /tmp/nexus-install.sh && test -s /tmp/nexus-install.sh && bash /tmp/nexus-install.sh
+sudo -i
+curl --fail --show-error --location --retry 5 --connect-timeout 20 https://raw.githubusercontent.com/dagmagnat/Nexus-Panel/main/install.sh -o /tmp/nexus-install.sh && sed -i 's/\r$//' /tmp/nexus-install.sh && grep -q '^#!/usr/bin/env bash' /tmp/nexus-install.sh && chmod +x /tmp/nexus-install.sh && /tmp/nexus-install.sh
 ```
 
 Если приглашение уже имеет вид `root@server:~#`, повторять `sudo -i` не нужно.
 Сообщение `/usr/bin/xauth: file /root/.Xauthority does not exist` относится к
 SSH X11 forwarding, а не к Nexus Panel, и не мешает установке. Команда выше не
-запускает пустой или ошибочно загруженный файл и сохраняет полный журнал в
-`/root/nexus-panel-install.log`. Команда также удаляет случайные Windows-символы
+запускает пустой или ошибочно загруженный файл. Установщик сохраняет подробные
+журналы в `/var/log/nexus-panel/`. Команда также удаляет случайные Windows-символы
 переноса строки из загруженного файла, поэтому Bash не завершится молча на
 строке `set -Eeuo pipefail`.
 
@@ -77,7 +80,7 @@ SSH X11 forwarding, а не к Nexus Panel, и не мешает установ�
 Для диагностики или системы без полноценного терминала анимацию можно отключить:
 
 ```bash
-NEXUS_INSTALLER_PLAIN=1 bash /tmp/nexus-panel-install.sh
+NEXUS_INSTALLER_PLAIN=1 bash /tmp/nexus-install.sh
 ```
 
 Очистка старого вывода по умолчанию отключена. Если она нужна, запустите с
@@ -108,14 +111,18 @@ agg
 или обновления. Для автоматизации по-прежнему доступна явная команда
 `agg update`.
 
-Если на сервере сохранился старый ярлык и bare-команда `agg` сразу начинает
-обновление, восстановите только ярлык — контейнеры и база при этом не
-перезапускаются:
+### Если `agg` пишет `set: pipefail` или показывает только шапку
+
+Это означает, что на сервере осталась старая CRLF-копия `install.sh` либо версия,
+которая скрывала меню вместе со `stderr`. Панель и база при этом не повреждены.
+Один раз восстановите установленный скрипт и ярлык этой командой:
 
 ```bash
-bash /opt/3xui-aggregator/install.sh repair-shortcut
-agg
+curl --fail --show-error --location --retry 5 --connect-timeout 20 https://raw.githubusercontent.com/dagmagnat/Nexus-Panel/main/install.sh -o /tmp/nexus-install.sh && sed -i 's/\r$//' /tmp/nexus-install.sh && grep -q '^#!/usr/bin/env bash' /tmp/nexus-install.sh && chmod +x /tmp/nexus-install.sh && /tmp/nexus-install.sh repair-shortcut && agg
 ```
+
+Новая команда `agg` очищает случайный CRLF в локальном установщике и без
+аргументов всегда передаёт явную команду `menu`.
 
 Если установка ещё привязана к старому репозиторию `dagmagnat/3xui-Aggregator`, сначала убедитесь, что файлы Nexus Panel уже загружены в ветку `main`, создайте резервную копию через пункт `5`, а затем один раз запустите новый установщик напрямую:
 
@@ -129,7 +136,7 @@ curl --fail --show-error --location --retry 5 --retry-delay 2 --connect-timeout 
   && bash /tmp/nexus-panel-install.sh update 2>&1 | tee /root/nexus-panel-update.log
 ```
 
-Версия 1.0.7 сначала проверяет новый репозиторий без остановки контейнеров, затем автоматически меняет старый Git `origin` и обновляет файлы. При недоступном или пустом репозитории рабочая панель не останавливается. Каталог `data`, `.env`, `.install.conf` и `.source.conf` не удаляются, поэтому клиенты, UUID, привязки узлов и настройки сохраняются.
+Текущий установщик сначала проверяет новый репозиторий без остановки контейнеров, затем автоматически меняет старый Git `origin` и обновляет файлы. При недоступном или пустом репозитории рабочая панель не останавливается. Каталог `data`, `.env`, `.install.conf` и `.source.conf` не удаляются, поэтому клиенты, UUID, привязки узлов и настройки сохраняются.
 
 Если прежняя попытка уже остановилась на `Username for 'https://github.com':`, нажмите `Ctrl+C`, восстановите работу командой `cd /opt/3xui-aggregator && docker compose up -d`, загрузите файлы Nexus Panel в GitHub и повторите команду выше.
 
@@ -256,8 +263,8 @@ Nexus Panel проверяет сертификат удалённого узл�
 - `app.js` — сервер Nexus Panel;
 - `views/` — EJS-шаблоны интерфейса;
 - `public/` — CSS, JavaScript, шрифты и статические ресурсы;
-- `branding/` — мастер-файл фирменного логотипа;
 - `scripts/` — updater, диагностика и вспомогательные команды;
+- `tests/` — автоматические проверки установщика, API и интерфейса;
 - `docs/` — дополнительная документация;
 - `install.sh` — установка, обновление, backup и восстановление.
 
