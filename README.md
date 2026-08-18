@@ -53,7 +53,6 @@ Nexus Panel — панель агрегации и управления узла
 Требуется VPS с Linux, root-доступом и открытыми портами. Для автоматического HTTPS домен должен указывать на этот сервер, а порты `80` и `443` не должны быть заняты другим Nginx, Apache или Caddy.
 
 ```bash
-sudo -i
 curl -fsSL --retry 5 https://raw.githubusercontent.com/dagmagnat/Nexus-Panel/main/install.sh | sed 's/\r$//' > /tmp/nexus-install.sh && test -s /tmp/nexus-install.sh && bash /tmp/nexus-install.sh
 ```
 
