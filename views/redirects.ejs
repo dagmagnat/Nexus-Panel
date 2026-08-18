@@ -128,6 +128,7 @@
     <div class="section-title-row redirect-refresh-title">
       <h2>Статус helper</h2>
       <div class="redirect-refresh-controls" aria-label="Автообновление страницы перенаправления">
+        <button type="button" class="secondary small redirect-restart-button" id="redirectRestartHelper">Перезапустить helper</button>
         <button type="button" class="secondary small" id="redirectRefreshNow" title="Обновить сейчас">↻</button>
         <label class="redirect-refresh-toggle">
           <input type="checkbox" id="redirectAutoRefreshToggle" />
@@ -353,6 +354,7 @@
   const toggle = document.getElementById('redirectAutoRefreshToggle');
   const interval = document.getElementById('redirectRefreshInterval');
   const refreshNow = document.getElementById('redirectRefreshNow');
+  const restartHelper = document.getElementById('redirectRestartHelper');
   const stateEl = document.getElementById('redirectHelperState');
   const updatedEl = document.getElementById('redirectHelperUpdated');
   const messageEl = document.getElementById('redirectHelperMessage');
@@ -415,6 +417,30 @@
       if (refreshNow) refreshNow.disabled = false;
     }
   }
+  async function restartRedirectHelper() {
+    if (!restartHelper || restartHelper.disabled) return;
+    const oldText = restartHelper.textContent;
+    restartHelper.disabled = true;
+    restartHelper.textContent = 'Перезапускаю…';
+    setText(messageEl, 'Команда перезапуска передана helper…');
+    try {
+      const response = await fetch('/redirects/helper/restart.json', {
+        method: 'POST',
+        headers: { 'Accept': 'application/json' }
+      });
+      const data = await response.json();
+      if (!response.ok && response.status !== 202) throw new Error(data.error || data.message || 'Не удалось перезапустить helper');
+      if (data.status) renderStatus(data.status);
+      if (data.message) setText(messageEl, data.message);
+      window.showToast?.(data.message || 'Helper перезапущен');
+    } catch (err) {
+      setText(messageEl, 'Ошибка перезапуска: ' + (err.message || err));
+      window.showToast?.('Не удалось перезапустить helper');
+    } finally {
+      restartHelper.disabled = false;
+      restartHelper.textContent = oldText;
+    }
+  }
 
   let timer = null;
   function startTimer() {
@@ -433,6 +459,7 @@
     startTimer();
   });
   if (refreshNow) refreshNow.addEventListener('click', refreshHelperStatus);
+  if (restartHelper) restartHelper.addEventListener('click', restartRedirectHelper);
   startTimer();
 })();
 

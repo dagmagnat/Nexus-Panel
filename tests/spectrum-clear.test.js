@@ -11,7 +11,7 @@ const read = relative => fs.readFileSync(path.join(root, relative), 'utf8');
 test('Spectrum Clear is the only stylesheet loaded by authenticated pages', () => {
   const header = read('views/partials_header.ejs');
   const stylesheets = Array.from(header.matchAll(/<link[^>]+rel=["']stylesheet["'][^>]+href=["']([^"']+)/g), match => match[1]);
-  assert.deepEqual(stylesheets, ['/css/spectrum-clear.css?v=250']);
+  assert.deepEqual(stylesheets, ['/css/spectrum-clear.css?v=251']);
   for (const legacy of ['style.css', 'redesign.css', 'nexus-ui.css', 'branding.css', 'stage87.css', 'stage90.css']) {
     assert.equal(header.includes(legacy), false, `legacy stylesheet must not be loaded: ${legacy}`);
   }
@@ -20,7 +20,7 @@ test('Spectrum Clear is the only stylesheet loaded by authenticated pages', () =
 test('login and public subscription pages use the same design system', () => {
   for (const file of ['views/login.ejs', 'views/open_sub.ejs']) {
     const source = read(file);
-    assert.match(source, /\/css\/spectrum-clear\.css\?v=250/);
+    assert.match(source, /\/css\/spectrum-clear\.css\?v=251/);
     assert.match(source, /class="[^"]*nexus-spectrum/);
     assert.doesNotMatch(source, /\/css\/(?:style|redesign|nexus-ui|branding|stage\d+)\.css/);
   }
@@ -130,4 +130,23 @@ test('routing offers current Russia geodata source and manual catalog refresh', 
   assert.match(app, /'ru-whitelist'/);
   assert.match(routing, /option value="russia"/);
   assert.match(routing, /loadGeodataCatalog\(true\)/);
+});
+
+test('2.5.1 client bulk metadata and helper restart controls remain wired end to end', () => {
+  const app = read('app.js');
+  const clients = read('views/clients.ejs');
+  const redirects = read('views/redirects.ejs');
+  const forwarder = read('scripts/forwarder.sh');
+  const installer = read('install.sh');
+  const css = read('public/css/spectrum-clear.css');
+  assert.match(clients, /name="group_id"[\s\S]{0,500}name="tag_ids"/);
+  assert.match(clients, /Группа \/ метки/);
+  assert.match(clients, /class="modern-term/);
+  assert.doesNotMatch(clients, /secondaryText[\s\S]{0,180}client\.sub_slug/);
+  assert.match(app, /app\.post\('\/clients\/apply-to-node'[\s\S]{0,2500}client_tag_assignments/);
+  assert.match(app, /app\.post\('\/redirects\/helper\/restart\.json'/);
+  assert.match(redirects, /id="redirectRestartHelper"/);
+  assert.match(forwarder, /redirect_helper_restart\.request/);
+  assert.match(installer, /PathExists=.*redirect_helper_restart\.request/);
+  assert.match(css, /2\.5\.1 final cascade/);
 });

@@ -6,7 +6,7 @@
 
 Nexus Panel объединяет узлы **3x-ui** и **Remnawave** в одной панели: клиенты, подписки, лимиты, трафик, маршрутизация, перенаправление, Telegram и резервные копии.
 
-[![Version](https://img.shields.io/badge/version-2.5.0-blue)](https://github.com/dagmagnat/Nexus-Panel)
+[![Version](https://img.shields.io/badge/version-2.5.1-blue)](https://github.com/dagmagnat/Nexus-Panel)
 ![Node.js](https://img.shields.io/badge/node-%3E%3D22-gray)
 ![License](https://img.shields.io/badge/license-MIT-gray)
 
@@ -66,10 +66,9 @@ curl -fsSL https://raw.githubusercontent.com/dagmagnat/Nexus-Panel/main/bootstra
 
 ## Подписки и трафик
 
-В карточке клиента используются два разных адреса:
+Один адрес `/json/<slug>` работает в двух режимах: при обычном открытии в браузере он показывает фирменную страницу подписки, а VPN-приложение получает исходную JSON-конфигурацию. Это действует и для старых ссылок с `?raw=1`. Чтобы именно скачать JSON в браузере, добавьте `?download=1`.
 
-- «Открыть» ведёт на фирменную страницу `/open/<slug>`;
-- «JSON» или адрес с `?raw=1` отдаёт файл конфигурации приложению и поэтому может скачиваться браузером.
+«Открыть» по-прежнему ведёт прямо на `/open/<slug>`.
 
 В «Настройки → Общие настройки» параметр «Показывать расход ГБ и срок в подписках» управляет только отображением цифр. Даже если показ выключен, заданные лимиты продолжают применяться.
 

@@ -1,6 +1,6 @@
 {
   "name": "nexus-panel",
-  "version": "2.5.0",
+  "version": "2.5.1",
   "description": "Nexus Panel — 3x-ui and Remnawave aggregation panel with exact inbound sync, subscriptions and traffic monitoring",
   "homepage": "https://github.com/dagmagnat/Nexus-Panel#readme",
   "bugs": {

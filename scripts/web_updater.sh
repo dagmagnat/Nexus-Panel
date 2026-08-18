@@ -9,6 +9,7 @@ STATUS_FILE="$DATA_DIR/project_update_status.json"
 LOCK_DIR="$DATA_DIR/project_update.lock"
 SLEEP_SEC="${SLEEP_SEC:-3}"
 BACKUP_DIR="${BACKUP_DIR:-/opt/3xui-backups}"
+FORWARDER_SERVICE_NAME="${FORWARDER_SERVICE_NAME:-3xui-aggregator-forwarder}"
 
 mkdir -p "$DATA_DIR" "$BACKUP_DIR"
 
@@ -122,6 +123,7 @@ run_once() {
 
   chmod +x "$src/install.sh" || true
   if env APP_DIR="$APP_DIR" AGG_INSTANCE="$AGG_INSTANCE" BACKUP_DIR="$BACKUP_DIR" bash "$src/install.sh" --update-files-only >>"$log" 2>&1; then
+    systemctl restart "${FORWARDER_SERVICE_NAME}.service" >>"$log" 2>&1 || true
     write_status success "Обновление успешно произведено" "" "$(tail -n 80 "$log" 2>/dev/null || true)" "$archive_url"
     mv -f "$REQUEST_FILE" "$REQUEST_FILE.done.$(date +%s)" || true
   else

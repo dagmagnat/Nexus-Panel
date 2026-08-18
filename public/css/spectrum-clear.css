@@ -1727,6 +1727,99 @@ details[open] > summary { margin-bottom: 10px; color: var(--text-strong); }
   .login-brand small { display: none; }
 }
 
+/* Spectrum Clear 2.5.1 — compact client actions, metadata and scaled Full HD workspaces. */
+.bulk-apply-modal { width: min(760px, 100%); }
+.bulk-apply-grid { gap: 12px; }
+.bulk-apply-grid > .field { grid-column: 1 / -1; }
+.bulk-apply-grid > .field.half { grid-column: span 6; }
+.bulk-apply-tags { min-height: 46px; padding: 9px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface); }
+.bulk-apply-modal .modal-actions { justify-content: flex-start; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+.bulk-apply-modal .modal-actions .btn-main { min-width: 190px; }
+
+.existing-client-editor-modal { overflow-x: clip; }
+.client-editor-form .node-bulk-head { align-items: center; }
+.client-editor-form .node-select-actions { display: grid; grid-template-columns: repeat(2, minmax(128px, 1fr)); gap: 8px; }
+.client-editor-form .node-select-actions button { min-width: 128px; min-height: 40px; white-space: nowrap; }
+.client-editor-save-actions { justify-content: flex-start !important; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+.client-editor-save-actions .btn-main { min-width: 190px !important; }
+.client-editor-account-actions { display: flex; align-items: end; gap: 10px; margin-top: 12px; padding-top: 14px; border-top: 1px solid var(--line); }
+.existing-client-editor-modal .client-editor-account-actions .extend-form { display: grid; width: auto; margin: 0; gap: 5px; }
+.existing-client-editor-modal .client-editor-account-actions .extend-form .stretch-row { grid-template-columns: 92px 112px; gap: 8px; }
+.client-editor-toggle-form { margin: 0; }
+.client-editor-toggle-form button { min-width: 190px; min-height: 40px; }
+
+.clients-modern-table { width: 100%; min-width: 1050px; table-layout: fixed; }
+.clients-modern-table th:nth-child(1), .clients-modern-table td:nth-child(1) { width: 42px; }
+.clients-modern-table th:nth-child(2), .clients-modern-table td:nth-child(2) { width: 132px; }
+.clients-modern-table th:nth-child(3), .clients-modern-table td:nth-child(3) { width: 78px; }
+.clients-modern-table th:nth-child(4), .clients-modern-table td:nth-child(4) { width: 104px; }
+.clients-modern-table th:nth-child(5), .clients-modern-table td:nth-child(5) { width: 148px; }
+.clients-modern-table th:nth-child(6), .clients-modern-table td:nth-child(6) { width: 165px; }
+.clients-modern-table th:nth-child(7), .clients-modern-table td:nth-child(7) { width: 188px; }
+.clients-modern-table th:nth-child(8), .clients-modern-table td:nth-child(8) { width: 130px; }
+.clients-modern-table th:nth-child(9), .clients-modern-table td:nth-child(9) { width: 92px; }
+.clients-modern-table tbody tr { height: 68px; }
+.clients-modern-table td { vertical-align: middle; }
+.modern-label-cell { overflow: hidden; white-space: nowrap; }
+.modern-label-cell .client-group-chip,
+.modern-label-cell .client-tag-chip,
+.modern-label-cell .client-label-more { display: inline-flex; max-width: 78px; margin: 1px 3px 1px 0; overflow: hidden; align-items: center; text-overflow: ellipsis; vertical-align: middle; white-space: nowrap; }
+.modern-label-cell .client-label-more { padding: 3px 6px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; }
+.modern-term { display: inline-flex; min-height: 28px; align-items: center; white-space: nowrap; }
+
+.redirect-refresh-controls { flex-wrap: wrap; justify-content: flex-end; }
+.redirect-restart-button { min-width: 142px; white-space: nowrap; }
+
+.compact-probe-form .probe-control-card { grid-template-columns: minmax(0, 1fr) 150px; max-width: 860px; margin: 14px auto 0; }
+.compact-probe-form .probe-submit { width: 100%; min-height: 44px; }
+.redirect-status-card .redirect-refresh-title { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.redirect-status-card .redirect-refresh-controls { display: grid; width: 100%; grid-template-columns: minmax(124px, 1fr) 36px auto 64px; justify-content: stretch; }
+.diagnostics-discrepancy-card { margin-top: 0; }
+
+.routing-summary-card .kv-item { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+.routing-summary-card .kv-item > * { min-width: 0; max-width: 100%; }
+.routing-summary-card code,
+.routing-summary-card pre { max-width: 100%; overflow-wrap: anywhere; white-space: pre-wrap; word-break: break-word; }
+.compact-probe-form .probe-control-card { grid-template-columns: minmax(0, 1fr) 150px; max-width: 860px; }
+.compact-probe-form .probe-control-card > .field { grid-column: auto; }
+.compact-probe-form .probe-submit { width: 100%; min-height: 44px; }
+
+@media (min-width: 901px) and (max-width: 1450px) {
+  .page-clients .clients-modern-table { min-width: 980px; font-size: 10px; }
+  .page-clients .clients-modern-table th:nth-child(2), .page-clients .clients-modern-table td:nth-child(2) { width: 116px; }
+  .page-clients .clients-modern-table th:nth-child(5), .page-clients .clients-modern-table td:nth-child(5) { width: 132px; }
+  .page-clients .clients-modern-table th:nth-child(6), .page-clients .clients-modern-table td:nth-child(6) { width: 140px; }
+  .page-clients .clients-modern-table th:nth-child(7), .page-clients .clients-modern-table td:nth-child(7) { width: 166px; }
+  .page-clients .modern-client-actions { gap: 4px; }
+  .page-clients .modern-client-actions button { width: 25px; height: 25px; }
+  .routing-page-grid { grid-template-columns: minmax(0, 1.75fr) minmax(320px, 1fr) !important; }
+}
+
+@media (max-width: 900px) {
+  .bulk-apply-grid > .field.half { grid-column: 1 / -1; }
+  .bulk-apply-modal .modal-actions .btn-main { width: 100%; }
+  .client-editor-form .node-select-actions { width: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .client-editor-form .node-select-actions button { min-width: 0; }
+  .client-editor-account-actions { display: grid; grid-template-columns: 1fr; align-items: stretch; }
+  .existing-client-editor-modal .client-editor-account-actions .extend-form { width: 100%; }
+  .existing-client-editor-modal .client-editor-account-actions .extend-form .stretch-row { grid-template-columns: minmax(0, 1fr) 112px; }
+  .compact-probe-form .probe-control-card { grid-template-columns: minmax(0, 1fr) 128px; }
+  .client-editor-toggle-form button { width: 100%; min-width: 0; }
+  .redirect-refresh-controls { display: grid; width: 100%; grid-template-columns: minmax(0, 1fr) auto auto; }
+  .redirect-restart-button { min-width: 0; }
+  .compact-probe-form .probe-control-card { grid-template-columns: minmax(0, 1fr) 128px; max-width: none; }
+  .diagnostic-table-wrap td::before { content: attr(data-label); color: var(--muted); font-size: 9px; }
+}
+
+@media (max-width: 600px) {
+  .client-editor-save-actions .btn-main { width: 100%; min-width: 0 !important; }
+  .existing-client-editor-modal .client-editor-account-actions .extend-form .stretch-row { grid-template-columns: minmax(0, 1fr) 104px; }
+  .compact-probe-form .probe-control-card { grid-template-columns: minmax(0, 1fr); }
+  .redirect-refresh-controls { grid-template-columns: 1fr auto; }
+  .redirect-restart-button { grid-column: 1 / -1; width: 100%; }
+  .compact-probe-form .probe-control-card { grid-template-columns: minmax(0, 1fr); }
+}
+
 /* Nexus 2.5 — compact actions, clipped dialogs and live-workspace polish. */
 .modal-close,
 .nodes-detail-close,
@@ -2541,4 +2634,31 @@ body.client-modal-open { overflow: hidden; overscroll-behavior: none; }
   .existing-client-editor-modal .extend-form + .modal-actions button { width: 100%; }
   .top-usage-grid { grid-template-columns: 1fr 1fr; }
   .qr-pair-view { grid-template-columns: 1fr; }
+}
+
+/* 2.5.1 final cascade: intentionally last, after legacy patch compatibility. */
+.client-editor-form .node-bulk-head { align-items: center; }
+.client-editor-form .node-select-actions { display: grid; grid-template-columns: repeat(2, minmax(128px, 1fr)); gap: 8px; }
+.client-editor-form .node-select-actions button { min-width: 128px; min-height: 40px; white-space: nowrap; }
+.client-editor-form > .client-editor-save-actions { justify-content: flex-start; }
+.client-editor-form > .client-editor-save-actions .btn-main { min-width: 190px; }
+.existing-client-editor-modal .client-editor-account-actions .extend-form { display: grid; width: auto; margin: 0; gap: 5px; }
+.existing-client-editor-modal .client-editor-account-actions .extend-form .stretch-row { grid-template-columns: 92px 112px; gap: 8px; }
+.routing-summary-card .kv-item { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+.routing-summary-card .kv-item > * { min-width: 0; max-width: 100%; }
+.routing-summary-card code,
+.routing-summary-card pre { max-width: 100%; overflow-wrap: anywhere; white-space: pre-wrap; word-break: break-word; }
+
+@media (max-width: 900px) {
+  .mobile-client-tabs { display: grid !important; grid-template-columns: repeat(4, minmax(0, 1fr)); overflow: hidden; }
+  .mobile-client-tabs button { width: auto; min-width: 0; flex: none; justify-self: stretch; }
+  .client-editor-form .node-select-actions { width: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .client-editor-form .node-select-actions button { min-width: 0; }
+  .existing-client-editor-modal .client-editor-account-actions .extend-form { width: 100%; }
+  .existing-client-editor-modal .client-editor-account-actions .extend-form .stretch-row { grid-template-columns: minmax(0, 1fr) 112px; }
+}
+
+@media (max-width: 600px) {
+  .client-editor-form > .client-editor-save-actions .btn-main { width: 100%; min-width: 0; }
+  .existing-client-editor-modal .client-editor-account-actions .extend-form .stretch-row { grid-template-columns: minmax(0, 1fr) 104px; }
 }

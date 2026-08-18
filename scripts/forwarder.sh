@@ -6,6 +6,7 @@ DATA_DIR="${DATA_DIR:-$APP_DIR/data}"
 RULES_FILE="$DATA_DIR/redirect_rules.json"
 STATUS_FILE="$DATA_DIR/redirect_status.json"
 HOST_IPS_FILE="$DATA_DIR/redirect_host_ips.json"
+RESTART_FILE="$DATA_DIR/redirect_helper_restart.request"
 CHAIN_NAT="AGG_REDIRECT"
 CHAIN_FWD="AGG_REDIRECT_FWD"
 CHAIN_POST="AGG_REDIRECT_POST"
@@ -332,7 +333,11 @@ loop() {
     write_host_ips
     local hash="none"
     [ -f "$RULES_FILE" ] && hash="$(sha256sum "$RULES_FILE" | awk '{print $1}')"
-    if [ "$hash" != "$last_hash" ]; then
+    if [ -f "$RESTART_FILE" ]; then
+      rm -f "$RESTART_FILE"
+      if apply_rules; then :; else write_status false "Failed to restart redirect helper"; fi
+      last_hash="$hash"
+    elif [ "$hash" != "$last_hash" ]; then
       if apply_rules; then :; else write_status false "Failed to apply redirect rules"; fi
       last_hash="$hash"
     else

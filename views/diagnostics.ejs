@@ -102,7 +102,7 @@
           <thead><tr><th>Клиент</th><th>Узел</th><th>Проблема</th></tr></thead>
           <tbody>
           <% discrepancies.forEach(item => { %>
-            <tr><td><%= item.clientTitle || item.login || item.client_id %></td><td><%= item.nodeTitle || item.node_name || item.node_id %></td><td><%= item.message %></td></tr>
+            <tr><td data-label="Клиент"><%= item.clientTitle || item.login || item.client_id %></td><td data-label="Узел"><%= item.nodeTitle || item.node_name || item.node_id %></td><td data-label="Проблема"><%= item.message %></td></tr>
           <% }) %>
           </tbody>
         </table>
@@ -126,7 +126,7 @@
           <thead><tr><th>Клиент</th><th>Трафик</th><th>Средний расход</th><th>Узлы</th></tr></thead>
           <tbody>
           <% suspicious.rows.filter(c => c.suspicious).forEach(c => { %>
-            <tr><td><%= c.login || c.display_name || c.client_id %></td><td><%= c.usedText || c.totalText || c.used || "-" %></td><td><%= c.dailyText || c.thresholdText || "-" %></td><td><%= c.nodesText || c.nodes || "-" %></td></tr>
+            <tr><td data-label="Клиент"><%= c.login || c.display_name || c.client_id %></td><td data-label="Трафик"><%= c.usedText || c.totalText || c.used || "-" %></td><td data-label="Средний расход"><%= c.dailyText || c.thresholdText || "-" %></td><td data-label="Узлы"><%= c.nodesText || c.nodes || "-" %></td></tr>
           <% }) %>
           </tbody>
         </table>

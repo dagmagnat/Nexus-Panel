@@ -243,6 +243,25 @@ test('subscription sums unlimited-node traffic once and exposes a branded browse
   assert.match(html, /v2RayTun/);
   assert.match(html, /Hiddify/);
 
+  response = await fetch(`http://127.0.0.1:${app.port}/json/portal-user?raw=1`, {
+    redirect: 'manual',
+    headers: { Accept: 'text/html,application/xhtml+xml' }
+  });
+  assert.equal(response.status, 302);
+  assert.equal(response.headers.get('location'), `http://127.0.0.1:${app.port}/open/portal-user`);
+
+  response = await fetch(`http://127.0.0.1:${app.port}/json/portal-user`, {
+    headers: { Accept: 'application/json' }
+  });
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get('content-type') || '', /application\/json/);
+
+  response = await fetch(`http://127.0.0.1:${app.port}/json/portal-user?download=1`, {
+    headers: { Accept: 'text/html,application/xhtml+xml' }
+  });
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get('content-type') || '', /application\/json/);
+
   response = await fetch(`http://127.0.0.1:${app.port}/open/portal-user/status`, { headers: { Accept: 'application/json' } });
   assert.equal(response.status, 200);
   const status = await response.json();

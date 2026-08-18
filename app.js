@@ -4221,6 +4221,15 @@ function buildPublicOpenUrl(slug) {
   return `${getPublicSubBaseUrl()}/open/${slug}`;
 }
 
+function isSubscriptionBrowserNavigation(req) {
+  if (String(req.query.download || '') === '1') return false;
+  if (String(req.query.view || req.query.open || '') === '1') return true;
+  const fetchMode = String(req.headers['sec-fetch-mode'] || '').toLowerCase();
+  const fetchDest = String(req.headers['sec-fetch-dest'] || '').toLowerCase();
+  const accept = String(req.headers.accept || '').toLowerCase();
+  return fetchMode === 'navigate' || fetchDest === 'document' || accept.includes('text/html');
+}
+
 function getNexusBrandLogoUrl() {
   return `${getPublicSubBaseUrl()}/img/nexus-logo-512.png`;
 }
@@ -6000,6 +6009,7 @@ function clientHasActiveH1CloudSubscription(clientId) {
 const REDIRECT_RULES_FILE = path.join(DATA_DIR, 'redirect_rules.json');
 const REDIRECT_STATUS_FILE = path.join(DATA_DIR, 'redirect_status.json');
 const REDIRECT_HOST_IPS_FILE = path.join(DATA_DIR, 'redirect_host_ips.json');
+const REDIRECT_RESTART_FILE = path.join(DATA_DIR, 'redirect_helper_restart.request');
 
 function normalizeRedirectProtocol(value) {
   const proto = String(value || 'tcp').toLowerCase().trim();
@@ -12489,6 +12499,49 @@ app.post('/redirects/helper/refresh.json', requireAuth, (req, res) => {
   }
 });
 
+app.post('/redirects/helper/restart.json', requireAuth, async (req, res) => {
+  try {
+    const desired = exportRedirectRulesForHelper();
+    const requestedAt = Date.now();
+    writeJsonFileSafe(REDIRECT_RESTART_FILE, {
+      requestedAt: new Date(requestedAt).toISOString(),
+      requestedBy: req.session?.userId || 'panel',
+      rulesCount: Array.isArray(desired.rules) ? desired.rules.length : 0
+    });
+
+    let status = getRedirectStatus();
+    let applied = false;
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      await sleepMs(500);
+      status = getRedirectStatus();
+      try {
+        const statusMtime = fs.existsSync(REDIRECT_STATUS_FILE) ? fs.statSync(REDIRECT_STATUS_FILE).mtimeMs : 0;
+        applied = statusMtime >= requestedAt && !status.stale;
+      } catch (_) {
+        applied = false;
+      }
+      if (applied) break;
+    }
+    updateRedirectRulesFromStatus();
+
+    if (!applied) {
+      return res.status(202).json({
+        ok: false,
+        pending: true,
+        message: 'Команда передана helper, но новый статус ещё не получен. Проверь состояние через несколько секунд.',
+        status
+      });
+    }
+    return res.json({
+      ok: status.ok !== false,
+      message: status.message || 'Helper перезапущен, правила применены повторно.',
+      status
+    });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: String(err.message || err) });
+  }
+});
+
 
 app.post('/redirects/check', requireAuth, async (req, res) => {
   try {
@@ -14649,15 +14702,59 @@ app.post('/clients/apply-to-node', requireAuth, async (req, res) => {
     ids = uniqueList(ids.map(Number).filter(id => Number.isInteger(id) && id > 0));
     if (!ids.length) throw new Error('Сначала выберите хотя бы одного клиента. Массовое применение ко всем без явного выбора отключено.');
 
-    const nodeId = Number(req.body.node_id);
-    const node = db.prepare('SELECT * FROM nodes WHERE id = ?').get(nodeId);
-    if (!node) throw new Error('Узел не найден');
+    const nodeId = Number(req.body.node_id || 0);
+    const node = nodeId > 0 ? db.prepare('SELECT * FROM nodes WHERE id = ?').get(nodeId) : null;
+    if (nodeId > 0 && !node) throw new Error('Узел не найден');
+
+    const groupValue = String(req.body.group_id || '').trim();
+    const changeGroup = groupValue !== '';
+    const groupId = groupValue === 'none' ? null : (changeGroup ? normalizeClientGroupId(groupValue) : null);
+    if (changeGroup && groupValue !== 'none' && !groupId) throw new Error('Группа не найдена');
+
+    let tagIds = req.body.tag_ids || [];
+    if (!Array.isArray(tagIds)) tagIds = [tagIds];
+    tagIds = normalizePostedNodeIds(tagIds);
+    const validTagIds = tagIds.length
+      ? db.prepare(`SELECT id FROM client_tags WHERE id IN (${tagIds.map(() => '?').join(',')})`).all(...tagIds).map(row => Number(row.id))
+      : [];
+    if (tagIds.length !== validTagIds.length) throw new Error('Одна из выбранных меток больше не существует');
+
+    if (!node && !changeGroup && !validTagIds.length) {
+      throw new Error('Выберите узел, группу или хотя бы одну метку');
+    }
+
+    const applyMetadata = db.transaction(() => {
+      const existingIds = db.prepare(`SELECT id FROM clients WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids).map(row => Number(row.id));
+      if (changeGroup) {
+        const updateGroup = db.prepare('UPDATE clients SET group_id = ? WHERE id = ?');
+        for (const clientId of existingIds) updateGroup.run(groupId, clientId);
+      }
+      if (validTagIds.length) {
+        const insertTag = db.prepare('INSERT OR IGNORE INTO client_tag_assignments (client_id, tag_id) VALUES (?, ?)');
+        for (const clientId of existingIds) {
+          for (const tagId of validTagIds) insertTag.run(clientId, tagId);
+        }
+      }
+      return existingIds.length;
+    });
+
+    if (!node) {
+      const updated = applyMetadata();
+      const actions = [];
+      if (changeGroup) actions.push(groupId ? 'группа назначена' : 'группа снята');
+      if (validTagIds.length) actions.push(`добавлено меток: ${validTagIds.length}`);
+      return res.redirect('/clients?message=' + encodeURIComponent(`Обновлено клиентов: ${updated}. ${actions.join(', ')}.`));
+    }
 
     const nodeName = getNodePublicName(node);
     await finishLongPost(req, res, '/clients',
-      operation => applyNodeLimitsToSelectedClients(node, ids, { traffic_gb: req.body.traffic_gb, limit_ip: req.body.limit_ip }, operation),
-      result => `Выбранные клиенты применены к узлу ${nodeName}. Запрошено: ${result.requested}, найдено: ${result.totalClients}, обработано: ${result.completed || 0}, пропущено: ${result.skipped || 0}, создано: ${result.remoteCreated}, обновлено: ${result.remoteUpdated}, новых связей: ${result.mappingsCreated}, уже отсутствовали локально: ${result.missingClients || 0}, ошибок: ${result.failed}`,
-      { label: `Применение выбранных клиентов: ${nodeName}` }
+      async operation => {
+        const metadataUpdated = applyMetadata();
+        const nodeResult = await applyNodeLimitsToSelectedClients(node, ids, { traffic_gb: req.body.traffic_gb, limit_ip: req.body.limit_ip }, operation);
+        return { ...nodeResult, metadataUpdated };
+      },
+      result => `Выбранные клиенты применены к узлу ${nodeName}. Метаданные обновлены: ${result.metadataUpdated || 0}, обработано на узле: ${result.completed || 0}, создано: ${result.remoteCreated}, обновлено: ${result.remoteUpdated}, ошибок: ${result.failed}`,
+      { label: `Массовое применение: ${nodeName}` }
     );
   } catch (err) {
     res.redirect('/clients?error=' + encodeURIComponent(String(err.message || err)));
@@ -16550,11 +16647,11 @@ app.get('/json/:slug', async (req, res) => {
 
   await enforceExpiredClientRemoteState(client);
 
-  // Stage102: /json is an API endpoint and must never silently return HTML.
-  // Happ on Android/iOS may use a Safari/Chrome-like User-Agent; the old UA
-  // heuristic misclassified the app as a browser and caused a JSON parse error.
-  // The human-friendly page remains available via /open/:slug or ?view=1.
-  if (String(req.query.view || req.query.open || '') === '1') {
+  // A real browser navigation opens the branded subscription portal, including
+  // old links containing ?raw=1. Subscription clients normally fetch with
+  // Sec-Fetch-Mode other than "navigate" (or without Sec-Fetch headers) and
+  // continue receiving JSON. ?download=1 explicitly forces the raw response.
+  if (isSubscriptionBrowserNavigation(req)) {
     return res.redirect(302, buildPublicOpenUrl(client.sub_slug));
   }
 

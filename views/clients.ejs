@@ -526,9 +526,9 @@
             <th>В сети</th>
             <th>Клиент</th>
             <th>Комментарий</th>
+            <th>Группа / метки</th>
             <th>Трафик</th>
-            <th>Остаток</th>
-            <th>Длительность</th>
+            <th>Срок</th>
           </tr>
         </thead>
         <tbody>
@@ -545,7 +545,7 @@
           const displayTitle = compactTitle(client);
           const secondaryText = String(displayTitle || '').trim() !== String(client.login || '').trim()
             ? client.login
-            : String(client.sub_slug || client.uuid || '').slice(0, 18);
+            : '';
         %>
           <tr
             data-client-entry
@@ -597,16 +597,20 @@
             </td>
             <td class="modern-client-identity">
               <button type="button" data-client-quick="<%= client.id %>"><%= displayTitle %></button>
-              <small><%= secondaryText || '—' %></small>
-              <% if (client.group_name || (client.tags || []).length) { %><div class="client-meta-chips"><% if (client.group_name) { %><span class="client-group-chip" style="--chip-color:<%= client.group_color %>"><%= client.group_name %></span><% } %><% (client.tags || []).forEach(tag => { %><span class="client-tag-chip" style="--chip-color:<%= tag.color %>"><%= tag.name %></span><% }) %></div><% } %>
+              <% if (secondaryText) { %><small><%= secondaryText %></small><% } %>
             </td>
             <td class="modern-comment-cell" title="<%= client.comment || 'Комментарий не задан' %>"><%= client.comment || '—' %></td>
+            <td class="modern-label-cell">
+              <% if (client.group_name) { %><span class="client-group-chip" style="--chip-color:<%= client.group_color %>" title="Группа: <%= client.group_name %>"><%= client.group_name %></span><% } %>
+              <% (client.tags || []).slice(0, 2).forEach(tag => { %><span class="client-tag-chip" style="--chip-color:<%= tag.color %>" title="Метка: <%= tag.name %>"><%= tag.name %></span><% }) %>
+              <% if ((client.tags || []).length > 2) { %><span class="client-label-more" title="Дополнительных меток: <%= client.tags.length - 2 %>">+<%= client.tags.length - 2 %></span><% } %>
+              <% if (!client.group_name && !(client.tags || []).length) { %><span class="modern-label-empty">—</span><% } %>
+            </td>
             <td class="modern-traffic-cell <%= trafficLimitGb > 0 ? '' : (clientLimitedNodes(client).length ? 'is-per-node' : 'is-unlimited') %>" data-modern-traffic-client="<%= client.id %>" data-traffic-limit-gb="<%= trafficLimitGb %>">
               <div><span><%= trafficLimitGb > 0 ? formatClientBytes(usedBytes) : clientTrafficHeadline(client) %></span><b><%= trafficLimitGb > 0 ? trafficLimitGb + ' ГБ' : (clientLimitedNodes(client).length ? 'по узлам' : '∞') %></b></div>
               <% if (trafficLimitGb > 0) { %><div class="modern-traffic-track"><i style="width:<%= clientTrafficPercent(client).toFixed(1) %>%"></i></div><% } %>
             </td>
-            <td><span class="modern-remaining <%= remaining.key %>"><%= remaining.text %></span></td>
-            <td><span class="modern-duration"><%= Number(client.duration_days || 0) > 0 ? Number(client.duration_days) + ' дн.' : '∞' %></span></td>
+            <td><span class="modern-term <%= remaining.key %>" title="Действует до <%= expiryDateTime(client.expiry_time) %>"><%= termShort(client) %><%= termShort(client) === '∞' ? '' : ' дн.' %></span></td>
           </tr>
         <% }) %>
         </tbody>
@@ -952,17 +956,18 @@
 </div>
 
 <div id="applyAllModal" class="modal hidden" onclick="closeModalById(event, 'applyAllModal')">
-  <div class="modal-card editor-modal" onclick="event.stopPropagation()">
+  <div class="modal-card editor-modal bulk-apply-modal" onclick="event.stopPropagation()">
     <button type="button" class="modal-close" onclick="event.preventDefault(); event.stopPropagation(); hideModalById('applyAllModal'); return false;">×</button>
     <h2>Применить к выбранным</h2>
-    <p class="muted">На выбранном узле будут созданы отсутствующие клиенты и обновлены уже существующие. Пустые лимиты сохраняют текущие значения клиента; 0 = безлимит. Потраченный трафик не сбрасывается.</p>
+    <p class="muted">Узел, группа и метки применяются независимо. Оставьте поле пустым, если его не нужно менять. Метки добавляются к уже назначенным.</p>
     <div class="alert ok" id="applySelectedSummary">Выбрано клиентов: 0</div>
     <p class="muted" id="applySelectedNames"></p>
-    <form id="applySelectedForm" method="post" action="/clients/apply-to-node" class="js-long-action" data-loading-title="Применяю выбранных клиентов" data-loading-text="На выбранном узле создаются или обновляются только явно отмеченные клиенты." onsubmit="return prepareApplySelectedSubmit(event)">
-      <div class="form-grid clean-form">
+    <form id="applySelectedForm" method="post" action="/clients/apply-to-node" class="js-long-action" data-loading-title="Применяю изменения" data-loading-text="Обновляю выбранных клиентов, их группу, метки и при необходимости выбранный узел." onsubmit="return prepareApplySelectedSubmit(event)">
+      <div class="form-grid clean-form bulk-apply-grid">
         <div class="field">
-          <label>Узел, куда добавить или обновить клиентов</label>
-          <select name="node_id" required>
+          <label>Узел</label>
+          <select name="node_id">
+            <option value="">Узел не выбран — не менять узлы</option>
             <% nodes.forEach(node => { %>
               <option value="<%= node.id %>" data-node-type="<%= String(node.node_type || '3xui') %>"><%= flagText(node.country_code, node.country_flag, node.country_name_ru || node.name) %> <%= nodeName(node) %> (<%= nodeEndpointLabel(node) %>)</option>
             <% }) %>
@@ -976,9 +981,25 @@
           <label>Лимит ГБ</label>
           <input name="traffic_gb" type="number" min="0" step="1" placeholder="сохранить текущий" />
         </div>
+        <div class="field">
+          <label>Группа</label>
+          <select name="group_id">
+            <option value="">Группу не менять</option>
+            <option value="none">Убрать из группы</option>
+            <% clientGroups.forEach(group => { %><option value="<%= group.id %>"><%= group.name %></option><% }) %>
+          </select>
+        </div>
+        <div class="field">
+          <label>Добавить метки</label>
+          <div class="client-label-picker bulk-apply-tags">
+            <% if (!clientTags.length) { %><small class="hint">Метки ещё не созданы.</small><% } %>
+            <% clientTags.forEach(tag => { %><label><input type="checkbox" name="tag_ids" value="<%= tag.id %>"><span class="client-tag-chip" style="--chip-color:<%= tag.color %>"><%= tag.name %></span></label><% }) %>
+          </div>
+          <% if (clientTags.length) { %><small class="hint">Отмеченные метки добавятся; текущие метки клиентов сохранятся.</small><% } %>
+        </div>
       </div>
       <div class="modal-actions">
-        <button type="submit" class="btn-main">Применить к выбранным</button>
+        <button type="submit" class="btn-main">Применить изменения</button>
       </div>
     </form>
   </div>
@@ -1106,26 +1127,26 @@
             </label>
           <% }) %>
         </div>
-        <div class="modal-actions">
-          <button type="submit" class="btn-main">Сохранить</button>
+        <div class="modal-actions client-editor-save-actions">
+          <button type="submit" class="btn-main">Сохранить изменения</button>
         </div>
       </form>
 
-      <hr class="soft-sep" />
+      <div class="client-editor-account-actions">
+        <form method="post" action="/clients/<%= client.id %>/extend" class="extend-form js-long-action" data-loading-title="Продлеваю клиента" data-loading-text="Срок продлевается на узлах клиента.">
+          <input type="hidden" name="back" value="<%= clientReturnPath %>" />
+          <label>Продлить срок</label>
+          <div class="btn-row stretch-row">
+            <input name="days" type="number" min="1" value="30" />
+            <button type="submit" class="btn-main">Продлить</button>
+          </div>
+        </form>
 
-      <form method="post" action="/clients/<%= client.id %>/extend" class="extend-form js-long-action" data-loading-title="Продлеваю клиента" data-loading-text="Срок продлевается на узлах клиента.">
-        <input type="hidden" name="back" value="<%= clientReturnPath %>" />
-        <label>Продлить срок</label>
-        <div class="btn-row stretch-row">
-          <input name="days" type="number" min="1" value="30" />
-          <button type="submit" class="btn-main">Продлить</button>
-        </div>
-      </form>
-
-      <form method="post" action="/clients/<%= client.id %>/toggle" class="modal-actions js-long-action" data-loading-title="Меняю статус" data-loading-text="Статус клиента применяется на узлах.">
-        <input type="hidden" name="back" value="<%= clientReturnPath %>" />
-        <button type="submit" class="<%= clientEnabled ? 'btn-danger' : 'btn-secondary' %>"><%= clientEnabled ? 'Отключить клиента' : 'Включить клиента' %></button>
-      </form>
+        <form method="post" action="/clients/<%= client.id %>/toggle" class="js-long-action client-editor-toggle-form" data-loading-title="Меняю статус" data-loading-text="Статус клиента применяется на узлах.">
+          <input type="hidden" name="back" value="<%= clientReturnPath %>" />
+          <button type="submit" class="<%= clientEnabled ? 'btn-danger' : 'btn-secondary' %>"><%= clientEnabled ? 'Отключить клиента' : 'Включить клиента' %></button>
+        </form>
+      </div>
     </div>
   </div>
 <% }) %>
@@ -1674,10 +1695,24 @@ function prepareApplySelectedSubmit(event) {
   }
   const form = event?.currentTarget || document.getElementById('applySelectedForm');
   fillApplySelectedClientIds(form, selected);
-  const nodeTitle = form?.querySelector('select[name="node_id"]')?.selectedOptions?.[0]?.textContent?.trim() || 'выбранный узел';
+  const nodeSelect = form?.querySelector('select[name="node_id"]');
+  const groupSelect = form?.querySelector('select[name="group_id"]');
+  const selectedTags = Array.from(form?.querySelectorAll('input[name="tag_ids"]:checked') || []);
+  const hasNode = Boolean(nodeSelect?.value);
+  const hasGroupChange = Boolean(groupSelect?.value);
+  const hasTags = selectedTags.length > 0;
+  if (!hasNode && !hasGroupChange && !hasTags) {
+    event?.preventDefault?.();
+    showToast('Выберите узел, группу или хотя бы одну метку');
+    return false;
+  }
+  const changes = [];
+  if (hasNode) changes.push(`узел: ${nodeSelect.selectedOptions?.[0]?.textContent?.trim() || nodeSelect.value}`);
+  if (hasGroupChange) changes.push(`группа: ${groupSelect.selectedOptions?.[0]?.textContent?.trim() || groupSelect.value}`);
+  if (hasTags) changes.push(`метки: ${selectedTags.map(input => input.closest('label')?.textContent?.trim() || input.value).join(', ')}`);
   const names = getSelectedClientNames(selected, 6);
   const namesText = names.length ? `\n\nКлиенты: ${names.join(', ')}` : '';
-  return window.confirm(`Добавить или обновить ${selected.size} выбранных клиентов на узле «${nodeTitle}»?${namesText}`);
+  return window.confirm(`Применить изменения к ${selected.size} клиентам?\n${changes.join('\n')}${namesText}`);
 }
 window.openApplySelectedModal = openApplySelectedModal;
 window.prepareApplySelectedSubmit = prepareApplySelectedSubmit;

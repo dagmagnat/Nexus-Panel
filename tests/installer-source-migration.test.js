@@ -246,7 +246,7 @@ test('all public version sources identify the same release', () => {
   const packageLock = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package-lock.json'), 'utf8'));
   const update = JSON.parse(fs.readFileSync(path.join(projectRoot, 'update.json'), 'utf8'));
   const version = fs.readFileSync(path.join(projectRoot, 'VERSION'), 'utf8').trim();
-  assert.equal(packageJson.version, '2.5.0');
+  assert.equal(packageJson.version, '2.5.1');
   assert.equal(packageLock.version, packageJson.version);
   assert.equal(packageLock.packages[''].version, packageJson.version);
   assert.equal(update.version, packageJson.version);

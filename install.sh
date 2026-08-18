@@ -33,6 +33,7 @@ AGG_CONTAINER_NAME="3xui-aggregator"
 CADDY_CONTAINER_NAME="3xui-aggregator-caddy"
 COMPOSE_PROJECT_NAME="3xui-aggregator"
 FORWARDER_SERVICE_NAME="3xui-aggregator-forwarder"
+FORWARDER_RESTART_SERVICE_NAME="3xui-aggregator-forwarder-restart"
 UPDATER_SERVICE_NAME="3xui-aggregator-web-updater"
 INSTALLER_RAW_URL_DEFAULT="https://raw.githubusercontent.com/dagmagnat/Nexus-Panel/main/install.sh"
 REPO_URL="${REPO_URL_DEFAULT}"
@@ -299,7 +300,8 @@ refresh_runtime_paths() {
     AGG_CONTAINER_NAME="3xui-aggregator"
     CADDY_CONTAINER_NAME="3xui-aggregator-caddy"
     FORWARDER_SERVICE_NAME="3xui-aggregator-forwarder"
-UPDATER_SERVICE_NAME="3xui-aggregator-web-updater"
+    FORWARDER_RESTART_SERVICE_NAME="3xui-aggregator-forwarder-restart"
+    UPDATER_SERVICE_NAME="3xui-aggregator-web-updater"
   else
     APP_DIR="/opt/3xui-aggregator-${INSTANCE_NAME}"
     SOURCE_CONF="/etc/3xui-aggregator-${INSTANCE_NAME}-source.conf"
@@ -307,6 +309,7 @@ UPDATER_SERVICE_NAME="3xui-aggregator-web-updater"
     AGG_CONTAINER_NAME="3xui-aggregator-${INSTANCE_NAME}"
     CADDY_CONTAINER_NAME="3xui-aggregator-${INSTANCE_NAME}-caddy"
     FORWARDER_SERVICE_NAME="3xui-aggregator-${INSTANCE_NAME}-forwarder"
+    FORWARDER_RESTART_SERVICE_NAME="3xui-aggregator-${INSTANCE_NAME}-forwarder-restart"
     UPDATER_SERVICE_NAME="3xui-aggregator-${INSTANCE_NAME}-web-updater"
   fi
   ENV_FILE="$APP_DIR/.env"
@@ -1307,7 +1310,9 @@ install_forwarder_service() {
   # Убираем старые варианты сервиса, чтобы обновление не оставляло сломанную oneshot-версию.
   systemctl stop "${FORWARDER_SERVICE_NAME}.service" >/dev/null 2>&1 || true
   systemctl disable "${FORWARDER_SERVICE_NAME}.service" >/dev/null 2>&1 || true
+  systemctl disable --now "${FORWARDER_RESTART_SERVICE_NAME}.path" >/dev/null 2>&1 || true
   rm -f "/etc/systemd/system/${FORWARDER_SERVICE_NAME}.service"
+  rm -f "/etc/systemd/system/${FORWARDER_RESTART_SERVICE_NAME}.service" "/etc/systemd/system/${FORWARDER_RESTART_SERVICE_NAME}.path"
 
   cat > "/etc/systemd/system/${FORWARDER_SERVICE_NAME}.service" <<EOF
 [Unit]
@@ -1330,7 +1335,31 @@ RestartSec=3
 WantedBy=multi-user.target
 EOF
 
+  # Если основной helper остановлен, создание request-файла из панели всё равно
+  # запустит его через systemd. При работающем helper файл обрабатывается самим loop.
+  cat > "/etc/systemd/system/${FORWARDER_RESTART_SERVICE_NAME}.service" <<EOF
+[Unit]
+Description=Restart Nexus Panel traffic redirect helper (${INSTANCE_NAME})
+
+[Service]
+Type=oneshot
+ExecStart=/bin/systemctl restart ${FORWARDER_SERVICE_NAME}.service
+EOF
+
+  cat > "/etc/systemd/system/${FORWARDER_RESTART_SERVICE_NAME}.path" <<EOF
+[Unit]
+Description=Watch Nexus Panel redirect helper restart request (${INSTANCE_NAME})
+
+[Path]
+PathExists=$APP_DIR/data/redirect_helper_restart.request
+Unit=${FORWARDER_RESTART_SERVICE_NAME}.service
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
   systemctl daemon-reload || true
+  systemctl enable --now "${FORWARDER_RESTART_SERVICE_NAME}.path" >/dev/null 2>&1 || true
   if systemctl enable --now "${FORWARDER_SERVICE_NAME}.service" >/dev/null 2>&1; then
     say "Host-helper установлен и запущен: ${FORWARDER_SERVICE_NAME}.service"
   else
@@ -1363,6 +1392,7 @@ EnvironmentFile=-$APP_DIR/.env
 Environment=APP_DIR=$APP_DIR
 Environment=AGG_INSTANCE=$INSTANCE_NAME
 Environment=BACKUP_DIR=$BACKUP_DIR
+Environment=FORWARDER_SERVICE_NAME=$FORWARDER_SERVICE_NAME
 Environment=SLEEP_SEC=3
 ExecStart=$APP_DIR/scripts/web_updater.sh loop
 Restart=always
@@ -1408,7 +1438,9 @@ stop_existing_aggregator_stack() {
 
   docker compose down --remove-orphans || true
   systemctl disable --now "${FORWARDER_SERVICE_NAME}.service" >/dev/null 2>&1 || true
+  systemctl disable --now "${FORWARDER_RESTART_SERVICE_NAME}.path" >/dev/null 2>&1 || true
   rm -f "/etc/systemd/system/${FORWARDER_SERVICE_NAME}.service"
+  rm -f "/etc/systemd/system/${FORWARDER_RESTART_SERVICE_NAME}.service" "/etc/systemd/system/${FORWARDER_RESTART_SERVICE_NAME}.path"
   systemctl daemon-reload >/dev/null 2>&1 || true
 
   docker stop "$CADDY_CONTAINER_NAME" >/dev/null 2>&1 || true
@@ -2122,7 +2154,9 @@ delete_project() {
   fi
 
   systemctl disable --now "${FORWARDER_SERVICE_NAME}.service" >/dev/null 2>&1 || true
+  systemctl disable --now "${FORWARDER_RESTART_SERVICE_NAME}.path" >/dev/null 2>&1 || true
   rm -f "/etc/systemd/system/${FORWARDER_SERVICE_NAME}.service"
+  rm -f "/etc/systemd/system/${FORWARDER_RESTART_SERVICE_NAME}.service" "/etc/systemd/system/${FORWARDER_RESTART_SERVICE_NAME}.path"
   systemctl daemon-reload >/dev/null 2>&1 || true
 
   docker stop "$CADDY_CONTAINER_NAME" >/dev/null 2>&1 || true
