@@ -6,7 +6,7 @@
 
 Nexus Panel — панель агрегации и управления узлами **3x-ui** и **Remnawave**: клиенты, SUB/JSON-подписки, маршрутизация, трафик, Telegram и синхронизация выбранного inbound.
 
-[![Version](https://img.shields.io/badge/version-2.4.3-blue)](https://github.com/dagmagnat/Nexus-Panel)
+[![Version](https://img.shields.io/badge/version-2.4.4-blue)](https://github.com/dagmagnat/Nexus-Panel)
 ![Node.js](https://img.shields.io/badge/node-%3E%3D22-gray)
 ![License](https://img.shields.io/badge/license-MIT-gray)
 
@@ -46,6 +46,8 @@ Nexus Panel — панель агрегации и управления узла
 
 Версия 2.4.3 исправляет невидимое меню установщика: открытие терминального дескриптора больше не отключает `stderr`. Свежий запуск автоматически заменяет повреждённую CRLF-копию установщика, восстанавливает ярлык, а команда `agg` без аргументов явно открывает меню.
 
+Версия 2.4.4 возвращает короткую команду установки через `bootstrap.sh`. Bootstrap сам выполняет длинную техническую часть, очищает CRLF, сбрасывает старый служебный режим и подключает установщик к терминалу для обычных вопросов и меню.
+
 Устаревшие `style.css`, `redesign.css`, `nexus-ui.css` и `stage*.css` удалены, чтобы разные разделы не получали конфликтующие цвета и размеры. Источник интерфейса один: `public/css/spectrum-clear.css`.
 
 Редизайн не меняет `data/app.db`, `.env`, UUID клиентов и `sub_slug`. Уже выданные ссылки подписок сохраняются. Подробные критерии и контракт: [`docs/NEXUS_PRODUCT_SPEC.md`](docs/NEXUS_PRODUCT_SPEC.md) и [`docs/DATA_COMPATIBILITY.md`](docs/DATA_COMPATIBILITY.md).
@@ -56,16 +58,15 @@ Nexus Panel — панель агрегации и управления узла
 
 ```bash
 sudo -i
-curl --fail --show-error --location --retry 5 --connect-timeout 20 https://raw.githubusercontent.com/dagmagnat/Nexus-Panel/main/install.sh -o /tmp/nexus-install.sh && sed -i 's/\r$//' /tmp/nexus-install.sh && grep -q '^#!/usr/bin/env bash' /tmp/nexus-install.sh && chmod +x /tmp/nexus-install.sh && /tmp/nexus-install.sh
+curl -fsSL https://raw.githubusercontent.com/dagmagnat/Nexus-Panel/main/bootstrap.sh | bash
 ```
 
 Если приглашение уже имеет вид `root@server:~#`, повторять `sudo -i` не нужно.
 Сообщение `/usr/bin/xauth: file /root/.Xauthority does not exist` относится к
-SSH X11 forwarding, а не к Nexus Panel, и не мешает установке. Команда выше не
-запускает пустой или ошибочно загруженный файл. Установщик сохраняет подробные
-журналы в `/var/log/nexus-panel/`. Команда также удаляет случайные Windows-символы
-переноса строки из загруженного файла, поэтому Bash не завершится молча на
-строке `set -Eeuo pipefail`.
+SSH X11 forwarding, а не к Nexus Panel, и не мешает установке. Короткий bootstrap
+сам загружает и проверяет `install.sh`, удаляет случайные Windows-символы переноса
+строки и сохраняет интерактивный ввод через `/dev/tty`. Подробные журналы
+установщика находятся в `/var/log/nexus-panel/`.
 
 Установщик сам скачает `dagmagnat/Nexus-Panel`, создаст конфигурацию, установит Docker при необходимости и покажет точный адрес входа. Дополнительный ключ в URL не нужен.
 
@@ -115,14 +116,15 @@ agg
 
 Это означает, что на сервере осталась старая CRLF-копия `install.sh` либо версия,
 которая скрывала меню вместе со `stderr`. Панель и база при этом не повреждены.
-Один раз восстановите установленный скрипт и ярлык этой командой:
+Один раз восстановите установленный скрипт и ярлык той же короткой ссылкой:
 
 ```bash
-curl --fail --show-error --location --retry 5 --connect-timeout 20 https://raw.githubusercontent.com/dagmagnat/Nexus-Panel/main/install.sh -o /tmp/nexus-install.sh && sed -i 's/\r$//' /tmp/nexus-install.sh && grep -q '^#!/usr/bin/env bash' /tmp/nexus-install.sh && chmod +x /tmp/nexus-install.sh && /tmp/nexus-install.sh repair-shortcut && agg
+curl -fsSL https://raw.githubusercontent.com/dagmagnat/Nexus-Panel/main/bootstrap.sh | bash -s -- repair-shortcut && agg
 ```
 
-Новая команда `agg` очищает случайный CRLF в локальном установщике и без
-аргументов всегда передаёт явную команду `menu`.
+Bootstrap удаляет унаследованный `NEXUS_INSTALLER_LIBRARY_ONLY`, новая команда
+`agg` очищает случайный CRLF в локальном установщике и без аргументов всегда
+передаёт явную команду `menu`.
 
 Если установка ещё привязана к старому репозиторию `dagmagnat/3xui-Aggregator`, сначала убедитесь, что файлы Nexus Panel уже загружены в ветку `main`, создайте резервную копию через пункт `5`, а затем один раз запустите новый установщик напрямую:
 

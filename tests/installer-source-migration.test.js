@@ -141,19 +141,67 @@ test('installer cannot silently exit when helper-only variable is exported', () 
   const source = fs.readFileSync(installerPath, 'utf8');
   assert.match(
     source,
-    /NEXUS_INSTALLER_LIBRARY_ONLY[^\n]+BASH_SOURCE\[0\][^\n]+!=[^\n]+\$0/,
+    /NEXUS_INSTALLER_FORCE_RUN[\s\S]{0,220}NEXUS_INSTALLER_LIBRARY_ONLY[\s\S]{0,220}BASH_SOURCE\[0\]:-\$0[\s\S]{0,120}return 0/,
     'helper-only guard must be limited to sourcing the installer'
   );
   assert.match(source, /maybe_clear_screen/, 'SSH diagnostics stay visible by default');
   assert.match(source, /"\$@" <\/dev\/null > "\$step_log" 2>&1 &/, 'background steps must never wait for invisible terminal input');
 });
 
-test('README exposes CRLF-safe install and agg recovery commands', () => {
+test('README exposes the same short bootstrap for install and agg recovery', () => {
   const readme = fs.readFileSync(path.join(projectRoot, 'README.md'), 'utf8');
-  assert.match(readme, /curl --fail --show-error --location --retry 5 --connect-timeout 20 https:\/\/raw\.githubusercontent\.com\/dagmagnat\/Nexus-Panel\/main\/install\.sh -o \/tmp\/nexus-install\.sh/);
-  assert.match(readme, /sed -i 's\/\\r\$\/\/' \/tmp\/nexus-install\.sh/);
-  assert.match(readme, /\/tmp\/nexus-install\.sh repair-shortcut && agg/);
+  assert.match(readme, /curl -fsSL https:\/\/raw\.githubusercontent\.com\/dagmagnat\/Nexus-Panel\/main\/bootstrap\.sh \| bash/);
+  assert.match(readme, /curl -fsSL https:\/\/raw\.githubusercontent\.com\/dagmagnat\/Nexus-Panel\/main\/bootstrap\.sh \| bash -s -- repair-shortcut && agg/);
   assert.match(fs.readFileSync(path.join(projectRoot, '.gitattributes'), 'utf8'), /\*\.sh text eol=lf/);
+});
+
+test('bootstrap validates the download, clears legacy helper mode and restores tty input', () => {
+  const bootstrap = fs.readFileSync(path.join(projectRoot, 'bootstrap.sh'), 'utf8');
+  assert.match(bootstrap, /sed -i 's\/\\r\$\/\/' "\$INSTALLER_FILE"/);
+  assert.match(bootstrap, /grep -q '\^#!\/usr\/bin\/env bash'/);
+  assert.match(bootstrap, /env -u NEXUS_INSTALLER_LIBRARY_ONLY NEXUS_INSTALLER_FORCE_RUN=1/);
+  assert.match(bootstrap, /bash "\$INSTALLER_FILE" "\$@" <\/dev\/tty/);
+});
+
+test('bootstrap really clears exported helper mode before starting installer', { skip: !bashAvailable && 'bash is unavailable on this host' }, () => {
+  const tempDir = createTempDirectory('nexus-bootstrap-');
+  try {
+    const mockBin = path.join(tempDir, 'bin');
+    fs.mkdirSync(mockBin);
+    fs.writeFileSync(path.join(mockBin, 'id'), '#!/usr/bin/env bash\nprintf "0\\n"\n');
+    fs.writeFileSync(path.join(mockBin, 'curl'), `#!/usr/bin/env bash
+dest=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then dest="$2"; shift 2; else shift; fi
+done
+cat > "$dest" <<'SCRIPT'
+#!/usr/bin/env bash
+printf 'force=%s helper=%s arg=%s\\n' "\${NEXUS_INSTALLER_FORCE_RUN:-missing}" "\${NEXUS_INSTALLER_LIBRARY_ONLY:-unset}" "\${1:-none}"
+SCRIPT
+`);
+    fs.chmodSync(path.join(mockBin, 'id'), 0o755);
+    fs.chmodSync(path.join(mockBin, 'curl'), 0o755);
+    const shellMockBin = process.platform === 'win32'
+      ? mockBin.replace(/^([A-Za-z]):/, (_, drive) => `/${drive.toLowerCase()}`).replace(/\\/g, '/')
+      : mockBin;
+    const result = spawnSync(process.env.NEXUS_TEST_BASH || 'bash', [path.join(projectRoot, 'bootstrap.sh'), 'repair-shortcut'], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PATH: `${shellMockBin}:/usr/bin:/bin`,
+        NEXUS_INSTALLER_LIBRARY_ONLY: '1',
+        NEXUS_BOOTSTRAP_NO_TTY: '1',
+        NEXUS_BOOTSTRAP_SKIP_ROOT_CHECK: '1',
+        NEXUS_BOOTSTRAP_CURL: `${shellMockBin}/curl`
+      }
+    });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /Nexus Panel: загружаю установщик/);
+    assert.match(result.stdout, /force=1 helper=unset arg=repair-shortcut/);
+  } finally {
+    spawnSync('bash', ['-c', 'rm -f /tmp/nexus-install.sh']);
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
 });
 
 test('agg menu cannot launch an action on an empty Enter and legacy URL key is retired', () => {
@@ -172,6 +220,8 @@ test('terminal fd setup keeps stderr visible and agg explicitly opens menu', () 
   assert.match(installer, /sync_current_installer_to_app\s+install_shortcut_command\s+local action/);
   assert.match(installer, /\[ "\\\$\{#args\[@\]\}" -gt 0 \] \|\| args=\(menu\)/);
   assert.match(installer, /LC_ALL=C grep -q \$'\\r'/);
+  assert.match(installer, /NEXUS_INSTALLER_FORCE_RUN/);
+  assert.match(installer, /unset NEXUS_INSTALLER_LIBRARY_ONLY/);
 });
 
 test('all public version sources identify the same release', () => {
@@ -179,7 +229,7 @@ test('all public version sources identify the same release', () => {
   const packageLock = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package-lock.json'), 'utf8'));
   const update = JSON.parse(fs.readFileSync(path.join(projectRoot, 'update.json'), 'utf8'));
   const version = fs.readFileSync(path.join(projectRoot, 'VERSION'), 'utf8').trim();
-  assert.equal(packageJson.version, '2.4.3');
+  assert.equal(packageJson.version, '2.4.4');
   assert.equal(packageLock.version, packageJson.version);
   assert.equal(packageLock.packages[''].version, packageJson.version);
   assert.equal(update.version, packageJson.version);

@@ -2548,9 +2548,15 @@ main() {
 # Test/helper mode is valid only when this file is sourced. Previously an
 # exported NEXUS_INSTALLER_LIBRARY_ONLY=1 also suppressed a normal
 # `bash install.sh` invocation and produced a completely silent exit.
-if [ "${NEXUS_INSTALLER_LIBRARY_ONLY:-0}" = "1" ] && [ "${BASH_SOURCE[0]}" != "$0" ]; then
+if [ "${NEXUS_INSTALLER_FORCE_RUN:-0}" != "1" ] \
+  && [ "${NEXUS_INSTALLER_LIBRARY_ONLY:-0}" = "1" ] \
+  && [ "${BASH_SOURCE[0]:-$0}" != "$0" ]; then
   return 0
 fi
+
+# Старые релизы могли оставить helper-переменную экспортированной в shell.
+# При обычном или bootstrap-запуске она не должна влиять на точку входа.
+unset NEXUS_INSTALLER_LIBRARY_ONLY
 
 if [ "${1:-}" = "clients" ]; then
   shift || true
