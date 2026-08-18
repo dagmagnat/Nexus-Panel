@@ -169,7 +169,16 @@ for r in data.get('rules',[]) or []:
         continue
     old=old_rules.get(rid,{})
     metrics=dict(old.get('metrics') or {})
-    metrics.update(get_counter(str(r.get('target_host','')), port))
+    previous_bytes=int(metrics.get('bytes') or 0)
+    previous_sample=float(metrics.get('sampledAtEpoch') or 0)
+    current=get_counter(str(r.get('target_host','')), port)
+    metrics.update(current)
+    current_bytes=int(metrics.get('bytes') or 0)
+    rule_dt=now-previous_sample if previous_sample > 0 else 0
+    delta=max(0, current_bytes-previous_bytes) if current_bytes >= previous_bytes else 0
+    metrics['rateMbps']=round((delta * 8) / rule_dt / 1000000, 3) if rule_dt > 0 else 0
+    metrics['deltaBytes']=delta
+    metrics['sampledAtEpoch']=now
     metrics['iptables'] = ipt_bin
     items.append({
         'id': rid,
@@ -197,6 +206,7 @@ status['systemNetwork'] = {
     'sampledAt': datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat()
 }
 status['updatedAt'] = datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat()
+status['backend'] = 'iptables-nft' if 'nft' in ipt_bin else 'iptables'
 json.dump(status, open(status_path, 'w', encoding='utf-8'), ensure_ascii=False)
 PYNET
 }

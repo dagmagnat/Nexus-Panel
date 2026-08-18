@@ -11,7 +11,7 @@
   <link rel="icon" href="/favicon.ico" sizes="any">
   <link rel="icon" type="image/png" sizes="192x192" href="/img/nexus-logo-192.png">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-  <link rel="manifest" href="/site.webmanifest?v=230">
+  <link rel="manifest" href="/site.webmanifest?v=240">
   <script>
   (function(){
     try {
@@ -25,7 +25,7 @@
     }
   })();
   </script>
-  <link rel="stylesheet" href="/css/spectrum-clear.css?v=230" />
+  <link rel="stylesheet" href="/css/spectrum-clear.css?v=240" />
 </head>
 <body class="nexus-spectrum public-page subscription-portal-page">
   <% const allowJson = typeof showJsonLinks === 'undefined' ? true : Boolean(showJsonLinks); %>
@@ -57,15 +57,20 @@
         </div>
 
         <div class="portal-traffic-head">
-          <div><span>Использовано</span><strong id="portalUsedText"><%= subscription.usedText %></strong></div>
-          <div class="align-right"><span>Лимит</span><strong id="portalTotalText"><%= subscription.totalText %></strong></div>
+          <% if (subscription.quotaMode === 'per-node') { %>
+            <div><span>Лимиты трафика</span><strong id="portalUsedText"><%= subscription.limitedNodeCount %> уз.</strong></div>
+            <div class="align-right"><span>Учёт</span><strong id="portalTotalText">Отдельно по серверам</strong></div>
+          <% } else { %>
+            <div><span>Использовано</span><strong id="portalUsedText"><%= subscription.usedText %></strong></div>
+            <div class="align-right"><span>Лимит</span><strong id="portalTotalText"><%= subscription.totalText %></strong></div>
+          <% } %>
         </div>
-        <div class="portal-progress" role="progressbar" aria-label="Использованный трафик" aria-valuemin="0" aria-valuemax="100" aria-valuenow="<%= subscription.progressPercent %>">
+        <div id="portalProgressWrap" class="portal-progress" role="progressbar" aria-label="Использованный трафик" aria-valuemin="0" aria-valuemax="100" aria-valuenow="<%= subscription.progressPercent %>" <%= subscription.quotaMode === 'per-node' ? 'hidden' : '' %>>
           <i id="portalProgress" style="width:<%= subscription.progressPercent %>%"></i>
         </div>
 
         <div class="portal-stat-grid">
-          <div><span>Осталось трафика</span><strong id="portalRemainingText"><%= subscription.remainingText %></strong></div>
+          <div><span>Осталось трафика</span><strong id="portalRemainingText"><%= subscription.quotaMode === 'per-node' ? 'По серверам' : subscription.remainingText %></strong></div>
           <div><span>Действует до</span><strong id="portalExpiryText"><%= subscription.expiryText %></strong></div>
           <div><span>Осталось времени</span><strong id="portalDaysText"><%= subscription.daysLeftText %></strong></div>
           <div><span>Устройств</span><strong><%= subscription.deviceLimitText %></strong></div>
@@ -251,13 +256,16 @@
     function applyPortalStatus(subscription) {
       if (!subscription) return;
       const setText = (id, value) => { const el = document.getElementById(id); if (el) el.textContent = value; };
-      setText('portalUsedText', subscription.usedText);
-      setText('portalTotalText', subscription.totalText);
-      setText('portalRemainingText', subscription.remainingText);
+      const perNodeQuota = subscription.quotaMode === 'per-node';
+      setText('portalUsedText', perNodeQuota ? `${subscription.limitedNodeCount || 0} уз.` : subscription.usedText);
+      setText('portalTotalText', perNodeQuota ? 'Отдельно по серверам' : subscription.totalText);
+      setText('portalRemainingText', perNodeQuota ? 'По серверам' : subscription.remainingText);
       setText('portalExpiryText', subscription.expiryText);
       setText('portalDaysText', subscription.daysLeftText);
       const progress = document.getElementById('portalProgress');
       if (progress) progress.style.width = `${subscription.progressPercent || 0}%`;
+      const progressWrap = document.getElementById('portalProgressWrap');
+      if (progressWrap) progressWrap.hidden = perNodeQuota;
       const chip = document.getElementById('portalStatusChip');
       if (chip) {
         chip.classList.toggle('is-active', !!subscription.enabled);

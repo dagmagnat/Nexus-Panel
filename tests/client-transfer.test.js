@@ -55,8 +55,12 @@ function createSchema(db) {
       comment TEXT NOT NULL DEFAULT '',
       flow TEXT NOT NULL DEFAULT '',
       last_online_at TEXT NOT NULL DEFAULT '',
+      group_id INTEGER DEFAULT NULL,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE TABLE client_groups (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT COLLATE NOCASE UNIQUE NOT NULL, color TEXT NOT NULL);
+    CREATE TABLE client_tags (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT COLLATE NOCASE UNIQUE NOT NULL, color TEXT NOT NULL);
+    CREATE TABLE client_tag_assignments (client_id INTEGER NOT NULL, tag_id INTEGER NOT NULL, PRIMARY KEY (client_id, tag_id));
     CREATE TABLE client_nodes (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       client_id INTEGER NOT NULL,
@@ -92,6 +96,10 @@ function createSourceDatabase(file) {
     'Alice', 'Телефон Alice', '11111111-1111-4111-8111-111111111111', 'alice-old-link',
     30, 100, 2, 1800000000000, 1, 'важный клиент', 'xtls-rprx-vision', '2026-08-10T10:00:00Z', '2026-01-01 00:00:00'
   ).lastInsertRowid);
+  const groupId = Number(db.prepare("INSERT INTO client_groups (name, color) VALUES ('Яблоко', '#64748b')").run().lastInsertRowid);
+  const tagId = Number(db.prepare("INSERT INTO client_tags (name, color) VALUES ('Друг', '#22c55e')").run().lastInsertRowid);
+  db.prepare('UPDATE clients SET group_id = ? WHERE id = ?').run(groupId, alice);
+  db.prepare('INSERT INTO client_tag_assignments (client_id, tag_id) VALUES (?, ?)').run(alice, tagId);
   insertClient.run(
     'Bob', 'Bob', '22222222-2222-4222-8222-222222222222', 'bob-old-link',
     0, 0, 1, 0, 1, '', '', '', '2026-01-02 00:00:00'
@@ -124,13 +132,15 @@ test('direct SQLite export preserves credentials and excludes node secrets', () 
     const result = runTool(['export', '--db', sourceDb, '--output', transferFile]);
     assert.equal(result.clients, 2);
     assert.equal(result.assignments, 1);
-    assert.equal(fs.statSync(transferFile).mode & 0o777, 0o600);
+    if (process.platform !== 'win32') assert.equal(fs.statSync(transferFile).mode & 0o777, 0o600);
 
     const document = JSON.parse(fs.readFileSync(transferFile, 'utf8'));
     assert.equal(document.format, 'nexus-panel-client-transfer');
     assert.equal(document.clients[0].uuid, '11111111-1111-4111-8111-111111111111');
     assert.equal(document.clients[0].subSlug, 'alice-old-link');
     assert.equal(document.clients[0].nodeAssignments[0].nodeRef.inboundId, 1);
+    assert.deepEqual(document.clients[0].group, { name: 'Яблоко', color: '#64748b' });
+    assert.deepEqual(document.clients[0].tags, [{ name: 'Друг', color: '#22c55e' }]);
     assert.equal(JSON.stringify(document).includes('password'), false);
     assert.equal(JSON.stringify(document).includes('api_token'), false);
     assert.equal(JSON.stringify(document).includes('node-password'), false);
@@ -186,6 +196,8 @@ test('dry-run rolls back, then import keeps UUID/sub_slug and matches a changed 
     assert.equal(assignment.node_id, 42);
     assert.equal(assignment.used_bytes, 3000);
     assert.equal(assignment.remote_sub_url, 'https://old.example/sub/alice');
+    assert.equal(db.prepare('SELECT name FROM client_groups WHERE id=?').get(alice.group_id).name, 'Яблоко');
+    assert.equal(db.prepare(`SELECT t.name FROM client_tag_assignments a JOIN client_tags t ON t.id=a.tag_id WHERE a.client_id=?`).get(alice.id).name, 'Друг');
     assert.ok(Number(db.prepare("SELECT value FROM app_settings WHERE key='subscription_revision'").get().value) > 1);
     db.close();
   } finally {

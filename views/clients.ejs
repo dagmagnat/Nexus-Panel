@@ -81,9 +81,23 @@
     return (client.node_limits || []).filter(row => row.client_node_id).map(row => String(row.node_id)).join(' ');
   }
   function clientDirectorySearch(client) {
-    return [client.id, client.login, client.display_name, client.comment, client.uuid, client.sub_slug]
+    return [client.id, client.login, client.display_name, client.comment, client.uuid, client.sub_slug, client.group_name, ...(client.tags || []).map(tag => tag.name)]
       .filter(value => value !== null && value !== undefined)
       .join(' ');
+  }
+  function clientDirectoryTagIds(client) {
+    return (client.tags || []).map(tag => String(tag.id)).join(' ');
+  }
+  function clientLimitedNodes(client) {
+    return clientAssignedNodes(client).filter(row => Number(row.traffic_gb || 0) > 0);
+  }
+  function clientTrafficHeadline(client) {
+    const globalLimit = Math.max(0, Number(client.traffic_gb || 0));
+    if (globalLimit > 0) return `${formatClientBytes(clientUsedBytes(client))} / ${globalLimit} ГБ`;
+    const limited = clientLimitedNodes(client);
+    if (limited.length === 1) return nodeLimitText(limited[0]);
+    if (limited.length > 1) return `${limited.length} лимита по узлам`;
+    return '∞';
   }
 
   function clientStatusMeta(client) {
@@ -209,6 +223,7 @@
       <% if (clientType === 'xray') { %>
         <button type="button" class="btn-secondary" onclick="openModalById('importSyncModal')">Импорт и синхронизация</button>
         <button type="button" class="btn-secondary" onclick="openModalById('clientTransferModal')">Перенос клиентов</button>
+        <button type="button" class="btn-secondary" onclick="openModalById('clientLabelsModal')">Группы и метки</button>
         <button type="button" class="btn-secondary" id="applySelectedToolbarButton" onclick="return openApplySelectedModal()" disabled>Применить к выбранным</button>
       <% } %>
     </div>
@@ -229,6 +244,22 @@
         <% nodes.forEach(node => { %>
           <option value="<%= node.id %>"><%= flagText(node.country_code, node.country_flag, node.country_name_ru || node.name) %> <%= nodeName(node) %></option>
         <% }) %>
+      </select>
+    </label>
+    <label class="client-directory-control">
+      <span>Группа</span>
+      <select id="clientGroupFilter">
+        <option value="">Все группы</option>
+        <option value="none">Без группы</option>
+        <% clientGroups.forEach(group => { %><option value="<%= group.id %>"><%= group.name %></option><% }) %>
+      </select>
+    </label>
+    <label class="client-directory-control">
+      <span>Метка</span>
+      <select id="clientTagFilter">
+        <option value="">Все метки</option>
+        <option value="none">Без меток</option>
+        <% clientTags.forEach(tag => { %><option value="<%= tag.id %>"><%= tag.name %></option><% }) %>
       </select>
     </label>
     <label class="client-directory-control">
@@ -338,7 +369,7 @@
       const filterKeys = mobileClientFilterKeys(client).join(' ');
       const canShowSub = Boolean(showSubLinks);
     %>
-      <article class="mobile-client-card status-<%= clientStatus.key %>" data-mobile-client-card data-client-edit-card="<%= client.id %>" data-client-entry data-client-view="mobile" data-client-id-entry="<%= client.id %>" data-client-search="<%= clientDirectorySearch(client) %>" data-client-node-ids="<%= clientDirectoryNodeIds(client) %>" data-client-name="<%= compactTitle(client) %>" data-client-order="<%= client.id %>" data-client-expiry-order="<%= Number(client.expiry_time || 0) %>" data-client-status="<%= clientDirectoryStatusFilter(client) %>" data-statuses="<%= filterKeys %>" data-client-online="0" data-client-login="<%= client.login || '' %>" data-client-uuid="<%= client.uuid || '' %>">
+      <article class="mobile-client-card status-<%= clientStatus.key %>" data-mobile-client-card data-client-edit-card="<%= client.id %>" data-client-entry data-client-view="mobile" data-client-id-entry="<%= client.id %>" data-client-search="<%= clientDirectorySearch(client) %>" data-client-node-ids="<%= clientDirectoryNodeIds(client) %>" data-client-group-id="<%= client.group_id || '' %>" data-client-tag-ids="<%= clientDirectoryTagIds(client) %>" data-client-name="<%= compactTitle(client) %>" data-client-order="<%= client.id %>" data-client-expiry-order="<%= Number(client.expiry_time || 0) %>" data-client-status="<%= clientDirectoryStatusFilter(client) %>" data-statuses="<%= filterKeys %>" data-client-online="0" data-client-login="<%= client.login || '' %>" data-client-uuid="<%= client.uuid || '' %>">
         <div class="mobile-client-head stage12-client-head">
           <label class="mobile-card-check" title="Выбрать клиента">
             <input class="inline client-check" type="checkbox" name="client_ids" value="<%= client.id %>" data-client-id="<%= client.id %>" />
@@ -353,11 +384,17 @@
         <div class="mobile-client-mainline">
           <button type="button" class="mobile-client-name" onclick="openClientEditor(<%= client.id %>)"><%= displayTitle %></button>
           <% if (secondaryText) { %><span class="mobile-client-comment"><%= secondaryText %></span><% } %>
+          <% if (client.group_name || (client.tags || []).length) { %>
+            <div class="client-meta-chips">
+              <% if (client.group_name) { %><span class="client-group-chip" style="--chip-color:<%= client.group_color %>"><%= client.group_name %></span><% } %>
+              <% (client.tags || []).forEach(tag => { %><span class="client-tag-chip" style="--chip-color:<%= tag.color %>"><%= tag.name %></span><% }) %>
+            </div>
+          <% } %>
           <span class="modern-online-state offline mobile-online-state" data-modern-online-state data-client-id="<%= client.id %>" data-online-eligible="<%= client.enabled !== 0 && clientStatus.key !== 'expired' ? '1' : '0' %>"><i></i><b><%= client.enabled === 0 ? 'Отключён' : (clientStatus.key === 'expired' ? 'Исчерпано' : 'Не в сети') %></b></span>
         </div>
 
         <div class="mobile-client-metrics">
-          <div><span>Трафик</span><strong><%= client.traffic_gb && client.traffic_gb > 0 ? '0 / ' + client.traffic_gb + ' ГБ' : '∞' %></strong></div>
+          <div><span>Трафик</span><strong><%= clientTrafficHeadline(client) %></strong></div>
           <div><span>Лимит дней</span><strong><%= termShort(client) %></strong></div>
           <div><span>Лимит IP</span><strong><%= client.limit_ip && Number(client.limit_ip) > 0 ? client.limit_ip : '∞' %></strong></div>
         </div>
@@ -387,7 +424,7 @@
       const secondaryText = secondaryClientText(client);
       const canShowSub = Boolean(showSubLinks);
     %>
-      <article class="desktop-client-tile status-<%= clientStatus.key %>" data-client-entry data-client-view="desktop" data-client-id-entry="<%= client.id %>" data-client-search="<%= clientDirectorySearch(client) %>" data-client-node-ids="<%= clientDirectoryNodeIds(client) %>" data-client-name="<%= compactTitle(client) %>" data-client-order="<%= client.id %>" data-client-expiry-order="<%= Number(client.expiry_time || 0) %>" data-client-status="<%= clientDirectoryStatusFilter(client) %>" data-client-online="0" data-client-login="<%= client.login || '' %>" data-client-uuid="<%= client.uuid || '' %>">
+      <article class="desktop-client-tile status-<%= clientStatus.key %>" data-client-entry data-client-view="desktop" data-client-id-entry="<%= client.id %>" data-client-search="<%= clientDirectorySearch(client) %>" data-client-node-ids="<%= clientDirectoryNodeIds(client) %>" data-client-group-id="<%= client.group_id || '' %>" data-client-tag-ids="<%= clientDirectoryTagIds(client) %>" data-client-name="<%= compactTitle(client) %>" data-client-order="<%= client.id %>" data-client-expiry-order="<%= Number(client.expiry_time || 0) %>" data-client-status="<%= clientDirectoryStatusFilter(client) %>" data-client-online="0" data-client-login="<%= client.login || '' %>" data-client-uuid="<%= client.uuid || '' %>">
         <div class="desktop-client-check">
           <label class="select-client" title="Выбрать клиента">
             <input class="inline client-check" type="checkbox" name="client_ids" value="<%= client.id %>" data-client-id="<%= client.id %>" />
@@ -396,7 +433,10 @@
           <small><%= client.id %></small>
         </div>
         <button type="button" class="desktop-client-name" data-client-quick="<%= client.id %>"><%= displayTitle %></button>
-        <div class="desktop-client-comment" title="<%= client.comment || '-' %>"><%= client.comment || '-' %></div>
+        <div class="desktop-client-comment" title="<%= client.comment || '-' %>">
+          <%= client.comment || '-' %>
+          <% if (client.group_name || (client.tags || []).length) { %><div class="client-meta-chips"><% if (client.group_name) { %><span class="client-group-chip" style="--chip-color:<%= client.group_color %>"><%= client.group_name %></span><% } %><% (client.tags || []).forEach(tag => { %><span class="client-tag-chip" style="--chip-color:<%= tag.color %>"><%= tag.name %></span><% }) %></div><% } %>
+        </div>
         <div class="desktop-client-status">
           <button type="button" class="client-status-icon <%= clientStatus.key %>" data-status-label="<%= clientStatus.label %>" data-status-text="<%= clientStatus.text %>" title="<%= clientStatus.label %>" aria-label="<%= clientStatus.label %>"></button>
           <button type="button" class="badge quick-status <%= clientStatus.key %>" data-status-label="<%= clientStatus.label %>" data-status-text="<%= clientStatus.text %>"><%= clientStatus.label %></button>
@@ -440,7 +480,7 @@
           const hasNodeLimits = nodeLimitRows.length > 0;
           const canShowSub = Boolean(showSubLinks);
         %>
-          <tr data-client-entry data-client-view="table" data-client-id-entry="<%= client.id %>" data-client-search="<%= clientDirectorySearch(client) %>" data-client-node-ids="<%= clientDirectoryNodeIds(client) %>" data-client-name="<%= compactTitle(client) %>" data-client-order="<%= client.id %>" data-client-expiry-order="<%= Number(client.expiry_time || 0) %>" data-client-status="<%= clientDirectoryStatusFilter(client) %>" data-client-online="0" data-client-login="<%= client.login || '' %>" data-client-uuid="<%= client.uuid || '' %>">
+          <tr data-client-entry data-client-view="table" data-client-id-entry="<%= client.id %>" data-client-search="<%= clientDirectorySearch(client) %>" data-client-node-ids="<%= clientDirectoryNodeIds(client) %>" data-client-group-id="<%= client.group_id || '' %>" data-client-tag-ids="<%= clientDirectoryTagIds(client) %>" data-client-name="<%= compactTitle(client) %>" data-client-order="<%= client.id %>" data-client-expiry-order="<%= Number(client.expiry_time || 0) %>" data-client-status="<%= clientDirectoryStatusFilter(client) %>" data-client-online="0" data-client-login="<%= client.login || '' %>" data-client-uuid="<%= client.uuid || '' %>">
             <td class="check-col" data-label="Выбрать">
               <label class="select-client" title="Выбрать клиента">
                 <input class="inline client-check" type="checkbox" name="client_ids" value="<%= client.id %>" data-client-id="<%= client.id %>" />
@@ -453,6 +493,7 @@
               <% if (String(compactTitle(client) || '').trim() !== String(client.login || '').trim()) { %>
                 <small class="client-inline-login"><%= client.login %></small>
               <% } %>
+              <% if (client.group_name || (client.tags || []).length) { %><div class="client-meta-chips"><% if (client.group_name) { %><span class="client-group-chip" style="--chip-color:<%= client.group_color %>"><%= client.group_name %></span><% } %><% (client.tags || []).forEach(tag => { %><span class="client-tag-chip" style="--chip-color:<%= tag.color %>"><%= tag.name %></span><% }) %></div><% } %>
             </td>
             <td data-label="Комментарий" class="comment-cell"><%= client.comment || '-' %></td>
             <td data-label="Статус" class="client-status-cell compact-client-status-cell">
@@ -512,6 +553,8 @@
             data-client-id-entry="<%= client.id %>"
             data-client-search="<%= clientDirectorySearch(client) %>"
             data-client-node-ids="<%= clientDirectoryNodeIds(client) %>"
+            data-client-group-id="<%= client.group_id || '' %>"
+            data-client-tag-ids="<%= clientDirectoryTagIds(client) %>"
             data-client-name="<%= compactTitle(client) %>"
             data-client-order="<%= client.id %>"
             data-client-expiry-order="<%= Number(client.expiry_time || 0) %>"
@@ -555,11 +598,12 @@
             <td class="modern-client-identity">
               <button type="button" data-client-quick="<%= client.id %>"><%= displayTitle %></button>
               <small><%= secondaryText || '—' %></small>
+              <% if (client.group_name || (client.tags || []).length) { %><div class="client-meta-chips"><% if (client.group_name) { %><span class="client-group-chip" style="--chip-color:<%= client.group_color %>"><%= client.group_name %></span><% } %><% (client.tags || []).forEach(tag => { %><span class="client-tag-chip" style="--chip-color:<%= tag.color %>"><%= tag.name %></span><% }) %></div><% } %>
             </td>
             <td class="modern-comment-cell" title="<%= client.comment || 'Комментарий не задан' %>"><%= client.comment || '—' %></td>
-            <td class="modern-traffic-cell <%= trafficLimitGb > 0 ? '' : 'is-unlimited' %>" data-modern-traffic-client="<%= client.id %>" data-traffic-limit-gb="<%= trafficLimitGb %>">
-              <div><span><%= formatClientBytes(usedBytes) %></span><b><%= trafficLimitGb > 0 ? trafficLimitGb + ' ГБ' : '∞' %></b></div>
-              <div class="modern-traffic-track"><i style="width:<%= clientTrafficPercent(client).toFixed(1) %>%"></i></div>
+            <td class="modern-traffic-cell <%= trafficLimitGb > 0 ? '' : (clientLimitedNodes(client).length ? 'is-per-node' : 'is-unlimited') %>" data-modern-traffic-client="<%= client.id %>" data-traffic-limit-gb="<%= trafficLimitGb %>">
+              <div><span><%= trafficLimitGb > 0 ? formatClientBytes(usedBytes) : clientTrafficHeadline(client) %></span><b><%= trafficLimitGb > 0 ? trafficLimitGb + ' ГБ' : (clientLimitedNodes(client).length ? 'по узлам' : '∞') %></b></div>
+              <% if (trafficLimitGb > 0) { %><div class="modern-traffic-track"><i style="width:<%= clientTrafficPercent(client).toFixed(1) %>%"></i></div><% } %>
             </td>
             <td><span class="modern-remaining <%= remaining.key %>"><%= remaining.text %></span></td>
             <td><span class="modern-duration"><%= Number(client.duration_days || 0) > 0 ? Number(client.duration_days) + ' дн.' : '∞' %></span></td>
@@ -612,6 +656,40 @@
   <% } %>
 </div>
 
+<div id="clientLabelsModal" class="modal hidden" onclick="closeModalById(event, 'clientLabelsModal')">
+  <div class="modal-card editor-modal client-labels-modal" onclick="event.stopPropagation()">
+    <button type="button" class="modal-close" onclick="hideModalById('clientLabelsModal')">×</button>
+    <h2>Группы и цветные метки</h2>
+    <p class="muted">Группа объединяет клиентов одной организации. Меток у клиента может быть несколько.</p>
+    <div class="client-label-manager-grid">
+      <section class="modal-section-box">
+        <h3>Группы</h3>
+        <form method="post" action="/client-groups" class="client-label-create-form">
+          <input name="name" maxlength="64" placeholder="Например, Яблоко" required>
+          <input name="color" type="color" value="#64748b" aria-label="Цвет группы">
+          <button type="submit" class="btn-main">Добавить</button>
+        </form>
+        <div class="client-label-manager-list">
+          <% clientGroups.forEach(group => { %><div><span class="client-group-chip" style="--chip-color:<%= group.color %>"><%= group.name %></span><form method="post" action="/client-groups/<%= group.id %>/delete" onsubmit="return confirm('Удалить группу? Клиенты останутся без группы.')"><button type="submit" class="btn-link-danger">Удалить</button></form></div><% }) %>
+          <% if (!clientGroups.length) { %><small class="hint">Групп пока нет.</small><% } %>
+        </div>
+      </section>
+      <section class="modal-section-box">
+        <h3>Метки</h3>
+        <form method="post" action="/client-tags" class="client-label-create-form">
+          <input name="name" maxlength="64" placeholder="Например, Друг" required>
+          <input name="color" type="color" value="#22c55e" aria-label="Цвет метки">
+          <button type="submit" class="btn-main">Добавить</button>
+        </form>
+        <div class="client-label-manager-list">
+          <% clientTags.forEach(tag => { %><div><span class="client-tag-chip" style="--chip-color:<%= tag.color %>"><%= tag.name %></span><form method="post" action="/client-tags/<%= tag.id %>/delete" onsubmit="return confirm('Удалить метку у всех клиентов?')"><button type="submit" class="btn-link-danger">Удалить</button></form></div><% }) %>
+          <% if (!clientTags.length) { %><small class="hint">Меток пока нет.</small><% } %>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+
 <% if (clientType === 'xray') { %>
 <div id="createClientModal" class="modal hidden" onclick="closeModalById(event, 'createClientModal')">
   <div class="modal-card editor-modal client-editor-modal create-client-editor-modal" onclick="event.stopPropagation()">
@@ -627,6 +705,14 @@
         <div class="field half">
           <label>Комментарий</label>
           <input name="comment" placeholder="Имя клиента, телефон, заметка" />
+        </div>
+        <div class="field half">
+          <label>Группа</label>
+          <select name="group_id"><option value="">Без группы</option><% clientGroups.forEach(group => { %><option value="<%= group.id %>"><%= group.name %></option><% }) %></select>
+        </div>
+        <div class="field half">
+          <label>Метки</label>
+          <div class="client-label-picker"><% if (!clientTags.length) { %><small class="hint">Метки ещё не созданы.</small><% } %><% clientTags.forEach(tag => { %><label><input type="checkbox" name="tag_ids" value="<%= tag.id %>"><span class="client-tag-chip" style="--chip-color:<%= tag.color %>"><%= tag.name %></span></label><% }) %></div>
         </div>
         <div class="field third">
           <label>Срок в днях</label>
@@ -977,6 +1063,14 @@
             <input name="comment" value="<%= client.comment || '' %>" placeholder="Заметка для поиска" />
           </div>
           <div class="field half">
+            <label>Группа</label>
+            <select name="group_id"><option value="">Без группы</option><% clientGroups.forEach(group => { %><option value="<%= group.id %>" <%= Number(client.group_id) === Number(group.id) ? 'selected' : '' %>><%= group.name %></option><% }) %></select>
+          </div>
+          <div class="field half">
+            <label>Метки</label>
+            <div class="client-label-picker"><% if (!clientTags.length) { %><small class="hint">Метки ещё не созданы.</small><% } %><% clientTags.forEach(tag => { const selected = (client.tags || []).some(item => Number(item.id) === Number(tag.id)); %><label><input type="checkbox" name="tag_ids" value="<%= tag.id %>" <%= selected ? 'checked' : '' %>><span class="client-tag-chip" style="--chip-color:<%= tag.color %>"><%= tag.name %></span></label><% }) %></div>
+          </div>
+          <div class="field half">
             <label>Лимит IP</label>
             <input name="limit_ip" type="number" min="0" value="<%= client.limit_ip ?? 1 %>" />
           </div>
@@ -1185,7 +1279,7 @@
 <script>
 const clientDirectoryMode = <%= clientType === 'xray' ? 'true' : 'false' %>;
 const clientDirectoryInitialQuery = new URLSearchParams(window.location.search).get('q') || '';
-let clientDirectoryState = { query: clientDirectoryInitialQuery, nodeId: '', sort: 'newest' };
+let clientDirectoryState = { query: clientDirectoryInitialQuery, nodeId: '', groupId: '', tagId: '', sort: 'newest' };
 const clientDirectorySortModes = ['newest','oldest','name-asc','name-desc','expiring','expired','disabled','active','online'];
 
 function normalizeClientDirectoryText(value) {
@@ -1243,6 +1337,8 @@ function updateClientDirectoryUrl() {
   const url = new URL(window.location.href);
   if (clientDirectoryState.query) url.searchParams.set('q', clientDirectoryState.query); else url.searchParams.delete('q');
   if (clientDirectoryState.nodeId) url.searchParams.set('node_id', clientDirectoryState.nodeId); else url.searchParams.delete('node_id');
+  if (clientDirectoryState.groupId) url.searchParams.set('group_id', clientDirectoryState.groupId); else url.searchParams.delete('group_id');
+  if (clientDirectoryState.tagId) url.searchParams.set('tag_id', clientDirectoryState.tagId); else url.searchParams.delete('tag_id');
   if (clientDirectoryState.sort && clientDirectoryState.sort !== 'newest') url.searchParams.set('sort', clientDirectoryState.sort); else url.searchParams.delete('sort');
   url.searchParams.delete('edit');
   window.history.replaceState({}, '', url.pathname + (url.searchParams.toString() ? '?' + url.searchParams.toString() : ''));
@@ -1251,6 +1347,8 @@ function applyClientDirectoryFilters(options = {}) {
   if (!clientDirectoryMode) return;
   const query = normalizeClientDirectoryText(clientDirectoryState.query);
   const nodeId = String(clientDirectoryState.nodeId || '');
+  const groupId = String(clientDirectoryState.groupId || '');
+  const tagId = String(clientDirectoryState.tagId || '');
   const statusMode = ['expiring','expired','disabled','active'].includes(clientDirectoryState.sort) ? clientDirectoryState.sort : '';
   const onlineOnly = clientDirectoryState.sort === 'online';
   const visibleIds = new Set();
@@ -1262,10 +1360,14 @@ function applyClientDirectoryFilters(options = {}) {
   master.forEach((entry, id) => {
     const search = normalizeClientDirectoryText(entry.dataset.clientSearch || '');
     const nodes = String(entry.dataset.clientNodeIds || '').split(/\s+/).filter(Boolean);
+    const entryGroupId = String(entry.dataset.clientGroupId || '');
+    const tags = String(entry.dataset.clientTagIds || '').split(/\s+/).filter(Boolean);
+    const groupMatches = !groupId || (groupId === 'none' ? !entryGroupId : entryGroupId === groupId);
+    const tagMatches = !tagId || (tagId === 'none' ? tags.length === 0 : tags.includes(tagId));
     const status = String(entry.dataset.clientStatus || '');
     const statusMatches = !statusMode || status === statusMode || (statusMode === 'active' && status === 'expiring');
     const onlineMatches = !onlineOnly || entry.dataset.clientOnline === '1';
-    if ((!query || search.includes(query)) && (!nodeId || nodes.includes(nodeId)) && statusMatches && onlineMatches) visibleIds.add(id);
+    if ((!query || search.includes(query)) && (!nodeId || nodes.includes(nodeId)) && groupMatches && tagMatches && statusMatches && onlineMatches) visibleIds.add(id);
   });
   getClientDirectoryEntries().forEach(entry => {
     const id = String(entry.dataset.clientIdEntry || '');
@@ -1292,10 +1394,16 @@ function setupClientDirectory() {
   const params = new URLSearchParams(window.location.search);
   clientDirectoryState.query = params.get('q') || clientDirectoryInitialQuery || '';
   clientDirectoryState.nodeId = params.get('node_id') || '';
+  clientDirectoryState.groupId = params.get('group_id') || '';
+  clientDirectoryState.tagId = params.get('tag_id') || '';
   clientDirectoryState.sort = clientDirectorySortModes.includes(params.get('sort')) ? params.get('sort') : 'newest';
   const nodeSelect = document.getElementById('clientNodeFilter');
+  const groupSelect = document.getElementById('clientGroupFilter');
+  const tagSelect = document.getElementById('clientTagFilter');
   const sortSelect = document.getElementById('clientSortMode');
   if (nodeSelect) nodeSelect.value = clientDirectoryState.nodeId;
+  if (groupSelect) groupSelect.value = clientDirectoryState.groupId;
+  if (tagSelect) tagSelect.value = clientDirectoryState.tagId;
   if (sortSelect) sortSelect.value = clientDirectoryState.sort;
   document.querySelectorAll('form[data-client-directory-search]').forEach(form => {
     const input = form.querySelector('input[name="q"]');
@@ -1316,6 +1424,14 @@ function setupClientDirectory() {
     clientDirectoryState.nodeId = nodeSelect.value;
     applyClientDirectoryFilters();
   });
+  groupSelect?.addEventListener('change', () => {
+    clientDirectoryState.groupId = groupSelect.value;
+    applyClientDirectoryFilters();
+  });
+  tagSelect?.addEventListener('change', () => {
+    clientDirectoryState.tagId = tagSelect.value;
+    applyClientDirectoryFilters();
+  });
   document.getElementById('bulkRemoveNodeId')?.addEventListener('change', event => {
     if (!clientDirectoryState.nodeId) return;
     if (String(event.currentTarget.value || '') === String(clientDirectoryState.nodeId)) return;
@@ -1327,8 +1443,10 @@ function setupClientDirectory() {
     applyClientDirectoryFilters();
   });
   document.getElementById('clientDirectoryReset')?.addEventListener('click', () => {
-    clientDirectoryState = { query: '', nodeId: '', sort: 'newest' };
+    clientDirectoryState = { query: '', nodeId: '', groupId: '', tagId: '', sort: 'newest' };
     if (nodeSelect) nodeSelect.value = '';
+    if (groupSelect) groupSelect.value = '';
+    if (tagSelect) tagSelect.value = '';
     if (sortSelect) sortSelect.value = 'newest';
     applyClientDirectoryFilters();
     const first = document.querySelector('form[data-client-directory-search] input[name="q"]');

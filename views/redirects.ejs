@@ -29,6 +29,14 @@
   function nodeEndpointLabel(node) {
     return 'inbound ' + (node.inbound_id || '—');
   }
+  function formatMetricBytes(value) {
+    const bytes = Math.max(0, Number(value || 0));
+    if (!bytes) return '0 Б';
+    const units = ['Б', 'КБ', 'МБ', 'ГБ', 'ТБ'];
+    const power = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
+    const amount = bytes / (1024 ** power);
+    return `${amount >= 100 || power === 0 ? amount.toFixed(0) : amount.toFixed(2)} ${units[power]}`;
+  }
 %>
 
 <%- include('partials_header', { pageTitle: 'Перенаправление', pageSubtitle: 'DNAT/SNAT перенаправление с IP сервера панели на выбранные 3x-ui узлы', activePage: 'redirects' }) %>
@@ -137,6 +145,7 @@
       <div class="kv-item"><strong>Состояние</strong><div class="muted" id="redirectHelperState"><%= status.ok ? 'OK' : 'Нет подтверждения / ошибка' %></div></div>
       <div class="kv-item"><strong>Последнее обновление</strong><div class="muted" id="redirectHelperUpdated"><%= status.updatedAt || status.generatedAt || 'нет данных' %></div></div>
       <div class="kv-item"><strong>Сообщение</strong><div class="muted" id="redirectHelperMessage"><%= status.message || status.error || 'helper ещё не применял правила' %></div></div>
+      <div class="kv-item"><strong>Сетевой backend</strong><div class="muted" id="redirectHelperBackend"><%= status.backend || status.iptables || 'определяется helper' %></div></div>
       <div class="kv-item <%= status.stale ? '' : 'hidden-soft' %>" id="redirectHelperStaleBox"><strong>Внимание</strong><div class="muted" id="redirectHelperStale"><%= status.stale ? status.staleMessage : '' %></div></div>
       <div class="kv-item"><strong>Файл правил</strong><div class="muted"><code>data/redirect_rules.json</code></div></div>
     </div>
@@ -154,7 +163,7 @@
       <small class="hint">Показатель обновляет host-helper. Лимит не показывается, потому что у каждого хостера и тарифа он разный.</small>
     </div>
     <div class="alert ok" style="margin-top:14px;">
-      Для применения iptables нужен host-service <code>3xui-aggregator-forwarder</code>. В новой версии установщик запускает его в режиме <code>loop</code>, поэтому после сохранения правил он должен применить их автоматически.
+      Host-service <code>3xui-aggregator-forwarder</code> применяет DNAT/SNAT напрямую в ядре Linux через <code>iptables-nft</code> (без пользовательского прокси и без WireGuard). Поэтому дополнительного шифрования, копирования трафика и потери скорости на процессе-прокси нет.
     </div>
   </section>
 
@@ -253,9 +262,10 @@
                 <td><%= rule.rewrite_enabled ? 'Включена' : 'Нет' %></td>
                 <td><span class="status <%= rule.enabled ? 'ok' : 'off' %>"><%= rule.enabled ? (rule.last_status || 'pending') : 'disabled' %></span><% if (rule.last_error) { %><div class="muted"><%= rule.last_error %></div><% } %></td>
                 <td>
-                  <div class="muted">iptables cmd: <%= rule.metrics && rule.metrics.iptablesCommands ? rule.metrics.iptablesCommands : '—' %></div>
-                  <div class="muted">packets: <%= rule.metrics && rule.metrics.packets ? rule.metrics.packets : '—' %></div>
-                  <div class="muted">bytes: <%= rule.metrics && rule.metrics.bytes ? rule.metrics.bytes : '—' %></div>
+                  <strong><%= Number(rule.metrics && rule.metrics.rateMbps || 0).toFixed(3) %> Мбит/с</strong>
+                  <div class="muted">Трафик: <%= formatMetricBytes(rule.metrics && rule.metrics.bytes) %></div>
+                  <div class="muted">Пакеты: <%= rule.metrics && rule.metrics.packets ? rule.metrics.packets : '0' %></div>
+                  <div class="muted">Backend: <%= rule.metrics && rule.metrics.iptables ? rule.metrics.iptables : '—' %></div>
                 </td>
                 <td>
                   <div class="row-actions">
@@ -280,6 +290,8 @@
               <div><span>Цель</span><code><%= rule.target_host %>:<%= rule.target_port %></code></div>
               <div><span>Протокол</span><strong><%= rule.protocol.toUpperCase() %></strong></div>
               <div><span>Подмена</span><strong><%= rule.rewrite_enabled ? 'Включена' : 'Нет' %></strong></div>
+              <div><span>Скорость</span><strong><%= Number(rule.metrics && rule.metrics.rateMbps || 0).toFixed(3) %> Мбит/с</strong></div>
+              <div><span>Трафик</span><strong><%= formatMetricBytes(rule.metrics && rule.metrics.bytes) %></strong></div>
               <% if (rule.last_error) { %><div class="span-2"><span>Ошибка</span><small><%= rule.last_error %></small></div><% } %>
             </div>
             <div class="mobile-redirect-actions">
@@ -344,6 +356,7 @@
   const stateEl = document.getElementById('redirectHelperState');
   const updatedEl = document.getElementById('redirectHelperUpdated');
   const messageEl = document.getElementById('redirectHelperMessage');
+  const backendEl = document.getElementById('redirectHelperBackend');
   const staleBox = document.getElementById('redirectHelperStaleBox');
   const staleEl = document.getElementById('redirectHelperStale');
   const netBox = document.getElementById('redirectNetworkBox');
@@ -366,6 +379,7 @@
     setText(stateEl, status && status.ok ? 'OK' : 'Нет подтверждения / ошибка');
     setText(updatedEl, (status && (status.updatedAt || status.generatedAt)) || 'нет данных');
     setText(messageEl, (status && (status.message || status.error)) || 'helper ещё не применял правила');
+    setText(backendEl, (status && (status.backend || status.iptables)) || 'определяется helper');
     if (staleBox && staleEl) {
       const stale = Boolean(status && status.stale);
       staleBox.classList.toggle('hidden-soft', !stale);

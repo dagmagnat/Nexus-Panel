@@ -437,6 +437,13 @@
                   <span>Inbound ID</span>
                   <strong><%= inboundValue %></strong>
                 </div>
+                <% if (!isRemnawave && node.transport_loaded) { %>
+                  <div class="node-detail-kv-row node-inbound-traffic-row">
+                    <span>Потрачено в Inbound #<%= node.inbound_id %></span>
+                    <strong><%= node.inbound_used_text || '0 Б' %></strong>
+                    <small><%= node.inbound_download_text || '0 Б' %> / <%= node.inbound_upload_text || '0 Б' %> · скачано / отдано</small>
+                  </div>
+                <% } %>
                 <% if (isRemnawave) { %>
                   <div class="node-detail-kv-row">
                     <span>Авторизация</span>

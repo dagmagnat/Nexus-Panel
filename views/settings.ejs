@@ -291,15 +291,6 @@
         </div>
 
         <div class="field">
-          <label>Secret-key входа в панель</label>
-          <div style="display:flex; gap:8px; align-items:center;">
-            <input id="panel-access-key" name="panel_access_key" value="<%= panelAccessKey || '' %>" placeholder="Оставь пустым, чтобы отключить ключ" style="flex:1;" />
-            <button type="button" class="secondary" onclick="generatePanelKey()">Сгенерировать</button>
-          </div>
-          <small class="hint">Ключ сохраняет доверие браузера и защищает служебные запросы. Старые мобильные ярлыки больше не получают 404: при необходимости панель покажет вход по логину и паролю. Вход с ключом: <code><%= panelLoginUrl || '' %></code></small>
-        </div>
-
-        <div class="field">
           <label>Режим ссылок подписок</label>
           <select name="sub_url_mode">
             <option value="custom" <%= subUrlMode === 'custom' ? 'selected' : '' %>>Свой публичный адрес подписок</option>
@@ -312,7 +303,7 @@
         <div class="field">
           <label>Публичный адрес подписок JSON/SUB</label>
           <input name="sub_public_url" value="<%= subPublicUrl || '' %>" placeholder="https://amg.amored.ru" />
-          <small class="hint">Клиенты будут получать ссылки вида <code><%= publicJsonExample || '' %></code>. Secret-key сюда не добавляется.</small>
+          <small class="hint">Клиенты будут получать ссылки вида <code><%= publicJsonExample || '' %></code>. Адрес входа администратора на эти ссылки не влияет.</small>
         </div>
 
         <div class="field">
@@ -479,7 +470,7 @@
         <div class="muted">Порт приложения: <code><%= runtimePort %></code></div>
         <div class="muted">Привязка портов к IP: <code><%= runtimeBindIp || 'не задана, все IP сервера' %></code></div>
         <div class="muted">Secure cookie: <code><%= runtimeSessionSecure ? 'включено' : 'выключено' %></code>, trust proxy: <code><%= runtimeTrustProxy ? 'включено' : 'выключено' %></code></div>
-        <div class="muted" style="margin-top:8px;">Порт и режим Caddy меняются через <code>agg</code>, потому что после изменения нужен перезапуск контейнеров. В веб-панели можно безопасно менять secret-key и публичный адрес подписок.</div>
+        <div class="muted" style="margin-top:8px;">Порт и режим Caddy меняются через <code>agg</code>, потому что после изменения нужен перезапуск контейнеров. В веб-панели можно безопасно менять публичный адрес подписок.</div>
       </div>
 
       <div class="kv-item">
@@ -533,7 +524,7 @@
       </label>
       <div class="kv-list field full security-info-list">
         <div class="kv-item"><strong>Защита от перебора</strong><div class="muted">После 5 неверных попыток вход блокируется на 15 минут для пары IP + логин.</div></div>
-        <div class="kv-item"><strong>Разделение входа и подписок</strong><div class="muted">Вход в админку может быть по адресу с портом и secret-key, а JSON/SUB-ссылки для клиентов — по отдельному публичному адресу без порта и без ключа.</div></div>
+        <div class="kv-item"><strong>Разделение входа и подписок</strong><div class="muted">Вход в админку работает по обычному адресу и защищён логином, паролем, сессией и ограничением попыток. JSON/SUB-ссылки клиентов можно выдавать с отдельного публичного адреса.</div></div>
       </div>
       <div class="actions field full"><button type="submit" class="btn-main">Сохранить безопасность</button></div>
     </form>
@@ -541,16 +532,6 @@
 </div>
 
 <script>
-function generatePanelKey() {
-  const alphabet = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  const bytes = new Uint8Array(32);
-  window.crypto.getRandomValues(bytes);
-  let value = '';
-  for (const b of bytes) value += alphabet[b % alphabet.length];
-  const input = document.getElementById('panel-access-key');
-  if (input) input.value = value;
-}
-
 async function copyText(value, button) {
   try {
     await navigator.clipboard.writeText(String(value || ''));

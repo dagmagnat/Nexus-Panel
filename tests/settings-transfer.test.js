@@ -140,7 +140,7 @@ test('encrypted settings bundle re-encrypts secrets and never imports clients or
     assert.equal(exported.counts.nodeInboundCache, 2);
     assert.equal(exported.counts.redirectRules, 1);
     assert.equal(exported.counts.sniProfiles, 2);
-    assert.equal(fs.statSync(bundle).mode & 0o777, 0o600);
+    if (process.platform !== 'win32') assert.equal(fs.statSync(bundle).mode & 0o777, 0o600);
     const outerText = fs.readFileSync(bundle, 'utf8');
     assert.doesNotMatch(outerText, /node-password|telegram-secret|routing_config/);
 

@@ -6,15 +6,10 @@ const fs = require('node:fs');
 const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
-const { execFileSync, spawn } = require('node:child_process');
+const { spawn } = require('node:child_process');
 const { once } = require('node:events');
-const Database = require('better-sqlite3');
-const { encrypt, decrypt } = require('../lib_crypto');
 
 const projectRoot = path.resolve(__dirname, '..');
-const appSecret = 'test-app-secret-0123456789abcdef0123456789abcdef';
-const sessionSecret = 'test-session-secret-0123456789abcdef0123456789abcdef';
-const fingerprintSetting = 'install_panel_access_key_env_fingerprint_v1';
 
 async function reservePort() {
   const server = net.createServer();
@@ -26,7 +21,7 @@ async function reservePort() {
   return port;
 }
 
-async function startApp(dataDir, panelAccessKey) {
+async function startApp(dataDir, panelAccessKey = 'legacy-key-that-must-be-ignored') {
   const port = await reservePort();
   const child = spawn(process.execPath, ['app.js'], {
     cwd: projectRoot,
@@ -35,8 +30,8 @@ async function startApp(dataDir, panelAccessKey) {
       NODE_ENV: 'development',
       PORT: String(port),
       DATA_DIR: dataDir,
-      APP_SECRET: appSecret,
-      SESSION_SECRET: sessionSecret,
+      APP_SECRET: 'test-app-secret-0123456789abcdef0123456789abcdef',
+      SESSION_SECRET: 'test-session-secret-0123456789abcdef0123456789abcdef',
       ADMIN_USERNAME: 'admin',
       ADMIN_PASSWORD: 'test-password-strong',
       PANEL_ACCESS_KEY: panelAccessKey,
@@ -66,7 +61,6 @@ async function startApp(dataDir, panelAccessKey) {
       reject(new Error(`App exited with code ${code}:\n${output}`));
     });
   });
-
   await started;
   return { child, port };
 }
@@ -75,163 +69,54 @@ async function stopApp(instance) {
   if (!instance || instance.child.exitCode !== null) return;
   instance.child.kill('SIGTERM');
   let timeoutId;
-  const timeout = new Promise(resolve => {
-    timeoutId = setTimeout(() => {
-      if (instance.child.exitCode === null) instance.child.kill('SIGKILL');
-      resolve();
-    }, 5000);
-  });
-  await Promise.race([once(instance.child, 'exit'), timeout]);
+  await Promise.race([
+    once(instance.child, 'exit'),
+    new Promise(resolve => {
+      timeoutId = setTimeout(() => {
+        if (instance.child.exitCode === null) instance.child.kill('SIGKILL');
+        resolve();
+      }, 5000);
+    })
+  ]);
   clearTimeout(timeoutId);
 }
 
-async function requestLogin(port, key) {
-  return fetch(`http://127.0.0.1:${port}/login?key=${encodeURIComponent(key)}`, {
-    redirect: 'manual'
-  });
-}
-
-async function requestProtected(port, key, accept = 'application/json') {
-  return fetch(`http://127.0.0.1:${port}/dashboard?key=${encodeURIComponent(key)}`, {
-    headers: { accept },
-    redirect: 'manual'
-  });
-}
-
-function setDatabaseSetting(dataDir, key, value) {
-  const db = new Database(path.join(dataDir, 'app.db'));
-  try {
-    const stored = key === 'panel_access_key' && value
-      ? `enc:v1:${encrypt(value, appSecret)}`
-      : String(value || '');
-    db.prepare(`
-      INSERT INTO app_settings (key, value, updated_at)
-      VALUES (?, ?, CURRENT_TIMESTAMP)
-      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
-    `).run(key, stored);
-  } finally {
-    db.close();
-  }
-}
-
-function deleteDatabaseSetting(dataDir, key) {
-  const db = new Database(path.join(dataDir, 'app.db'));
-  try {
-    db.prepare('DELETE FROM app_settings WHERE key = ?').run(key);
-  } finally {
-    db.close();
-  }
-}
-
-function readPanelAccessKey(dataDir) {
-  const db = new Database(path.join(dataDir, 'app.db'), { readonly: true });
-  try {
-    const raw = String(db.prepare('SELECT value FROM app_settings WHERE key = ?').get('panel_access_key')?.value || '');
-    return raw.startsWith('enc:v1:') ? decrypt(raw.slice('enc:v1:'.length), appSecret) : raw;
-  } finally {
-    db.close();
-  }
-}
-
-function printRuntimePanelAccessKey(dataDir, environmentKey) {
-  return execFileSync(process.execPath, ['scripts/print-panel-access-key.js'], {
-    cwd: projectRoot,
-    env: {
-      ...process.env,
-      DATA_DIR: dataDir,
-      APP_SECRET: appSecret,
-      PANEL_ACCESS_KEY: environmentKey
-    },
-    encoding: 'utf8'
-  });
-}
-
-test('panel access key recovers once from .env and respects later UI changes', { timeout: 45000 }, async t => {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-panel-key-'));
+test('legacy URL secret-key is ignored and password login remains reachable', { timeout: 30000 }, async t => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-login-without-key-'));
   let appInstance = null;
   t.after(async () => {
     await stopApp(appInstance);
     fs.rmSync(dataDir, { recursive: true, force: true });
   });
 
-  const initialKey = 'initial-panel-key-1234';
-  appInstance = await startApp(dataDir, initialKey);
-  let response = await requestLogin(appInstance.port, initialKey);
-  assert.equal(response.status, 302);
-  assert.equal(response.headers.get('location'), '/login');
-  await stopApp(appInstance);
-  appInstance = null;
-
-  // Simulate a pre-fix backup whose SQLite key differs from the deployment
-  // key and has no reconciliation fingerprint.
-  setDatabaseSetting(dataDir, 'panel_access_key', 'legacy-database-key-1234');
-  deleteDatabaseSetting(dataDir, fingerprintSetting);
-
-  const recoveredEnvironmentKey = 'deployment-key-from-env-1234';
-  appInstance = await startApp(dataDir, recoveredEnvironmentKey);
-  response = await requestLogin(appInstance.port, recoveredEnvironmentKey);
-  assert.equal(response.status, 302);
-  assert.equal(response.headers.get('location'), '/login');
-  await stopApp(appInstance);
-  appInstance = null;
-  assert.equal(readPanelAccessKey(dataDir), recoveredEnvironmentKey);
-  assert.equal(printRuntimePanelAccessKey(dataDir, 'stale-env-key-1234'), recoveredEnvironmentKey);
-
-  // A later key chosen in the UI is authoritative: the unchanged .env key is
-  // no longer accepted as a permanent back door.
-  const uiKey = 'key-selected-in-ui-1234';
-  setDatabaseSetting(dataDir, 'panel_access_key', uiKey);
-  assert.equal(printRuntimePanelAccessKey(dataDir, recoveredEnvironmentKey), uiKey);
-  appInstance = await startApp(dataDir, recoveredEnvironmentKey);
-  response = await requestProtected(appInstance.port, recoveredEnvironmentKey);
-  assert.equal(response.status, 404);
-  assert.equal(await response.text(), 'Not found');
-  response = await requestLogin(appInstance.port, recoveredEnvironmentKey);
-  assert.equal(response.status, 200, 'stale key may show password login but must not unlock protected routes');
-  response = await requestLogin(appInstance.port, uiKey);
-  assert.equal(response.status, 302);
-  await stopApp(appInstance);
-  appInstance = null;
-
-  // Rotating PANEL_ACCESS_KEY in the deployment creates a new one-time
-  // recovery value and synchronizes SQLite after successful use.
-  const rotatedEnvironmentKey = 'rotated-deployment-key-1234';
-  appInstance = await startApp(dataDir, rotatedEnvironmentKey);
-  response = await requestLogin(appInstance.port, rotatedEnvironmentKey);
-  assert.equal(response.status, 302);
-  await stopApp(appInstance);
-  appInstance = null;
-  assert.equal(readPanelAccessKey(dataDir), rotatedEnvironmentKey);
+  appInstance = await startApp(dataDir);
+  for (const suffix of ['', '?key=wrong-key', '?key=old-bookmark-key']) {
+    const response = await fetch(`http://127.0.0.1:${appInstance.port}/login${suffix}`, { redirect: 'manual' });
+    assert.equal(response.status, 200);
+    assert.match(await response.text(), /Вход в панель/);
+  }
 });
 
-test('mobile and stale browser shortcuts recover to login instead of Not found', { timeout: 30000 }, async t => {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-mobile-login-'));
+test('all unauthenticated dashboard requests redirect to login instead of Not found', { timeout: 30000 }, async t => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-direct-login-'));
   let appInstance = null;
   t.after(async () => {
     await stopApp(appInstance);
     fs.rmSync(dataDir, { recursive: true, force: true });
   });
 
-  appInstance = await startApp(dataDir, 'mobile-entry-key-1234');
+  appInstance = await startApp(dataDir);
 
   let response = await fetch(`http://127.0.0.1:${appInstance.port}/mobile-login`, { redirect: 'manual' });
   assert.equal(response.status, 302);
   assert.equal(response.headers.get('location'), '/login');
 
-  response = await fetch(`http://127.0.0.1:${appInstance.port}/login`, { redirect: 'manual' });
-  assert.equal(response.status, 200);
-  assert.match(await response.text(), /Вход в панель/);
-
-  response = await fetch(`http://127.0.0.1:${appInstance.port}/dashboard`, {
-    headers: { accept: 'text/html' },
-    redirect: 'manual'
-  });
-  assert.equal(response.status, 302);
-  assert.equal(response.headers.get('location'), '/mobile-login');
-
-  response = await fetch(`http://127.0.0.1:${appInstance.port}/dashboard`, {
-    headers: { accept: 'application/json' },
-    redirect: 'manual'
-  });
-  assert.equal(response.status, 404);
+  for (const accept of ['text/html', 'application/json']) {
+    response = await fetch(`http://127.0.0.1:${appInstance.port}/dashboard`, {
+      headers: { accept },
+      redirect: 'manual'
+    });
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.get('location'), '/login');
+  }
 });

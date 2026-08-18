@@ -85,6 +85,7 @@ async function stopApp(instance) {
 
 async function startMock3xui() {
   const requestedPaths = [];
+  const updatePayloads = [];
   const selectedInbound = {
     id: 1,
     up: 3 * gib,
@@ -132,12 +133,22 @@ async function startMock3xui() {
       res.end(JSON.stringify({ success: true, obj: [{ id: 1, protocol: 'trojan', port: 9999 }] }));
       return;
     }
+    if (req.method === 'POST' && req.url === '/panel/api/inbounds/update/1') {
+      let body = '';
+      req.setEncoding('utf8');
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        updatePayloads.push(Object.fromEntries(new URLSearchParams(body)));
+        res.end(JSON.stringify({ success: true, obj: true }));
+      });
+      return;
+    }
     res.statusCode = 404;
     res.end(JSON.stringify({ success: false, msg: 'endpoint not found' }));
   });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
-  return { server, port: server.address().port, requestedPaths, selectedInbound };
+  return { server, port: server.address().port, requestedPaths, selectedInbound, updatePayloads };
 }
 
 function updateCookieJar(jar, response) {
@@ -257,7 +268,46 @@ test('node add imports the exact full inbound, isolates its fields and shows inb
   assert.doesNotMatch(editPage.html, /name="inbound_kcp_seed"/);
   assert.doesNotMatch(editPage.html, /name="inbound_target"/);
   assert.doesNotMatch(editPage.html, /name="inbound_short_id"/);
+  assert.match(editPage.html, /Все настройки inbound/);
+  assert.match(editPage.html, /name="inbound_advanced_json"/);
   assert.equal(mock.requestedPaths.includes('GET /panel/api/inbounds/list/slim'), false);
+
+  const advancedInbound = {
+    ...mock.selectedInbound,
+    remark: 'Advanced exact payload',
+    allocate: { strategy: 'always', refresh: 9, concurrency: 3 },
+    streamSettings: JSON.parse(mock.selectedInbound.streamSettings),
+    sniffing: JSON.parse(mock.selectedInbound.sniffing),
+    customFutureField: { enabled: true, mode: 'next' }
+  };
+  response = await fetchWithJar(jar, `http://127.0.0.1:${appInstance.port}/nodes/${node.id}/edit`, {
+    method: 'POST',
+    redirect: 'manual',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      _csrf: editPage.csrf,
+      node_type: '3xui',
+      panel_url: `http://127.0.0.1:${mock.port}`,
+      panel_path: '',
+      api_auth_mode: 'token',
+      api_token: '',
+      inbound_id: '1',
+      country_code: 'DE',
+      label_suffix: 'Exact inbound',
+      sni_mode: 'inbound',
+      apply_inbound_advanced_json: '1',
+      inbound_advanced_json: JSON.stringify(advancedInbound)
+    }).toString()
+  });
+  assert.equal(response.status, 302);
+  assert.equal(mock.updatePayloads.length, 1);
+  assert.equal(mock.updatePayloads[0].id, '1');
+  assert.equal(mock.updatePayloads[0].remark, 'Advanced exact payload');
+  assert.equal(mock.updatePayloads[0]['allocate[strategy]'], 'always');
+  assert.equal(mock.updatePayloads[0]['allocate[refresh]'], '9');
+  assert.equal(mock.updatePayloads[0]['customFutureField[enabled]'], 'true');
+  assert.equal(mock.updatePayloads[0]['customFutureField[mode]'], 'next');
+  assert.equal(mock.updatePayloads[0]['streamSettings[xhttpSettings][mode]'], 'packet-up');
 
   const beforeInvalid = new Database(path.join(dataDir, 'app.db'), { readonly: true });
   const beforeCount = beforeInvalid.prepare('SELECT COUNT(*) AS count FROM nodes').get().count;

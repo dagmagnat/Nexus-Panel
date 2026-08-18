@@ -9,6 +9,7 @@ const { spawnSync } = require('node:child_process');
 const projectRoot = path.resolve(__dirname, '..');
 const installerPath = path.join(projectRoot, 'install.sh');
 const testTempRoot = path.join(projectRoot, 'tmp');
+const bashAvailable = !spawnSync('bash', ['--version'], { encoding: 'utf8' }).error;
 
 function createTempDirectory(prefix) {
   fs.mkdirSync(testTempRoot, { recursive: true });
@@ -38,7 +39,7 @@ function installerLibraryPrefix() {
   return `NEXUS_INSTALLER_LIBRARY_ONLY=1 source ${JSON.stringify(installerPath)}`;
 }
 
-test('installer maps the former official source to Nexus Panel', () => {
+test('installer maps the former official source to Nexus Panel', { skip: !bashAvailable && 'bash is unavailable on this host' }, () => {
   const tempDir = createTempDirectory('nexus-installer-source-');
   try {
     const appDir = path.join(tempDir, 'app');
@@ -66,7 +67,7 @@ test('installer maps the former official source to Nexus Panel', () => {
   }
 });
 
-test('installer fetches the new origin before stopping and keeps runtime data', () => {
+test('installer fetches the new origin before stopping and keeps runtime data', { skip: !bashAvailable && 'bash is unavailable on this host' }, () => {
   const tempDir = createTempDirectory('nexus-installer-git-');
   try {
     const oldRepo = path.join(tempDir, 'old-repository');
@@ -103,7 +104,7 @@ test('installer fetches the new origin before stopping and keeps runtime data', 
   }
 });
 
-test('failed source download does not stop the running installation', () => {
+test('failed source download does not stop the running installation', { skip: !bashAvailable && 'bash is unavailable on this host' }, () => {
   const tempDir = createTempDirectory('nexus-installer-failure-');
   try {
     const oldRepo = path.join(tempDir, 'old-repository');
@@ -146,11 +147,15 @@ test('installer cannot silently exit when helper-only variable is exported', () 
   assert.match(source, /maybe_clear_screen/, 'SSH diagnostics stay visible by default');
 });
 
-test('README bootstrap validates the downloaded installer before execution', () => {
+test('README exposes a single-line installer with retry and a visible temp script', () => {
   const readme = fs.readFileSync(path.join(projectRoot, 'README.md'), 'utf8');
-  assert.match(readme, /unset NEXUS_INSTALLER_LIBRARY_ONLY/);
-  assert.match(readme, /--retry 5 --retry-delay 2 --connect-timeout 20/);
-  assert.match(readme, /test -s \/tmp\/nexus-panel-install\.sh/);
-  assert.match(readme, /grep -q '\^#!\/usr\/bin\/env bash'/);
-  assert.match(readme, /tee \/root\/nexus-panel-install\.log/);
+  assert.match(readme, /curl -fsSL --retry 5 https:\/\/raw\.githubusercontent\.com\/dagmagnat\/Nexus-Panel\/main\/install\.sh -o \/tmp\/nexus-install\.sh && bash \/tmp\/nexus-install\.sh/);
+});
+
+test('agg menu cannot launch an action on an empty Enter and legacy URL key is retired', () => {
+  const installer = fs.readFileSync(installerPath, 'utf8');
+  assert.match(installer, /Enter ничего не запускает/);
+  assert.match(installer, /''\) warn "Действие не выбрано\. Ничего не изменено\."/);
+  assert.doesNotMatch(installer, /^PANEL_ACCESS_KEY=/m);
+  assert.match(installer, /Адрес входа[^\n]+\/login/);
 });

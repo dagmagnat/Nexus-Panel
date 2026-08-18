@@ -306,9 +306,24 @@
           <div class="field half"><label>Sniffing destOverride</label><input name="inbound_sniffing_dest" value="<%= inboundPreview.sniffingDestOverride || 'http, tls' %>" /></div>
           <div class="field">
             <label class="switch-row compact">
+              <input type="hidden" name="inbound_sniffing_present" value="1" />
               <input type="checkbox" name="inbound_sniffing_enabled" value="1" <%= inboundPreview.sniffingEnabled ? 'checked' : '' %> />
               <span><strong>Sniffing в inbound</strong><small>Настройка именно 3x-ui/Xray, не Happ. Если не уверен — не меняй.</small></span>
             </label>
+          </div>
+          <div class="field full">
+            <details class="inbound-advanced-settings">
+              <summary>Все настройки inbound</summary>
+              <div class="inbound-advanced-body">
+                <div class="alert warning">Здесь показан полный объект, полученный из оригинальной 3x-ui: settings, streamSettings, sniffing, fallbacks, sockopt, mux и неизвестные Nexus поля. При точном применении JSON отправляется обратно целиком. ID должен остаться <strong><%= inboundPreview.id || node.inbound_id %></strong>.</div>
+                <label>Полный JSON inbound</label>
+                <textarea name="inbound_advanced_json" rows="26" spellcheck="false" class="inbound-json-editor"><%= JSON.stringify(inboundPreview.raw, null, 2) %></textarea>
+                <label class="switch-row compact danger-option">
+                  <input type="checkbox" name="apply_inbound_advanced_json" value="1" />
+                  <span><strong>Точно применить полный JSON в 3x-ui</strong><small>Используется JSON выше; основные поля формы в этом режиме не перезаписывают его. Перед отправкой Nexus проверит ID, порт и структуру обязательных полей.</small></span>
+                </label>
+              </div>
+            </details>
           </div>
           <div class="field">
             <label class="switch-row compact danger-option">

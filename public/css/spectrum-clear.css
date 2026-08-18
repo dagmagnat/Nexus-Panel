@@ -10,6 +10,41 @@
   font-display: swap;
 }
 
+/* Client groups and colored labels */
+.client-meta-chips { display:flex; flex-wrap:wrap; align-items:center; gap:5px; margin-top:5px; min-width:0; }
+.client-group-chip,
+.client-tag-chip { --chip-color:#64748b; display:inline-flex; align-items:center; max-width:100%; min-height:22px; padding:2px 8px; border:1px solid color-mix(in srgb, var(--chip-color) 58%, transparent); border-radius:999px; background:color-mix(in srgb, var(--chip-color) 16%, transparent); color:color-mix(in srgb, var(--chip-color) 74%, white); font-size:11px; font-weight:750; line-height:1.2; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.client-group-chip::before { content:""; width:7px; height:7px; margin-right:5px; border-radius:2px; background:var(--chip-color); box-shadow:0 0 0 2px color-mix(in srgb, var(--chip-color) 20%, transparent); flex:0 0 auto; }
+.client-tag-chip::before { content:""; width:7px; height:7px; margin-right:5px; border-radius:50%; background:var(--chip-color); flex:0 0 auto; }
+.client-label-picker { display:flex; flex-wrap:wrap; gap:7px; min-height:42px; padding:8px; border:1px solid var(--line); border-radius:12px; background:var(--surface-soft); }
+.client-label-picker label { display:inline-flex; align-items:center; gap:5px; cursor:pointer; }
+.client-label-picker input { width:auto; margin:0; }
+.client-labels-modal { width:min(880px, calc(100vw - 24px)); }
+.client-label-manager-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; margin-top:14px; }
+.client-label-create-form { display:grid; grid-template-columns:minmax(0,1fr) 48px auto; gap:8px; align-items:center; }
+.client-label-create-form input[type="color"] { width:48px; min-height:42px; padding:4px; }
+.client-label-manager-list { display:grid; gap:7px; margin-top:12px; }
+.client-label-manager-list > div { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 10px; border:1px solid var(--line); border-radius:11px; }
+.client-label-manager-list form { margin:0; }
+.btn-link-danger { border:0; padding:4px; background:transparent; color:var(--danger); font-size:12px; cursor:pointer; }
+.modern-traffic-cell.is-per-node > div:first-child { align-items:flex-start; gap:5px; flex-direction:column; }
+.inbound-advanced-settings { border:1px solid var(--line); border-radius:14px; background:var(--surface-soft); overflow:hidden; }
+.inbound-advanced-settings > summary { padding:13px 15px; cursor:pointer; color:var(--text-strong); font-weight:800; list-style-position:inside; }
+.inbound-advanced-settings[open] > summary { border-bottom:1px solid var(--line); }
+.inbound-advanced-body { display:grid; gap:12px; padding:14px; }
+.inbound-json-editor { width:100%; min-height:380px; resize:vertical; tab-size:2; font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace; white-space:pre; }
+
+@media (max-width:720px) {
+  .client-label-manager-grid { grid-template-columns:1fr; }
+  .client-label-create-form { grid-template-columns:minmax(0,1fr) 44px; }
+  .client-label-create-form button { grid-column:1 / -1; width:100%; }
+  .client-directory-toolbar { grid-template-columns:repeat(2,minmax(0,1fr)) !important; }
+  .client-directory-toolbar-actions { grid-column:1 / -1; }
+  .client-meta-chips { gap:4px; }
+  .client-group-chip,.client-tag-chip { min-height:20px; padding:2px 6px; font-size:10px; }
+  .inbound-json-editor { min-height:300px; font-size:11px; }
+}
+
 :root {
   color-scheme: dark;
   --font-ui: Inter, Manrope, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Nexus Flags";
@@ -1037,6 +1072,8 @@ tr.muted-row { opacity: .58; }
 .client-quick-info-grid strong { display: block; margin-top: 3px; overflow-wrap: anywhere; font-size: 10px; }
 .client-quick-nodes-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .client-quick-node-chip { display: flex; align-items: center; gap: 8px; padding: 9px; background: var(--surface-raised); border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.client-quick-node-chip > span:not(.client-quick-node-flag) { display: grid; gap: 2px; min-width: 0; }
+.client-quick-node-chip small { color: var(--muted); font-size: 10px; }
 .client-transfer-grid { display: grid; gap: 10px; }
 .client-transfer-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .client-transfer-result { max-height: 260px; overflow: auto; white-space: pre-wrap; }

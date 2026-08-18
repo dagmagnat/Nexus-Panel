@@ -72,6 +72,13 @@ def clean_text(value: Any, default: str = "", maximum: int = 16_384) -> str:
     return str(value).replace("\x00", "").strip()[:maximum]
 
 
+def clean_color(value: Any, default: str) -> str:
+    color = clean_text(value, "", 7).lower()
+    if len(color) == 7 and color.startswith("#") and all(ch in "0123456789abcdef" for ch in color[1:]):
+        return color
+    return default
+
+
 def get_first(mapping: dict[str, Any], *keys: str, default: Any = None) -> Any:
     for key in keys:
         if key in mapping:
@@ -199,6 +206,26 @@ def export_clients(db_path: Path) -> dict[str, Any]:
             raise TransferError(f"Слишком много клиентов для одного файла: {len(client_rows)}")
 
         assignments_by_client: dict[int, list[dict[str, Any]]] = {}
+        group_by_id: dict[int, dict[str, Any]] = {}
+        tags_by_client: dict[int, list[dict[str, Any]]] = {}
+        if table_exists(conn, "client_groups"):
+            for group in conn.execute("SELECT id, name, color FROM client_groups ORDER BY id"):
+                group_by_id[clamp_int(row_value(group, "id"), 0)] = {
+                    "name": clean_text(row_value(group, "name"), "", 64),
+                    "color": clean_color(row_value(group, "color"), "#64748b"),
+                }
+        if table_exists(conn, "client_tags") and table_exists(conn, "client_tag_assignments"):
+            for tag in conn.execute("""
+                SELECT a.client_id, t.name, t.color
+                FROM client_tag_assignments a
+                JOIN client_tags t ON t.id = a.tag_id
+                ORDER BY a.client_id, t.name COLLATE NOCASE
+            """):
+                client_id = clamp_int(row_value(tag, "client_id"), 0)
+                tags_by_client.setdefault(client_id, []).append({
+                    "name": clean_text(row_value(tag, "name"), "", 64),
+                    "color": clean_color(row_value(tag, "color"), "#3b82f6"),
+                })
         if table_exists(conn, "client_nodes"):
             client_node_columns = table_columns(conn, "client_nodes")
             node_columns = table_columns(conn, "nodes")
@@ -236,6 +263,7 @@ def export_clients(db_path: Path) -> dict[str, Any]:
         clients: list[dict[str, Any]] = []
         for row in client_rows:
             login = clean_text(row_value(row, "login"), "", 500)
+            client_id = clamp_int(row_value(row, "id"), 0)
             clients.append({
                 "login": login,
                 "displayName": clean_text(row_value(row, "display_name"), login, 500) or login,
@@ -250,7 +278,9 @@ def export_clients(db_path: Path) -> dict[str, Any]:
                 "flow": clean_text(row_value(row, "flow"), "", 500),
                 "lastOnlineAt": clean_text(row_value(row, "last_online_at"), "", 100),
                 "createdAt": clean_text(row_value(row, "created_at"), "", 100),
-                "nodeAssignments": assignments_by_client.get(clamp_int(row_value(row, "id"), 0), []),
+                "group": group_by_id.get(clamp_int(row_value(row, "group_id"), 0)),
+                "tags": tags_by_client.get(client_id, []),
+                "nodeAssignments": assignments_by_client.get(client_id, []),
             })
 
         version_file = Path(__file__).resolve().parent.parent / "VERSION"
@@ -284,7 +314,8 @@ def write_document(document: dict[str, Any], output: str) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary_name = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=str(target.parent))
     try:
-        os.fchmod(fd, 0o600)
+        if hasattr(os, "fchmod"):
+            os.fchmod(fd, 0o600)
         with os.fdopen(fd, "wb") as handle:
             handle.write(encoded)
             handle.flush()
@@ -408,6 +439,27 @@ def validate_document(document: dict[str, Any]) -> tuple[list[dict[str, Any]], d
             }
             assignments.append(normalized_assignment)
         assignment_count += len(assignments)
+        metadata_present = "group" in raw or "tags" in raw
+        raw_group = get_first(raw, "group")
+        group = None
+        if isinstance(raw_group, dict):
+            group_name = clean_text(get_first(raw_group, "name"), "", 64)
+            if group_name:
+                group = {"name": group_name, "color": clean_color(get_first(raw_group, "color"), "#64748b")}
+        raw_tags = get_first(raw, "tags", default=[])
+        if not isinstance(raw_tags, list):
+            errors.append(f"Клиент #{index}: tags должно быть массивом")
+            raw_tags = []
+        tags: list[dict[str, Any]] = []
+        seen_tag_names: set[str] = set()
+        for raw_tag in raw_tags:
+            if not isinstance(raw_tag, dict):
+                continue
+            tag_name = clean_text(get_first(raw_tag, "name"), "", 64)
+            if not tag_name or tag_name.casefold() in seen_tag_names:
+                continue
+            seen_tag_names.add(tag_name.casefold())
+            tags.append({"name": tag_name, "color": clean_color(get_first(raw_tag, "color"), "#3b82f6")})
         normalized.append({
             "login": login,
             "displayName": clean_text(get_first(raw, "displayName", "display_name"), login, 500) or login,
@@ -422,6 +474,9 @@ def validate_document(document: dict[str, Any]) -> tuple[list[dict[str, Any]], d
             "flow": clean_text(get_first(raw, "flow"), "", 500),
             "lastOnlineAt": clean_text(get_first(raw, "lastOnlineAt", "last_online_at"), "", 100),
             "createdAt": clean_text(get_first(raw, "createdAt", "created_at"), "", 100),
+            "metadataPresent": metadata_present,
+            "group": group,
+            "tags": tags,
             "nodeAssignments": assignments,
         })
 
@@ -531,6 +586,41 @@ def update_client(conn: sqlite3.Connection, client_id: int, client: dict[str, An
         f"UPDATE clients SET {', '.join(f'{name} = ?' for name in names)} WHERE id = ?",
         tuple(values[name] for name in names) + (client_id,),
     )
+
+
+def apply_client_metadata(conn: sqlite3.Connection, client_id: int, client: dict[str, Any]) -> None:
+    if not client.get("metadataPresent"):
+        return
+    client_columns = table_columns(conn, "clients")
+    if "group_id" in client_columns and table_exists(conn, "client_groups"):
+        group_id = None
+        group = client.get("group")
+        if isinstance(group, dict) and group.get("name"):
+            existing = conn.execute("SELECT id FROM client_groups WHERE lower(name)=lower(?)", (group["name"],)).fetchone()
+            if existing:
+                group_id = int(existing["id"])
+            else:
+                group_id = int(conn.execute(
+                    "INSERT INTO client_groups (name, color) VALUES (?, ?)",
+                    (group["name"], group["color"]),
+                ).lastrowid)
+        conn.execute("UPDATE clients SET group_id=? WHERE id=?", (group_id, client_id))
+
+    if table_exists(conn, "client_tags") and table_exists(conn, "client_tag_assignments"):
+        conn.execute("DELETE FROM client_tag_assignments WHERE client_id=?", (client_id,))
+        for tag in client.get("tags", []):
+            existing = conn.execute("SELECT id FROM client_tags WHERE lower(name)=lower(?)", (tag["name"],)).fetchone()
+            if existing:
+                tag_id = int(existing["id"])
+            else:
+                tag_id = int(conn.execute(
+                    "INSERT INTO client_tags (name, color) VALUES (?, ?)",
+                    (tag["name"], tag["color"]),
+                ).lastrowid)
+            conn.execute(
+                "INSERT OR IGNORE INTO client_tag_assignments (client_id, tag_id) VALUES (?, ?)",
+                (client_id, tag_id),
+            )
 
 
 def upsert_matched_assignment(
@@ -743,6 +833,8 @@ def import_clients(
                 else:
                     target_id = create_client(conn, client, client_columns)
                     result["created"] += 1
+
+                apply_client_metadata(conn, target_id, client)
 
                 if node_mode == "match":
                     matched_target_ids: set[int] = set()

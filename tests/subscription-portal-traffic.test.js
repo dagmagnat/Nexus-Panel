@@ -82,8 +82,10 @@ async function stopApp(instance) {
   ]);
 }
 
-async function startMock3xui() {
+async function startMock3xui(options = {}) {
   const requestedPaths = [];
+  const uploadBytes = Number(options.uploadBytes ?? gib);
+  const downloadBytes = Number(options.downloadBytes ?? (2 * gib));
   const server = http.createServer((req, res) => {
     requestedPaths.push(`${req.method} ${req.url}`);
     res.setHeader('Content-Type', 'application/json');
@@ -95,7 +97,7 @@ async function startMock3xui() {
     if (req.method === 'GET' && req.url === '/panel/api/inbounds/getClientTraffics/portal-user') {
       res.end(JSON.stringify({
         success: true,
-        obj: { email: 'portal-user', up: gib, down: 2 * gib, total: 0, enable: true }
+        obj: { email: 'portal-user', up: uploadBytes, down: downloadBytes, total: 0, enable: true }
       }));
       return;
     }
@@ -105,6 +107,34 @@ async function startMock3xui() {
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   return { server, port: server.address().port, requestedPaths };
+}
+
+function addSubscriptionNode(db, { mockPort, name, countryCode, countryName, clientId, uuid, trafficGb }) {
+  const nodeResult = db.prepare(`
+    INSERT INTO nodes (
+      name, node_type, panel_url, panel_path, username, password_enc,
+      api_auth_mode, api_token_enc, inbound_id, enabled, last_status,
+      country_code, country_name_ru, country_flag
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    name, '3xui', `http://127.0.0.1:${mockPort}`, '', '', encrypt('', appSecret),
+    'token', encrypt('test-api-token', appSecret), 1, 1, 'online', countryCode, countryName, ''
+  );
+  db.prepare(`
+    INSERT INTO client_nodes (
+      client_id, node_id, remote_email, remote_uuid, traffic_gb,
+      limit_ip, enabled
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(clientId, nodeResult.lastInsertRowid, 'portal-user', uuid, trafficGb, 2, 1);
+  const inbound = {
+    id: 1,
+    port: 2053,
+    protocol: 'vless',
+    settings: JSON.stringify({ decryption: 'none', clients: [{ id: uuid, email: 'portal-user', enable: true }] }),
+    streamSettings: JSON.stringify({ network: 'tcp', security: 'none' })
+  };
+  db.prepare('INSERT INTO node_inbound_cache (node_id, inbound_id, inbound_json) VALUES (?, ?, ?)')
+    .run(nodeResult.lastInsertRowid, 1, JSON.stringify(inbound));
 }
 
 function seedSubscription(dataDir, mockPort) {
@@ -222,4 +252,62 @@ test('subscription sums unlimited-node traffic once and exposes a branded browse
 
   assert.ok(mock.requestedPaths.includes('GET /panel/api/clients/traffic/portal-user'));
   assert.ok(mock.requestedPaths.includes('GET /panel/api/inbounds/getClientTraffics/portal-user'));
+});
+
+test('per-node quota never includes traffic spent on another node', { timeout: 60000 }, async t => {
+  const dataDir = fs.mkdtempSync(path.join(projectRoot, '.tmp-subscription-node-quota-'));
+  const primary = await startMock3xui({ uploadBytes: 8 * gib, downloadBytes: 10 * gib });
+  const lte = await startMock3xui({ uploadBytes: 2 * gib, downloadBytes: 5 * gib });
+  let app = null;
+  t.after(async () => {
+    await stopApp(app);
+    await Promise.all([
+      new Promise(resolve => primary.server.close(resolve)),
+      new Promise(resolve => lte.server.close(resolve))
+    ]);
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  app = await startApp(dataDir);
+  const db = new Database(path.join(dataDir, 'app.db'));
+  try {
+    const uuid = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+    const client = db.prepare(`
+      INSERT INTO clients (
+        login, display_name, uuid, sub_slug, duration_days, traffic_gb,
+        limit_ip, expiry_time, enabled
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run('portal-user', 'LTE Client', uuid, 'lte-client', 30, 0, 2, Date.now() + 30 * 86400000, 1);
+    addSubscriptionNode(db, {
+      mockPort: primary.port, name: 'Primary', countryCode: 'DE', countryName: 'Основной',
+      clientId: client.lastInsertRowid, uuid, trafficGb: 0
+    });
+    addSubscriptionNode(db, {
+      mockPort: lte.port, name: 'LTE', countryCode: 'FI', countryName: 'LTE',
+      clientId: client.lastInsertRowid, uuid, trafficGb: 50
+    });
+  } finally {
+    db.close();
+  }
+
+  let response = await fetch(`http://127.0.0.1:${app.port}/sub/lte-client?raw=1`);
+  assert.equal(response.status, 200);
+  const header = parseUserInfo(response.headers.get('subscription-userinfo'));
+  assert.equal(header.upload, 10 * gib);
+  assert.equal(header.download, 15 * gib);
+  assert.equal(header.total, undefined, 'per-node quota must not become a global Subscription-Userinfo total');
+  const links = decodeURIComponent(await response.text());
+  assert.match(links, /LTE[^\r\n#]*7\/50 ГБ/);
+  assert.doesNotMatch(links, /25\/50 ГБ/);
+
+  response = await fetch(`http://127.0.0.1:${app.port}/open/lte-client/status`);
+  assert.equal(response.status, 200);
+  const status = await response.json();
+  assert.equal(status.subscription.quotaMode, 'per-node');
+  assert.equal(status.subscription.totalBytes, 0);
+  assert.equal(status.subscription.limitedNodeCount, 1);
+  const lteNode = status.subscription.nodes.find(node => node.name.includes('LTE'));
+  assert.ok(lteNode);
+  assert.equal(lteNode.usedBytes, 7 * gib);
+  assert.equal(lteNode.totalBytes, 50 * gib);
 });

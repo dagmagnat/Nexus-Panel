@@ -83,6 +83,11 @@
   }).length;
   const initialNodeProblemCount = (pulseNodes || []).filter(node => Number(node.enabled) === 1 && String(node.last_status || '') === 'offline').length;
   const initialRedirectOk = !redirectStatus || redirectStatus.ok !== false;
+  const initialRedirectRuleCount = Array.isArray(redirectStatus && redirectStatus.rules) ? redirectStatus.rules.length : 0;
+  const initialRedirectMbps = Math.max(0, Number(redirectStatus && redirectStatus.systemNetwork && redirectStatus.systemNetwork.totalMbps || 0));
+  const initialRedirectSummary = initialRedirectRuleCount
+    ? `${initialRedirectRuleCount} прав. · ${initialRedirectMbps.toFixed(2)} Мбит/с`
+    : (redirectStatus && redirectStatus.message ? humanizeError(redirectStatus.message) : 'Активных правил нет');
 %>
 
 <% if (message) { %><div class="alert ok"><%= message %></div><% } %>
@@ -119,7 +124,7 @@
     <div class="dashboard-health-item" id="dashboardRedirectHealth" data-state="<%= initialRedirectOk ? 'ok' : 'error' %>">
       <a href="/redirects" class="dashboard-health-link">
         <span class="dashboard-health-icon" aria-hidden="true">⇄</span>
-        <span><b>Перенаправление</b><small id="dashboardRedirectHealthSummary"><%= redirectStatus && redirectStatus.message ? humanizeError(redirectStatus.message) : 'Проверяется раз в минуту' %></small></span>
+        <span><b>Перенаправление</b><small id="dashboardRedirectHealthSummary"><%= initialRedirectSummary %></small></span>
         <strong id="dashboardRedirectHealthLabel"><%= initialRedirectOk ? 'Работает' : 'Ошибка' %></strong>
       </a>
     </div>
@@ -626,7 +631,9 @@ function renderClientQuickBody(c) {
   }) : [];
   const nodesHtml = nodes.length ? nodes.map(n => {
     const flag = nodeFlagForClientQuick(n);
-    return `<span class="client-quick-node-chip">${flag ? `<span class="client-quick-node-flag">${flag}</span>` : ''}<b>${escapeHtml(nodeLabelForClientQuick(n))}</b></span>`;
+    const trafficGb = Math.max(0, Number(n && n.trafficGb || 0));
+    const usage = String(n && (n.usageText || (n.usedText ? `${n.usedText} / ${n.limitText || (trafficGb ? `${trafficGb} ГБ` : '∞')}` : '')) || '');
+    return `<span class="client-quick-node-chip">${flag ? `<span class="client-quick-node-flag">${flag}</span>` : ''}<span><b>${escapeHtml(nodeLabelForClientQuick(n))}</b>${usage ? `<small>${escapeHtml(usage)}</small>` : ''}</span></span>`;
   }).join('') : '<span class="client-quick-node-chip empty">Узлы не назначены</span>';
   const subLink = c.links && c.links.sub ? String(c.links.sub) : '';
   const jsonLink = c.links && c.links.json ? String(c.links.json) : '';
@@ -691,7 +698,11 @@ async function openOnlineClientQuickDetail(id) {
     const client = data.client || {};
     const context = window.__aggOnlineClientContext;
     if (context && String(context.id || '') === String(id || '')) {
-      client.nodes = Array.isArray(context.nodes) ? context.nodes : [];
+      const allNodes = Array.isArray(client.nodes) ? client.nodes : [];
+      client.nodes = (Array.isArray(context.nodes) ? context.nodes : []).map(onlineNode => {
+        const detailed = allNodes.find(node => String(node.id || '') === String(onlineNode.id || '')) || {};
+        return { ...detailed, ...onlineNode, usedBytes: detailed.usedBytes ?? onlineNode.usedBytes, usedText: detailed.usedText || onlineNode.usedText, limitText: detailed.limitText || onlineNode.limitText, usageText: detailed.usageText || onlineNode.usageText, trafficGb: detailed.trafficGb ?? onlineNode.trafficGb };
+      });
       client.nodeCount = client.nodes.length;
       client.onlineNodesContext = true;
       window.__aggOnlineClientContext = null;

@@ -35,21 +35,21 @@ test('client directory refreshes only online state and keeps bulk actions compac
   assert.doesNotMatch(clients, /class="modern-speed-cell"/);
 });
 
-test('nodes hide traffic counters, show progress and refresh availability every minute', () => {
+test('nodes show per-inbound traffic, progress and refresh availability every minute', () => {
   const nodes = read('views/nodes.ejs');
   assert.match(nodes, /id="nodeAddProgressPercent"/);
   assert.match(nodes, /id="nodeAddEta"/);
   assert.match(nodes, /name="create_existing_clients_on_node"/);
   assert.match(nodes, /setInterval\(refreshNodeStatuses, 60000\)/);
-  assert.doesNotMatch(nodes, /Потрачено в Inbound/);
-  assert.doesNotMatch(nodes, /Трафик ↓ \/ ↑/);
+  assert.match(nodes, /Потрачено в Inbound/);
+  assert.match(nodes, /скачано \/ отдано/);
 });
 
 test('routing layout cannot overlap its summary on desktop or mobile', () => {
   const routing = read('views/routing.ejs');
   const css = read('public/css/spectrum-clear.css');
-  assert.match(routing, /\.routing-page-grid > \.routing-summary-card \{ position:static !important/);
-  assert.match(routing, /\.routing-page-grid \{ display:flex !important;[^}]*min-width:0 !important;[^}]*flex-direction:column !important; \}/);
+  assert.match(routing, /\.routing-page-grid \{ display:grid !important;[^}]*grid-template-columns:minmax\(0,3fr\) minmax\(360px,2fr\) !important/);
+  assert.match(routing, /\.routing-page-grid > \.routing-summary-card \{ grid-column:auto !important; min-width:0; \}/);
   assert.match(css, /\.routing-summary-card \{ position: static; top: auto; \}/);
   assert.match(css, /\.routing-page-grid > \.routing-editor-card[\s\S]*position: static !important/);
 });
