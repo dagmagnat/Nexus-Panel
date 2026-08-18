@@ -247,7 +247,13 @@
         <div class="field">
           <label>Название подписки</label>
           <input name="subscription_name" value="<%= subscriptionName %>" placeholder="AMG" required />
-          <small class="hint">Название профиля остаётся коротким. Текст помощи передаётся отдельно как description/announcement.</small>
+          <small class="hint">Это имя VPN в приложении и на публичной странице клиента.</small>
+        </div>
+
+        <div class="field">
+          <label>Подзаголовок страницы подписки</label>
+          <input name="subscription_brand_tagline" value="<%= subscriptionBrandTagline %>" maxlength="80" placeholder="Безопасное подключение" />
+          <small class="hint">Короткая фраза под названием. Логины, UUID и ссылки клиентов при смене бренда не меняются.</small>
         </div>
 
 

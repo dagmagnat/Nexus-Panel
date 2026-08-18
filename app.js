@@ -1402,6 +1402,7 @@ function initDb() {
     ['subscription_client_auto_update_enabled', '1'],
     ['subscription_support_note', ''],
     ['subscription_support_url', ''],
+    ['subscription_brand_tagline', 'Безопасное подключение'],
     ['subscription_show_empty_limits', '0'],
     ['subscription_revision', '1'],
     ['subscription_happ_info_enabled', '1'],
@@ -2086,7 +2087,7 @@ function maybeRedirectToCurrentSubscriptionRevision(req, res) {
   // "Found. Redirecting..." instead of the real SUB/JSON body.  The revision is
   // still sent in headers and in newly generated URLs, but old/bare links must
   // return the subscription directly with HTTP 200.
-  if (req?.path && (/^\/(sub|sub-plain|json|happ)\//.test(String(req.path)))) return false;
+  if (req?.path && (/^\/(sub|sub-plain|json|happ|hiddify)\//.test(String(req.path)))) return false;
 
   const currentRev = String(getSubscriptionRevision());
   if (String(req.query?.rev || '') === currentRev || String(req.query?.no_redirect || '') === '1') return false;
@@ -4087,6 +4088,14 @@ function isBrowserSubscriptionRequest(req) {
   return false;
 }
 
+function explicitlyRequestsSubscriptionPortal(req) {
+  if (String(req.query.raw || '') === '1' || String(req.query.download || '') === '1') return false;
+  if (String(req.query.view || req.query.open || '') === '1') return true;
+  // Only the Accept header is reliable here. VPN applications may identify as
+  // Safari/Chrome, so a User-Agent heuristic would send them HTML by mistake.
+  return String(req.headers.accept || '').toLowerCase().includes('text/html');
+}
+
 function normalizePublicUrl(value, fallback = '') {
   let url = String(value || '').trim();
   if (!url) url = String(fallback || '').trim();
@@ -4159,6 +4168,11 @@ function buildPublicJsonUrl(slug) {
 function buildPublicHappUrl(slug) {
   if (!slug) return '';
   return addSubscriptionRevision(`${getPublicSubBaseUrl()}/happ/${slug}`);
+}
+
+function buildPublicHiddifyUrl(slug) {
+  if (!slug) return '';
+  return addSubscriptionRevision(`${getPublicSubBaseUrl()}/hiddify/${slug}`);
 }
 
 function buildPublicOpenUrl(slug) {
@@ -7888,6 +7902,17 @@ function getTrafficCandidateObjects(payload) {
   return candidates;
 }
 
+function hasTrafficStatFields(stat) {
+  if (!stat || typeof stat !== 'object') return false;
+  const names = [
+    'up', 'upload', 'uplink', 'uploadBytes', 'uplinkBytes',
+    'down', 'download', 'downlink', 'downloadBytes', 'downlinkBytes',
+    'total', 'totalGB', 'trafficLimit', 'limit',
+    'expiryTime', 'expiry_time', 'expire', 'expireTime'
+  ];
+  return names.some(name => fieldValue(stat, [name], undefined) !== undefined);
+}
+
 function pickClientTrafficObject(payload, email, uuid = '') {
   const wanted = String(email || '').trim().toLowerCase();
   const wantedUuid = String(uuid || '').trim().toLowerCase();
@@ -7895,10 +7920,15 @@ function pickClientTrafficObject(payload, email, uuid = '') {
 
   if (!wanted && !wantedUuid) return candidates[0] || null;
 
-  return candidates.find(item => wanted && String(fieldValue(item, ['email', 'login', 'name', 'remark'], '')).trim().toLowerCase() === wanted) ||
-    candidates.find(item => wantedUuid && String(fieldValue(item, ['id', 'uuid', 'clientId', 'client_id'], '')).trim().toLowerCase() === wantedUuid) ||
-    candidates[0] ||
-    null;
+  const matched = candidates.find(item => wanted && String(fieldValue(item, ['email', 'login', 'name', 'remark'], '')).trim().toLowerCase() === wanted) ||
+    candidates.find(item => wantedUuid && String(fieldValue(item, ['id', 'uuid', 'clientId', 'client_id'], '')).trim().toLowerCase() === wantedUuid);
+  if (matched) return matched;
+
+  // Some per-client endpoints return only counters without repeating email or
+  // UUID. Accept that shape only when the response contains exactly one real
+  // traffic object; never mistake a {success:false,obj:null} wrapper for 0 B.
+  if (candidates.length === 1 && hasTrafficStatFields(candidates[0])) return candidates[0];
+  return null;
 }
 
 async function getClientTrafficFromApi(node, email, timeoutMs = SUBSCRIPTION_STATS_TIMEOUT_MS, uuid = '') {
@@ -7917,12 +7947,26 @@ async function getClientTrafficFromApi(node, email, timeoutMs = SUBSCRIPTION_STA
   for (const apiPath of uniqueList(paths)) {
     try {
       const data = await apiGet(node, apiPath, timeoutMs);
+      if (data?.success === false) {
+        lastError = new Error(String(data?.msg || data?.message || `GET ${apiPath} returned success=false`));
+        continue;
+      }
       const stat = pickClientTrafficObject(data, cleanEmail, uuid);
-      if (!stat) return null;
+      if (!stat || !hasTrafficStatFields(stat)) continue;
       return extractTrafficInfoFromClientTraffic(stat);
     } catch (err) {
       lastError = err;
     }
+  }
+
+  // Newer and forked 3x-ui builds often expose only the inbound-wide traffic
+  // list. This fallback keeps subscriptions accurate across both API layouts.
+  try {
+    const list = await getInboundClientTrafficsFromApi(node, timeoutMs);
+    const stat = pickTrafficFromList(list, cleanEmail, uuid);
+    if (stat && hasTrafficStatFields(stat)) return extractTrafficInfoFromClientTraffic(stat);
+  } catch (err) {
+    lastError = err;
   }
 
   if (lastError) throw lastError;
@@ -7940,7 +7984,11 @@ async function getInboundClientTrafficsFromApi(node, timeoutMs = SUBSCRIPTION_ST
   for (const apiPath of uniqueList(paths)) {
     try {
       const data = await apiGet(node, apiPath, timeoutMs);
-      return getTrafficCandidateObjects(data);
+      if (data?.success === false) {
+        lastError = new Error(String(data?.msg || data?.message || `GET ${apiPath} returned success=false`));
+        continue;
+      }
+      return getTrafficCandidateObjects(data).filter(hasTrafficStatFields);
     } catch (err) {
       lastError = err;
     }
@@ -8217,7 +8265,8 @@ async function getSubscriptionNodeInfo(row, clientRow, cachedInbound = null) {
       liveTrafficInfo = await getClientTrafficFromApi(
         row,
         row?.remote_email || clientRow?.login,
-        SUBSCRIPTION_STATS_TIMEOUT_MS
+        SUBSCRIPTION_STATS_TIMEOUT_MS,
+        row?.remote_uuid || clientRow?.uuid
       );
       if (liveTrafficInfo) source = 'live-traffic';
     } catch (err) {
@@ -8259,36 +8308,168 @@ async function getSubscriptionNodeInfo(row, clientRow, cachedInbound = null) {
   };
 }
 
-function buildSubscriptionUserInfo(entries, clientRow) {
-  if (!shouldSendSubscriptionUserInfo()) return '';
-
-  let uploadBytes = 0;
-  let downloadBytes = 0;
-  let totalBytes = 0;
-  const expiries = [];
+function buildSubscriptionUsageSummary(entries, clientRow) {
+  const byNode = new Map();
 
   for (const entry of entries || []) {
     const info = entry?.subscriptionInfo || {};
-    const entryTotal = clampByteNumber(info.totalBytes || 0);
+    const nodeKey = entry?.nodeId !== undefined && entry?.nodeId !== null
+      ? `node:${entry.nodeId}`
+      : `name:${String(entry?.baseNodeName || entry?.nodeName || entry?.line || '').trim()}`;
+    if (!nodeKey) continue;
 
-    if (entryTotal > 0) {
-      totalBytes += entryTotal;
-      uploadBytes += clampByteNumber(info.uploadBytes || 0);
-      downloadBytes += clampByteNumber(info.downloadBytes || 0);
+    let uploadBytes = clampByteNumber(info.uploadBytes || 0);
+    let downloadBytes = clampByteNumber(info.downloadBytes || 0);
+    const reportedUsedBytes = clampByteNumber(info.usedBytes || 0);
+    // Remnawave and a few 3x-ui forks expose only one combined counter. Put it
+    // into download so Subscription-Userinfo still reports the full usage.
+    if (uploadBytes + downloadBytes <= 0 && reportedUsedBytes > 0) downloadBytes = reportedUsedBytes;
+
+    const current = byNode.get(nodeKey);
+    const next = {
+      key: nodeKey,
+      nodeId: entry?.nodeId ?? null,
+      nodeType: String(entry?.nodeType || ''),
+      nodeName: String(entry?.baseNodeName || entry?.nodeName || 'Узел').trim(),
+      uploadBytes,
+      downloadBytes,
+      usedBytes: clampByteNumber(uploadBytes + downloadBytes),
+      totalBytes: clampByteNumber(info.totalBytes || 0),
+      expiryTimeMs: normalizeEpochMillis(info.expiryTimeMs || 0),
+      enabled: info.enabled !== false,
+      source: String(info.source || '')
+    };
+
+    if (!current) {
+      byNode.set(nodeKey, next);
+      continue;
     }
 
-    const entryExpiry = normalizeEpochMillis(info.expiryTimeMs || 0);
-    if (entryExpiry > 0) expiries.push(entryExpiry);
+    // One inbound can generate several share links (for example externalProxy).
+    // They all refer to the same counters, therefore take the maximum instead
+    // of adding them a second time.
+    current.uploadBytes = Math.max(current.uploadBytes, next.uploadBytes);
+    current.downloadBytes = Math.max(current.downloadBytes, next.downloadBytes);
+    current.usedBytes = clampByteNumber(current.uploadBytes + current.downloadBytes);
+    current.totalBytes = Math.max(current.totalBytes, next.totalBytes);
+    current.expiryTimeMs = current.expiryTimeMs && next.expiryTimeMs
+      ? Math.min(current.expiryTimeMs, next.expiryTimeMs)
+      : Math.max(current.expiryTimeMs, next.expiryTimeMs);
+    current.enabled = current.enabled && next.enabled;
   }
 
+  const nodes = Array.from(byNode.values());
+  const uploadBytes = nodes.reduce((sum, node) => sum + clampByteNumber(node.uploadBytes), 0);
+  const downloadBytes = nodes.reduce((sum, node) => sum + clampByteNumber(node.downloadBytes), 0);
+  const usedBytes = clampByteNumber(uploadBytes + downloadBytes);
+
+  // The client card is the source of truth for the account-wide allowance.
+  // If it is unlimited, keep support for installations that set only per-node
+  // limits by summing each unique node once.
+  const clientTotalBytes = toTotalGbBytes(clientRow?.traffic_gb || 0);
+  const totalBytes = clientTotalBytes > 0
+    ? clientTotalBytes
+    : nodes.reduce((sum, node) => sum + clampByteNumber(node.totalBytes), 0);
+
   const clientExpiry = normalizeEpochMillis(clientRow?.expiry_time || 0);
-  if (clientExpiry > 0) expiries.push(clientExpiry);
+  const nodeExpiries = nodes.map(node => node.expiryTimeMs).filter(Boolean);
+  const expiryTimeMs = clientExpiry > 0
+    ? clientExpiry
+    : (nodeExpiries.length ? Math.min(...nodeExpiries) : 0);
 
-  const expireSeconds = expiries.length ? toEpochSeconds(Math.min(...expiries)) : 0;
-  const parts = [`upload=${clampByteNumber(uploadBytes)}`, `download=${clampByteNumber(downloadBytes)}`];
+  return {
+    uploadBytes: clampByteNumber(uploadBytes),
+    downloadBytes: clampByteNumber(downloadBytes),
+    usedBytes,
+    totalBytes: clampByteNumber(totalBytes),
+    remainingBytes: totalBytes > 0 ? clampByteNumber(Math.max(0, totalBytes - usedBytes)) : 0,
+    expiryTimeMs,
+    nodes
+  };
+}
 
-  if (totalBytes > 0) parts.push(`total=${clampByteNumber(totalBytes)}`);
-  if (expireSeconds > 0) parts.push(`expire=${expireSeconds}`);
+function getSubscriptionBrandTagline() {
+  return String(getSetting('subscription_brand_tagline', 'Безопасное подключение') || '').trim() || 'Безопасное подключение';
+}
+
+function formatSubscriptionExpiry(expiryTimeMs) {
+  const expiry = normalizeEpochMillis(expiryTimeMs || 0);
+  if (!expiry) return 'Без срока';
+  return new Intl.DateTimeFormat('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  }).format(new Date(expiry));
+}
+
+function buildSubscriptionPortalModel(entries, clientRow) {
+  const summary = buildSubscriptionUsageSummary(entries, clientRow);
+  const nodeIds = summary.nodes
+    .map(node => Number(node.nodeId))
+    .filter(id => Number.isInteger(id) && id > 0);
+  const nodeRows = nodeIds.length
+    ? db.prepare(`SELECT id, name, node_type, country_code, country_name_ru, country_flag, label_suffix, enabled, last_status FROM nodes WHERE id IN (${nodeIds.map(() => '?').join(',')})`).all(...nodeIds)
+    : [];
+  const nodeMeta = new Map(nodeRows.map(node => [Number(node.id), node]));
+  const nodes = summary.nodes.map(node => {
+    const meta = nodeMeta.get(Number(node.nodeId)) || {};
+    const online = Number(meta.enabled ?? 1) === 1 && String(meta.last_status || '').toLowerCase() === 'online';
+    return {
+      id: node.nodeId,
+      name: meta.id ? getNodeDisplayName(meta) : node.nodeName,
+      flag: getNodeFlag(meta),
+      online,
+      status: Number(meta.enabled ?? 1) !== 1
+        ? 'отключён'
+        : (online ? 'в сети' : (String(meta.last_status || '').toLowerCase() === 'offline' ? 'не в сети' : 'проверяется')),
+      usedBytes: node.usedBytes,
+      totalBytes: node.totalBytes,
+      usedText: formatTrafficBytes(node.usedBytes),
+      totalText: node.totalBytes > 0 ? formatTrafficBytes(node.totalBytes) : '∞'
+    };
+  });
+  const percent = summary.totalBytes > 0
+    ? Math.min(100, Math.max(0, (summary.usedBytes / summary.totalBytes) * 100))
+    : 0;
+  const expired = summary.expiryTimeMs > 0 && summary.expiryTimeMs <= Date.now();
+  const enabled = Number(clientRow?.enabled) === 1 && !expired;
+
+  return {
+    login: String(clientRow?.login || ''),
+    displayName: String(clientRow?.display_name || clientRow?.login || ''),
+    enabled,
+    statusText: enabled ? 'Активна' : (expired ? 'Срок истёк' : 'Отключена'),
+    deviceLimitText: getClientLimitIpText(clientRow),
+    expiryTimeMs: summary.expiryTimeMs,
+    expiryText: formatSubscriptionExpiry(summary.expiryTimeMs),
+    daysLeftText: getDaysLeftText(summary.expiryTimeMs),
+    uploadBytes: summary.uploadBytes,
+    downloadBytes: summary.downloadBytes,
+    usedBytes: summary.usedBytes,
+    totalBytes: summary.totalBytes,
+    remainingBytes: summary.remainingBytes,
+    usedText: formatTrafficBytes(summary.usedBytes),
+    totalText: summary.totalBytes > 0 ? formatTrafficBytes(summary.totalBytes) : '∞',
+    remainingText: summary.totalBytes > 0 ? formatTrafficBytes(summary.remainingBytes) : '∞',
+    progressPercent: Number(percent.toFixed(2)),
+    nodes,
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function buildSubscriptionUserInfo(entries, clientRow) {
+  if (!shouldSendSubscriptionUserInfo()) return '';
+
+  const summary = buildSubscriptionUsageSummary(entries, clientRow);
+  const parts = [
+    `upload=${summary.uploadBytes}`,
+    `download=${summary.downloadBytes}`
+  ];
+
+  if (summary.totalBytes > 0) parts.push(`total=${summary.totalBytes}`);
+  if (summary.expiryTimeMs > 0) parts.push(`expire=${toEpochSeconds(summary.expiryTimeMs)}`);
 
   return parts.join('; ');
 }
@@ -12344,6 +12525,7 @@ app.get('/settings', requireAuth, async (req, res) => {
 
   render(res, 'settings', {
     subscriptionName,
+    subscriptionBrandTagline: getSubscriptionBrandTagline(),
     subscriptionRevision: getSubscriptionRevision(),
     subscriptionDisplayTitle: getSubscriptionDisplayTitle(subscriptionName),
     adminUsername: currentUser?.username || '',
@@ -12686,9 +12868,11 @@ app.post('/settings', requireAuth, (req, res) => {
   try {
     const subscriptionName = String(req.body.subscription_name || '').trim();
     if (!subscriptionName) throw new Error('Нужно указать название подписки');
+    const subscriptionBrandTagline = String(req.body.subscription_brand_tagline || '').trim().slice(0, 80) || 'Безопасное подключение';
 
     const oldSubscriptionMeta = {
       name: getSetting('subscription_name', DEFAULT_SUBSCRIPTION_NAME),
+      tagline: getSetting('subscription_brand_tagline', 'Безопасное подключение'),
       note: getSetting('subscription_support_note', ''),
       url: getSetting('subscription_support_url', ''),
       showSubLinks: getSetting('show_sub_links', '1'),
@@ -12703,6 +12887,8 @@ app.post('/settings', requireAuth, (req, res) => {
         value = excluded.value,
         updated_at = CURRENT_TIMESTAMP
     `).run('subscription_name', subscriptionName);
+
+    setSetting('subscription_brand_tagline', subscriptionBrandTagline);
 
     const adminAllowedIps = String(req.body.admin_allowed_ips || '')
       .split(/[\s,;]+/)
@@ -12849,6 +13035,7 @@ app.post('/settings', requireAuth, (req, res) => {
 
     if (
       oldSubscriptionMeta.name !== subscriptionName ||
+      oldSubscriptionMeta.tagline !== subscriptionBrandTagline ||
       oldSubscriptionMeta.note !== newSubscriptionSupportNote ||
       oldSubscriptionMeta.url !== newSubscriptionSupportUrl ||
       oldSubscriptionMeta.showSubLinks !== getSetting('show_sub_links', '1') ||
@@ -14795,6 +14982,13 @@ app.get('/sub/:slug', async (req, res) => {
     return res.status(404).send('Subscription not found');
   }
 
+  // When a person opens the main subscription link in a browser, show the
+  // branded account page. VPN applications normally request */* or text/plain
+  // and continue receiving the original subscription body without redirects.
+  if (explicitlyRequestsSubscriptionPortal(req)) {
+    return res.redirect(302, buildPublicOpenUrl(client.sub_slug));
+  }
+
   if (maybeRedirectToCurrentSubscriptionRevision(req, res)) return;
 
   await enforceExpiredClientRemoteState(client);
@@ -14844,6 +15038,27 @@ app.get('/sub-plain/:slug', async (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
+  res.send(lines.join('\n'));
+});
+
+app.get('/hiddify/:slug', async (req, res) => {
+  const client = db.prepare('SELECT * FROM clients WHERE sub_slug = ? AND enabled = 1').get(req.params.slug);
+  if (!client) return res.status(404).send('Subscription not found');
+  if (maybeRedirectToCurrentSubscriptionRevision(req, res)) return;
+
+  await enforceExpiredClientRemoteState(client);
+  const entries = await buildSubscriptionEntries(client, true);
+  const lines = entries
+    .map(entry => String(entry?.line || '').trim())
+    .filter(line => /^(?:vless|vmess|trojan|ss|socks|hysteria2?|hy2|tuic|wireguard):\/\//i.test(line));
+  const subscriptionName = getSetting('subscription_name', DEFAULT_SUBSCRIPTION_NAME);
+  const subscriptionUserInfo = buildSubscriptionUserInfo(entries, client);
+  const intervalHours = getSubscriptionUpdateIntervalHours();
+
+  setSubscriptionNoCacheHeaders(res, subscriptionName, 'txt');
+  setSubscriptionUserInfoHeaders(res, subscriptionUserInfo);
+  applyHappSubscriptionProfileHeaders(res, subscriptionName, intervalHours, client, subscriptionUserInfo, { includeTextBlocks: false });
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
   res.send(lines.join('\n'));
 });
 
@@ -16060,20 +16275,7 @@ app.get('/json/:slug', async (req, res) => {
   // heuristic misclassified the app as a browser and caused a JSON parse error.
   // The human-friendly page remains available via /open/:slug or ?view=1.
   if (String(req.query.view || req.query.open || '') === '1') {
-    return render(res, 'open_sub', {
-      client,
-      subUrl: buildPublicSubUrl(client.sub_slug),
-      plainSubUrl: buildPublicPlainSubUrl(client.sub_slug),
-      jsonUrl: buildPublicJsonUrl(client.sub_slug),
-      jsonRawUrl: addQueryParam(buildPublicJsonUrl(client.sub_slug), 'raw', '1'),
-      happUrl: buildPublicHappUrl(client.sub_slug),
-      baseUrl: getPublicSubBaseUrl(),
-      hasH1CloudSub: false,
-      showSubLinks: getSetting('show_sub_links', '1') !== '0',
-      showHappLinks: getSetting('show_happ_links', '0') !== '0',
-      supportNote: getSubscriptionSupportNote(),
-      supportUrl: getSubscriptionSupportUrl()
-    });
+    return res.redirect(302, buildPublicOpenUrl(client.sub_slug));
   }
 
   const entries = await buildSubscriptionEntries(client, true);
@@ -16184,23 +16386,50 @@ app.get('/qr', async (req, res) => {
   }
 });
 
+app.get('/open/:slug/status', async (req, res) => {
+  const client = db.prepare('SELECT * FROM clients WHERE sub_slug = ? AND enabled = 1').get(req.params.slug);
+  if (!client) return res.status(404).json({ ok: false, error: 'Подписка не найдена или отключена' });
+
+  try {
+    const entries = await buildSubscriptionEntries(client, true);
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+    return res.json({ ok: true, subscription: buildSubscriptionPortalModel(entries, client) });
+  } catch (err) {
+    return res.status(502).json({ ok: false, error: humanizeOperationalError(err) });
+  }
+});
+
 app.get('/open/:slug', async (req, res) => {
   const client = db.prepare('SELECT * FROM clients WHERE sub_slug = ? AND enabled = 1').get(req.params.slug);
   if (!client) return res.status(404).send('Subscription not found');
 
+  const entries = await buildSubscriptionEntries(client, true);
+  const subscriptionName = getSetting('subscription_name', DEFAULT_SUBSCRIPTION_NAME);
+
   render(res, 'open_sub', {
     client,
+    subscriptionName,
+    subscriptionBrandTagline: getSubscriptionBrandTagline(),
+    subscription: buildSubscriptionPortalModel(entries, client),
     subUrl: buildPublicSubUrl(client.sub_slug),
     plainSubUrl: buildPublicPlainSubUrl(client.sub_slug),
+    hiddifyUrl: buildPublicHiddifyUrl(client.sub_slug),
     jsonUrl: buildPublicJsonUrl(client.sub_slug),
     jsonRawUrl: addQueryParam(buildPublicJsonUrl(client.sub_slug), 'raw', '1'),
     happUrl: buildPublicHappUrl(client.sub_slug),
+    statusUrl: `${getPublicSubBaseUrl()}/open/${encodeURIComponent(client.sub_slug)}/status`,
     baseUrl: getPublicSubBaseUrl(),
     hasH1CloudSub: false,
     showSubLinks: getSetting('show_sub_links', '1') !== '0',
+    showJsonLinks: getSetting('show_json_links', '1') !== '0',
     showHappLinks: getSetting('show_happ_links', '0') !== '0',
     supportNote: getSubscriptionSupportNote(),
-    supportUrl: getSubscriptionSupportUrl()
+    supportUrl: getSubscriptionSupportUrl(),
+    appDownloads: {
+      happ: 'https://www.happ.su/main',
+      v2rayTun: 'https://v2raytun.com/',
+      hiddify: 'https://hiddify.com/'
+    }
   });
 });
 

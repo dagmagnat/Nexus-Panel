@@ -4,14 +4,14 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="theme-color" content="#070b16">
-  <meta property="og:title" content="Подключение — Nexus Panel">
-  <meta property="og:description" content="Безопасное добавление VPN-подписки">
+  <meta property="og:title" content="<%= subscriptionName %> — подписка">
+  <meta property="og:description" content="<%= subscriptionBrandTagline %>">
   <meta property="og:image" content="<%= baseUrl %>/img/nexus-logo-512.png">
-  <title>Подключение — Nexus Panel</title>
+  <title><%= subscriptionName %> — подписка</title>
   <link rel="icon" href="/favicon.ico" sizes="any">
   <link rel="icon" type="image/png" sizes="192x192" href="/img/nexus-logo-192.png">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-  <link rel="manifest" href="/site.webmanifest?v=221">
+  <link rel="manifest" href="/site.webmanifest?v=230">
   <script>
   (function(){
     try {
@@ -25,84 +25,147 @@
     }
   })();
   </script>
-  <link rel="stylesheet" href="/css/spectrum-clear.css?v=221" />
+  <link rel="stylesheet" href="/css/spectrum-clear.css?v=230" />
 </head>
-<body class="nexus-spectrum public-page">
-  <% const happImportUrl = (typeof jsonRawUrl !== 'undefined' && jsonRawUrl) ? jsonRawUrl : jsonUrl; %>
-  <% const compatibleSubUrl = (typeof plainSubUrl !== 'undefined' && plainSubUrl) ? plainSubUrl : subUrl; %>
+<body class="nexus-spectrum public-page subscription-portal-page">
   <% const allowJson = typeof showJsonLinks === 'undefined' ? true : Boolean(showJsonLinks); %>
   <% const allowSub = typeof showSubLinks === 'undefined' ? true : Boolean(showSubLinks); %>
   <% const allowHapp = typeof showHappLinks === 'undefined' ? false : Boolean(showHappLinks); %>
-  <% const primaryUrl = allowJson ? happImportUrl : (allowSub ? compatibleSubUrl : (allowHapp ? happUrl : '')); %>
-  <% const primaryLabel = allowJson ? 'JSON для Happ' : (allowSub ? 'SUB' : 'HAPP SUB'); %>
-  <% const profileName = encodeURIComponent((client && (client.name || client.login)) || 'Amored VPN'); %>
-  <main class="public-card public-connect-card">
-    <div class="public-brand"><img src="/img/nexus-logo-192.png" alt="Логотип Nexus Panel"><span><strong>Nexus Panel</strong><small>Secure subscription</small></span></div>
-    <h1>Подключение</h1>
-    <p class="muted">Отсканируй QR-код, скопируй ссылку или выбери приложение. Для каждого приложения используется совместимый формат подписки.</p>
+  <% const happImportUrl = (typeof jsonRawUrl !== 'undefined' && jsonRawUrl) ? jsonRawUrl : jsonUrl; %>
+  <% const compatibleSubUrl = allowSub ? hiddifyUrl : (allowJson ? happImportUrl : ''); %>
+  <% const genericSubUrl = allowSub ? plainSubUrl : compatibleSubUrl; %>
+  <% const profileName = encodeURIComponent(subscriptionName || 'VPN'); %>
 
-    <% if (primaryUrl) { %>
-      <div class="qr-box">
-        <img src="/qr?text=<%= encodeURIComponent(primaryUrl) %>" alt="QR" />
+  <main class="subscription-portal">
+    <header class="portal-topbar">
+      <a class="portal-brand" href="<%= baseUrl %>" aria-label="<%= subscriptionName %>">
+        <img src="/img/nexus-logo-192.png" alt="">
+        <span><strong><%= subscriptionName %></strong><small><%= subscriptionBrandTagline %></small></span>
+      </a>
+      <button type="button" class="portal-theme-button" id="portalThemeButton" aria-label="Сменить тему">☾</button>
+    </header>
+
+    <section class="portal-hero">
+      <div class="portal-account">
+        <div class="portal-account-head">
+          <div>
+            <span class="portal-eyebrow">Личная подписка</span>
+            <h1><%= subscription.displayName || subscription.login %></h1>
+            <p>@<%= subscription.login %></p>
+          </div>
+          <span id="portalStatusChip" class="portal-status <%= subscription.enabled ? 'is-active' : 'is-disabled' %>"><i></i><%= subscription.statusText %></span>
+        </div>
+
+        <div class="portal-traffic-head">
+          <div><span>Использовано</span><strong id="portalUsedText"><%= subscription.usedText %></strong></div>
+          <div class="align-right"><span>Лимит</span><strong id="portalTotalText"><%= subscription.totalText %></strong></div>
+        </div>
+        <div class="portal-progress" role="progressbar" aria-label="Использованный трафик" aria-valuemin="0" aria-valuemax="100" aria-valuenow="<%= subscription.progressPercent %>">
+          <i id="portalProgress" style="width:<%= subscription.progressPercent %>%"></i>
+        </div>
+
+        <div class="portal-stat-grid">
+          <div><span>Осталось трафика</span><strong id="portalRemainingText"><%= subscription.remainingText %></strong></div>
+          <div><span>Действует до</span><strong id="portalExpiryText"><%= subscription.expiryText %></strong></div>
+          <div><span>Осталось времени</span><strong id="portalDaysText"><%= subscription.daysLeftText %></strong></div>
+          <div><span>Устройств</span><strong><%= subscription.deviceLimitText %></strong></div>
+        </div>
+        <div id="portalRefreshState" class="portal-refresh-state">Статистика обновлена сейчас</div>
       </div>
-    <% } else { %>
-      <div class="alert err">Администратор временно отключил отображение ссылок подписки.</div>
-    <% } %>
-    <% if ((typeof supportNote !== 'undefined' && supportNote) || (typeof supportUrl !== 'undefined' && supportUrl)) { %>
-      <section class="public-support-note">
-        <% if (supportNote) { %><div><%= supportNote %></div><% } %>
-        <% if (supportUrl) { %><a class="link-btn secondary" href="<%= supportUrl %>" target="_blank" rel="noopener">Открыть поддержку</a><% } %>
-      </section>
-    <% } %>
 
-    <div class="public-actions public-actions-grid">
-      <% if (allowSub) { %><a class="link-btn secondary" href="<%= compatibleSubUrl %>">Открыть совместимую SUB</a><% } %>
-      <% if (allowJson) { %><a class="link-btn" href="<%= happImportUrl %>">Открыть JSON Happ</a><% } %>
-      <% if (allowHapp) { %><a class="link-btn secondary" href="<%= happUrl %>">Открыть HAPP SUB</a><% } %>
-      <% if (primaryUrl) { %><button type="button" class="btn-main" onclick="copyPublicUrl('<%= primaryUrl %>', this)">Скопировать <%= primaryLabel %></button><% } %>
-    </div>
+      <aside class="portal-qr-panel">
+        <% if (compatibleSubUrl) { %>
+          <div class="portal-qr"><img src="/qr?text=<%= encodeURIComponent(compatibleSubUrl) %>" alt="QR-код подписки"></div>
+          <strong>Добавить подписку</strong>
+          <p>Отсканируй QR-код приложением или скопируй ссылку.</p>
+          <button type="button" class="btn-main" onclick="copyPortalUrl('<%= compatibleSubUrl %>', this)">Скопировать ссылку</button>
+        <% } else { %>
+          <div class="alert err">Администратор временно отключил ссылки подписки.</div>
+        <% } %>
+      </aside>
+    </section>
 
-    <% if (allowJson || allowSub) { %>
-    <section class="public-app-section">
-      <h2>Добавить в приложение</h2>
-      <p class="muted">Кнопка пытается открыть установленное приложение и сразу передать подписку. Если приложение не открылось, ссылка автоматически копируется для ручной вставки.</p>
+    <section class="portal-section">
+      <div class="portal-section-head">
+        <div><span class="portal-eyebrow">Подключение</span><h2>Выбери приложение</h2></div>
+        <span class="portal-section-note">Ссылка обновляется автоматически</span>
+      </div>
       <div id="appLaunchStatus" class="alert ok" hidden></div>
+      <div class="portal-app-grid">
+        <% if (allowJson) { %>
+        <article class="portal-app-card">
+          <span class="portal-app-icon">H</span>
+          <div><h3>Happ</h3><p>JSON · iOS, Android, Windows</p></div>
+          <div class="portal-app-actions">
+            <a class="link-btn" href="happ://add/<%= happImportUrl %>" data-app-name="Happ" data-subscription-url="<%= happImportUrl %>" onclick="return launchSubscriptionApp(event, this)">Добавить</a>
+            <a class="link-btn secondary" href="<%= appDownloads.happ %>" target="_blank" rel="noopener">Скачать</a>
+          </div>
+        </article>
+        <% } %>
 
-      <h3>iOS / macOS</h3>
-      <div class="app-link-grid">
-        <% if (allowJson) { %><a class="link-btn" href="happ://add/<%= happImportUrl %>" data-app-name="Happ" data-subscription-url="<%= happImportUrl %>" onclick="return launchSubscriptionApp(event, this)">Happ</a><% } %>
-        <% if (allowSub) { %><a class="link-btn secondary" href="hiddify://import/<%= compatibleSubUrl %>#<%= profileName %>" data-app-name="Hiddify" data-subscription-url="<%= compatibleSubUrl %>" onclick="return launchSubscriptionApp(event, this)">Hiddify</a><% } %>
-        <% if (allowSub) { %><a class="link-btn secondary" href="streisand://import/<%= encodeURIComponent(compatibleSubUrl) %>" data-app-name="Streisand" data-subscription-url="<%= compatibleSubUrl %>" onclick="return launchSubscriptionApp(event, this)">Streisand</a><% } %>
-        <% if (allowSub) { %><a class="link-btn secondary" href="v2box://install-sub?url=<%= encodeURIComponent(compatibleSubUrl) %>" data-app-name="V2Box" data-subscription-url="<%= compatibleSubUrl %>" onclick="return launchSubscriptionApp(event, this)">V2Box</a><% } %>
-      </div>
+        <% if (allowSub) { %>
+        <article class="portal-app-card">
+          <span class="portal-app-icon hiddify">H</span>
+          <div><h3>Hiddify</h3><p>SUB · iOS, Android, Windows</p></div>
+          <div class="portal-app-actions">
+            <a class="link-btn" href="hiddify://import/<%= hiddifyUrl %>#<%= profileName %>" data-app-name="Hiddify" data-subscription-url="<%= hiddifyUrl %>" onclick="return launchSubscriptionApp(event, this)">Добавить</a>
+            <a class="link-btn secondary" href="<%= appDownloads.hiddify %>" target="_blank" rel="noopener">Скачать</a>
+          </div>
+        </article>
 
-      <h3>Android</h3>
-      <div class="app-link-grid">
-        <% if (allowJson) { %><a class="link-btn" href="happ://add/<%= happImportUrl %>" data-app-name="Happ" data-subscription-url="<%= happImportUrl %>" onclick="return launchSubscriptionApp(event, this)">Happ</a><% } %>
-        <% if (allowSub) { %><a class="link-btn secondary" href="hiddify://import/<%= compatibleSubUrl %>#<%= profileName %>" data-app-name="Hiddify" data-subscription-url="<%= compatibleSubUrl %>" onclick="return launchSubscriptionApp(event, this)">Hiddify</a><% } %>
-        <% if (allowSub) { %><a class="link-btn secondary" href="v2rayng://install-config?url=<%= encodeURIComponent(compatibleSubUrl) %>" data-app-name="v2rayNG" data-subscription-url="<%= compatibleSubUrl %>" onclick="return launchSubscriptionApp(event, this)">v2rayNG</a><% } %>
-        <% if (allowSub) { %><a class="link-btn secondary" href="nekobox://import?url=<%= encodeURIComponent(compatibleSubUrl) %>" data-app-name="NekoBox" data-subscription-url="<%= compatibleSubUrl %>" onclick="return launchSubscriptionApp(event, this)">NekoBox</a><% } %>
+        <article class="portal-app-card">
+          <span class="portal-app-icon v2raytun">V</span>
+          <div><h3>v2RayTun</h3><p>SUB · iOS и Android</p></div>
+          <div class="portal-app-actions">
+            <button type="button" class="link-btn" onclick="copyPortalUrl('<%= genericSubUrl %>', this)">Скопировать SUB</button>
+            <a class="link-btn secondary" href="<%= appDownloads.v2RayTun %>" target="_blank" rel="noopener">Скачать</a>
+          </div>
+        </article>
+        <% } %>
       </div>
+    </section>
 
-      <h3>Windows / Linux</h3>
-      <div class="app-link-grid">
-        <% if (allowJson) { %><a class="link-btn" href="happ://add/<%= happImportUrl %>" data-app-name="Happ" data-subscription-url="<%= happImportUrl %>" onclick="return launchSubscriptionApp(event, this)">Happ</a><% } %>
-        <% if (allowSub) { %><a class="link-btn secondary" href="hiddify://import/<%= compatibleSubUrl %>#<%= profileName %>" data-app-name="Hiddify" data-subscription-url="<%= compatibleSubUrl %>" onclick="return launchSubscriptionApp(event, this)">Hiddify</a><% } %>
-        <% if (allowSub) { %><a class="link-btn secondary" href="nekobox://import?url=<%= encodeURIComponent(compatibleSubUrl) %>" data-app-name="NekoRay/NekoBox" data-subscription-url="<%= compatibleSubUrl %>" onclick="return launchSubscriptionApp(event, this)">NekoRay/NekoBox</a><% } %>
+    <section class="portal-section">
+      <div class="portal-section-head">
+        <div><span class="portal-eyebrow">Локации</span><h2>Доступные узлы</h2></div>
+        <span id="portalNodeCount" class="portal-count"><%= subscription.nodes.length %></span>
       </div>
+      <div id="portalNodeList" class="portal-node-list">
+        <% subscription.nodes.forEach(function(node) { %>
+          <div class="portal-node-row">
+            <span class="portal-node-flag"><%= node.flag %></span>
+            <div><strong><%= node.name %></strong><small><%= node.usedText %> / <%= node.totalText %></small></div>
+            <span class="portal-node-state <%= node.online ? 'online' : '' %>"><i></i><%= node.status %></span>
+          </div>
+        <% }) %>
+      </div>
+    </section>
+
+    <% if ((supportNote || supportUrl)) { %>
+    <section class="portal-support">
+      <div><span class="portal-eyebrow">Помощь</span><strong><%= supportNote || 'Нужна помощь с подключением?' %></strong></div>
+      <% if (supportUrl) { %><a class="link-btn" href="<%= supportUrl %>" target="_blank" rel="noopener">Написать в поддержку</a><% } %>
     </section>
     <% } %>
 
-    <% if (primaryUrl) { %><div class="public-url-box">
-      <code id="publicSubUrl"><%= primaryUrl %></code>
-    </div><% } %>
+    <details class="portal-links">
+      <summary>Ссылки для ручного подключения</summary>
+      <div>
+        <% if (allowSub) { %><button type="button" class="link-btn secondary" onclick="copyPortalUrl('<%= hiddifyUrl %>', this)">Hiddify SUB</button><% } %>
+        <% if (allowSub) { %><button type="button" class="link-btn secondary" onclick="copyPortalUrl('<%= plainSubUrl %>', this)">Обычная SUB</button><% } %>
+        <% if (allowJson) { %><button type="button" class="link-btn secondary" onclick="copyPortalUrl('<%= happImportUrl %>', this)">JSON Happ</button><% } %>
+        <% if (allowHapp) { %><button type="button" class="link-btn secondary" onclick="copyPortalUrl('<%= happUrl %>', this)">Happ SUB</button><% } %>
+      </div>
+    </details>
+
+    <footer class="portal-footer"><span><%= subscriptionName %></span><small>Статистика обновляется раз в минуту</small></footer>
   </main>
+
   <script>
+    const portalStatusUrl = <%- JSON.stringify(statusUrl) %>;
+
     async function copyText(value) {
-      if (navigator.clipboard && window.isSecureContext) {
-        await navigator.clipboard.writeText(value);
-        return;
-      }
+      if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(value);
       const input = document.createElement('textarea');
       input.value = value;
       input.setAttribute('readonly', '');
@@ -113,6 +176,19 @@
       document.execCommand('copy');
       input.remove();
     }
+
+    async function copyPortalUrl(value, button) {
+      try {
+        await copyText(value);
+        const old = button.textContent;
+        button.textContent = 'Скопировано';
+        button.classList.add('is-copied');
+        setTimeout(() => { button.textContent = old; button.classList.remove('is-copied'); }, 1400);
+      } catch (_) {
+        showAppStatus('Не удалось скопировать ссылку. Разреши доступ к буферу обмена и повтори.', true);
+      }
+    }
+
     function showAppStatus(text, isError) {
       const status = document.getElementById('appLaunchStatus');
       if (!status) return;
@@ -120,41 +196,97 @@
       status.classList.toggle('ok', !isError);
       status.classList.toggle('err', !!isError);
       status.textContent = text;
-      status.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     }
-    async function copyPublicUrl(value, btn) {
-      try {
-        await copyText(value);
-        const old = btn.textContent;
-        btn.textContent = 'Скопировано';
-        setTimeout(() => btn.textContent = old, 1200);
-      } catch (err) { alert('Не удалось скопировать. Скопируй ссылку снизу вручную.'); }
-    }
+
     function launchSubscriptionApp(event, link) {
       event && event.preventDefault();
       const deepLink = String(link && link.href || '');
       const subscriptionUrl = String(link && link.dataset.subscriptionUrl || '');
       const appName = String(link && link.dataset.appName || 'приложение');
       if (!deepLink || !subscriptionUrl) return false;
-
-      showAppStatus(`Открываю ${appName} и передаю подписку…`, false);
+      showAppStatus(`Открываю ${appName}…`, false);
       let leftPage = false;
-      const markLeft = () => { if (document.visibilityState === 'hidden') leftPage = true; };
-      document.addEventListener('visibilitychange', markLeft, { once: true });
+      const onVisibility = () => { if (document.visibilityState === 'hidden') leftPage = true; };
+      document.addEventListener('visibilitychange', onVisibility, { once: true });
       window.location.href = deepLink;
-
       setTimeout(async () => {
-        document.removeEventListener('visibilitychange', markLeft);
+        document.removeEventListener('visibilitychange', onVisibility);
         if (leftPage || document.visibilityState === 'hidden') return;
         try {
           await copyText(subscriptionUrl);
-          showAppStatus(`${appName} не открылся автоматически. Ссылка подписки скопирована — открой приложение и выбери импорт из URL/буфера.`, true);
+          showAppStatus(`${appName} не открылся. Ссылка скопирована — добавь её через импорт из URL.`, true);
         } catch (_) {
-          showAppStatus(`${appName} не открылся автоматически. Скопируй ссылку внизу страницы и добавь её в приложение вручную.`, true);
+          showAppStatus(`${appName} не открылся. Используй ссылку из раздела ручного подключения.`, true);
         }
-      }, 1600);
+      }, 1700);
       return false;
     }
+
+    function renderPortalNodes(nodes) {
+      const root = document.getElementById('portalNodeList');
+      if (!root) return;
+      root.replaceChildren();
+      (nodes || []).forEach(node => {
+        const row = document.createElement('div');
+        row.className = 'portal-node-row';
+        const flag = document.createElement('span');
+        flag.className = 'portal-node-flag';
+        flag.textContent = node.flag || '🌐';
+        const info = document.createElement('div');
+        const name = document.createElement('strong');
+        name.textContent = node.name || 'Узел';
+        const usage = document.createElement('small');
+        usage.textContent = `${node.usedText || '0 МБ'} / ${node.totalText || '∞'}`;
+        info.append(name, usage);
+        const state = document.createElement('span');
+        state.className = `portal-node-state${node.online ? ' online' : ''}`;
+        state.append(document.createElement('i'), document.createTextNode(node.status || 'статус неизвестен'));
+        row.append(flag, info, state);
+        root.append(row);
+      });
+      const count = document.getElementById('portalNodeCount');
+      if (count) count.textContent = String((nodes || []).length);
+    }
+
+    function applyPortalStatus(subscription) {
+      if (!subscription) return;
+      const setText = (id, value) => { const el = document.getElementById(id); if (el) el.textContent = value; };
+      setText('portalUsedText', subscription.usedText);
+      setText('portalTotalText', subscription.totalText);
+      setText('portalRemainingText', subscription.remainingText);
+      setText('portalExpiryText', subscription.expiryText);
+      setText('portalDaysText', subscription.daysLeftText);
+      const progress = document.getElementById('portalProgress');
+      if (progress) progress.style.width = `${subscription.progressPercent || 0}%`;
+      const chip = document.getElementById('portalStatusChip');
+      if (chip) {
+        chip.classList.toggle('is-active', !!subscription.enabled);
+        chip.classList.toggle('is-disabled', !subscription.enabled);
+        chip.lastChild.textContent = subscription.statusText;
+      }
+      setText('portalRefreshState', `Обновлено: ${new Date(subscription.updatedAt || Date.now()).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`);
+      renderPortalNodes(subscription.nodes);
+    }
+
+    async function refreshPortalStatus() {
+      const state = document.getElementById('portalRefreshState');
+      try {
+        const response = await fetch(portalStatusUrl, { cache: 'no-store', headers: { Accept: 'application/json' } });
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || 'Ошибка обновления');
+        applyPortalStatus(data.subscription);
+      } catch (_) {
+        if (state) state.textContent = 'Не удалось обновить статистику. Повторю автоматически.';
+      }
+    }
+
+    document.getElementById('portalThemeButton')?.addEventListener('click', () => {
+      const next = document.documentElement.dataset.colorMode === 'light' ? 'dark' : 'light';
+      document.documentElement.dataset.colorMode = next;
+      document.documentElement.dataset.colorTheme = next;
+      try { localStorage.setItem('agg.color-theme.v1', next); } catch (_) {}
+    });
+    setInterval(refreshPortalStatus, 60000);
   </script>
 </body>
 </html>
