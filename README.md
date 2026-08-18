@@ -1,12 +1,12 @@
 <p align="center">
-  <img src="public/img/nexus-logo.png" width="132" alt="Логотип Nexus Panel">
+  <img src="public/img/nexus-logo-512.png" width="132" alt="Логотип Nexus Panel">
 </p>
 
 <h1 align="center">Nexus Panel</h1>
 
 Nexus Panel — панель агрегации и управления узлами **3x-ui** и **Remnawave**: клиенты, SUB/JSON-подписки, маршрутизация, трафик, Telegram и синхронизация выбранного inbound.
 
-[![Version](https://img.shields.io/badge/version-2.4.0-blue)](https://github.com/dagmagnat/Nexus-Panel)
+[![Version](https://img.shields.io/badge/version-2.4.2-blue)](https://github.com/dagmagnat/Nexus-Panel)
 ![Node.js](https://img.shields.io/badge/node-%3E%3D22-gray)
 ![License](https://img.shields.io/badge/license-MIT-gray)
 
@@ -42,7 +42,9 @@ Nexus Panel — панель агрегации и управления узла
 
 Версия 2.4.0 добавляет группы и цветные метки клиентов, раздельный расход и лимиты по каждому серверу, полный редактор JSON inbound, скорость правил перенаправления и прямой вход без дополнительного URL-ключа. Расход узла без лимита больше не прибавляется к лимиту LTE-узла.
 
-Старые `style.css`, `redesign.css`, `nexus-ui.css` и `stage*.css` больше не подключаются, поэтому разные разделы не получают конфликтующие цвета и размеры. Источник интерфейса один: `public/css/spectrum-clear.css`.
+Версия 2.4.2 исправляет запуск установщика с Windows-переносами строк и скрытое ожидание Enter у фоновых команд. Каталог клиентов, редактор клиента, QR, форма узла, рейтинг трафика, сроки, онлайн-список и маршрутизация получили более плотную и ровную компоновку для компьютера и телефона.
+
+Устаревшие `style.css`, `redesign.css`, `nexus-ui.css` и `stage*.css` удалены, чтобы разные разделы не получали конфликтующие цвета и размеры. Источник интерфейса один: `public/css/spectrum-clear.css`.
 
 Редизайн не меняет `data/app.db`, `.env`, UUID клиентов и `sub_slug`. Уже выданные ссылки подписок сохраняются. Подробные критерии и контракт: [`docs/NEXUS_PRODUCT_SPEC.md`](docs/NEXUS_PRODUCT_SPEC.md) и [`docs/DATA_COMPATIBILITY.md`](docs/DATA_COMPATIBILITY.md).
 
@@ -52,14 +54,16 @@ Nexus Panel — панель агрегации и управления узла
 
 ```bash
 sudo -i
-curl -fsSL --retry 5 https://raw.githubusercontent.com/dagmagnat/Nexus-Panel/main/install.sh -o /tmp/nexus-install.sh && bash /tmp/nexus-install.sh
+curl -fsSL --retry 5 https://raw.githubusercontent.com/dagmagnat/Nexus-Panel/main/install.sh | sed 's/\r$//' > /tmp/nexus-install.sh && test -s /tmp/nexus-install.sh && bash /tmp/nexus-install.sh
 ```
 
 Если приглашение уже имеет вид `root@server:~#`, повторять `sudo -i` не нужно.
 Сообщение `/usr/bin/xauth: file /root/.Xauthority does not exist` относится к
 SSH X11 forwarding, а не к Nexus Panel, и не мешает установке. Команда выше не
 запускает пустой или ошибочно загруженный файл и сохраняет полный журнал в
-`/root/nexus-panel-install.log`.
+`/root/nexus-panel-install.log`. Команда также удаляет случайные Windows-символы
+переноса строки из загруженного файла, поэтому Bash не завершится молча на
+строке `set -Eeuo pipefail`.
 
 Установщик сам скачает `dagmagnat/Nexus-Panel`, создаст конфигурацию, установит Docker при необходимости и покажет точный адрес входа. Дополнительный ключ в URL не нужен.
 
@@ -120,7 +124,7 @@ agg
 unset NEXUS_INSTALLER_LIBRARY_ONLY
 curl --fail --show-error --location --retry 5 --retry-delay 2 --connect-timeout 20 \
   https://raw.githubusercontent.com/dagmagnat/Nexus-Panel/main/install.sh \
-  -o /tmp/nexus-panel-install.sh \
+  | sed 's/\r$//' > /tmp/nexus-panel-install.sh \
   && test -s /tmp/nexus-panel-install.sh \
   && grep -q '^#!/usr/bin/env bash' /tmp/nexus-panel-install.sh \
   && bash /tmp/nexus-panel-install.sh update 2>&1 | tee /root/nexus-panel-update.log
@@ -207,7 +211,7 @@ agg clients import /root/nexus-clients.json --mode update --node-mode selected -
 
 ## Логотип и Happ
 
-Логотип Nexus Panel находится в `branding/nexus-logo-master.png`; готовые размеры для сайта лежат в `public/img/`. Панель использует его в сайдбаре, мобильной шапке, на странице входа, в favicon и на публичной странице подключения.
+Готовые размеры логотипа Nexus Panel находятся в `public/img/`; для повторного экспорта и Social preview используйте `public/img/nexus-logo-512.png`. Панель использует логотип в сайдбаре, мобильной шапке, на странице входа, в favicon и на публичной странице подключения.
 
 JSON-подписки также содержат публичный `logoUrl`, а стандартный `profile-web-page-url` Happ ведёт на фирменную страницу клиента. При этом официальный формат метаданных Happ не содержит отдельного поля для произвольной растровой иконки слева: клиент гарантированно поддерживает название, трафик, объявление, ссылку поддержки и ссылку страницы профиля. Поэтому отображение именно круглого аватара, как у отдельных VPN-провайдеров, зависит от версии Happ и настроек аккаунта провайдера.
 

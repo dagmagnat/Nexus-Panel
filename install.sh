@@ -144,7 +144,9 @@ ui_run() {
     printf 'Started: %s\n' "$(date -Is)"
   } >> "$NEXUS_UI_LOG_FILE"
 
-  "$@" > "$step_log" 2>&1 &
+  # Служебные шаги всегда неинтерактивны. Без явного /dev/null некоторые
+  # команды наследуют SSH-терминал и ждут Enter, хотя вопроса на экране нет.
+  "$@" </dev/null > "$step_log" 2>&1 &
   pid=$!
 
   if [ "$NEXUS_UI_ANIMATE" = "1" ]; then

@@ -33,7 +33,7 @@
     } catch (_) {}
   })();
   </script>
-  <link rel="stylesheet" href="/css/spectrum-clear.css?v=240" />
+  <link rel="stylesheet" href="/css/spectrum-clear.css?v=242" />
   <script src="/js/security.js?v=1"></script>
   <% if (typeof isDevelopment !== 'undefined' && isDevelopment) { %><script src="/js/dev-inspector.js?v=1" defer></script><% } %>
 </head>
@@ -118,7 +118,6 @@
           <% if (typeof pageSubtitle !== 'undefined' && pageSubtitle) { %><p class="subtitle"><%= pageSubtitle %></p><% } %>
         </div>
         <div class="spectrum-page-actions">
-          <% if (currentPath === 'clients') { %><button type="button" class="spectrum-quick-action" onclick="window.openModalById && openModalById('createClientModal')">Создать клиента</button><% } %>
           <button type="button" class="theme-toggle spectrum-theme-button" data-theme-toggle aria-label="Переключить тему"><span data-theme-icon><%- nexusIcon('moon', 'theme-moon') %><%- nexusIcon('sun', 'theme-sun') %></span><span class="theme-label">Тема</span></button>
         </div>
       </header>

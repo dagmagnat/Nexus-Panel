@@ -85,7 +85,7 @@
     <h2>Добавить узел</h2>
     <form method="post" action="/nodes" class="js-long-action auth-token-active" data-node-add-form data-loading-title="Добавляю узел" data-loading-text="Проверяю подключение, читаю параметры выбранного inbound и сохраняю узел.">
       <div class="form-grid">
-        <div class="field">
+        <div class="field half">
           <label>Страна</label>
           <select name="country_code" required>
             <option value="">Выбери страну</option>
@@ -105,13 +105,13 @@
           <input name="custom_country_flag" placeholder="🇪🇺 или 🌐" maxlength="8" />
         </div>
 
-        <div class="field">
+        <div class="field half">
           <label>Доп. название узла</label>
           <input name="label_suffix" placeholder="например: 1, 2, Frankfurt, Hetzner" />
           <small class="hint">Например: Германия + 1 = Германия-1. Флаг и страна остаются от выбранной страны в подписке.</small>
         </div>
 
-        <div class="field">
+        <div class="field half">
           <label>Тип узла</label>
           <select name="node_type" class="js-node-type-select">
             <option value="3xui" selected>3x-ui</option>
@@ -120,18 +120,18 @@
           <small class="hint" data-node-type-summary>Remnawave добавляется по URL панели и API Token. Агрегатор создаёт пользователей с тем же VLESS UUID, назначает Internal Squad и добавляет Remnawave-хосты в общую SUB/JSON подписку клиента.</small>
         </div>
 
-        <div class="field" data-node-endpoint-field>
+        <div class="field half" data-node-endpoint-field>
           <label data-node-endpoint-label>3x-ui Panel URL</label>
           <input name="panel_url" placeholder="https://panel.example.com:2053" required data-node-endpoint-input />
           <small class="hint" data-node-endpoint-hint>Адрес обычной панели 3x-ui, установленной на сервере.</small>
         </div>
 
-        <div class="field js-node-3xui-only">
+        <div class="field half js-node-3xui-only">
           <label>Panel Path</label>
           <input name="panel_path" placeholder="/qwerty123" />
         </div>
 
-        <div class="field js-node-3xui-only">
+        <div class="field half js-node-3xui-only">
           <label>Метод API 3x-ui</label>
           <select name="api_auth_mode" class="js-api-auth-mode" data-target="add-node-auth-fields">
             <option value="token" selected>API Token</option>
@@ -140,7 +140,7 @@
           <small class="hint">Для 3x-ui выбери новый API Token или старый способ с логином и паролем.</small>
         </div>
 
-        <div id="add-node-auth-fields" class="auth-mode-fields field full">
+        <div id="add-node-auth-fields" class="auth-mode-fields field half">
           <div class="auth-password-fields form-grid hidden" style="display:none">
             <div class="field half">
               <label>Логин панели</label>
@@ -221,7 +221,7 @@
           <small class="hint">Перед сохранением Aggregator проверит этот ID, загрузит полный inbound и перенесёт его Protocol, Transport, Security, порт, путь и режим. Если ID не найден, узел не будет добавлен.</small>
         </div>
 
-        <div class="field js-node-3xui-only js-node-3xui-editable-only">
+        <div class="field half js-node-3xui-only js-node-3xui-editable-only">
           <label>SNI в подписках</label>
           <select name="sni_mode" data-sni-source>
             <option value="inbound" selected>Из 3x-ui inbound</option>

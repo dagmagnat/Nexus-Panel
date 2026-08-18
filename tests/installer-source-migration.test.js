@@ -145,11 +145,13 @@ test('installer cannot silently exit when helper-only variable is exported', () 
     'helper-only guard must be limited to sourcing the installer'
   );
   assert.match(source, /maybe_clear_screen/, 'SSH diagnostics stay visible by default');
+  assert.match(source, /"\$@" <\/dev\/null > "\$step_log" 2>&1 &/, 'background steps must never wait for invisible terminal input');
 });
 
-test('README exposes a single-line installer with retry and a visible temp script', () => {
+test('README exposes a CRLF-safe single-line installer with retry and a visible temp script', () => {
   const readme = fs.readFileSync(path.join(projectRoot, 'README.md'), 'utf8');
-  assert.match(readme, /curl -fsSL --retry 5 https:\/\/raw\.githubusercontent\.com\/dagmagnat\/Nexus-Panel\/main\/install\.sh -o \/tmp\/nexus-install\.sh && bash \/tmp\/nexus-install\.sh/);
+  assert.match(readme, /curl -fsSL --retry 5 https:\/\/raw\.githubusercontent\.com\/dagmagnat\/Nexus-Panel\/main\/install\.sh \| sed 's\/\\r\$\/\/' > \/tmp\/nexus-install\.sh && test -s \/tmp\/nexus-install\.sh && bash \/tmp\/nexus-install\.sh/);
+  assert.match(fs.readFileSync(path.join(projectRoot, '.gitattributes'), 'utf8'), /\*\.sh text eol=lf/);
 });
 
 test('agg menu cannot launch an action on an empty Enter and legacy URL key is retired', () => {

@@ -11,7 +11,7 @@ const read = relative => fs.readFileSync(path.join(root, relative), 'utf8');
 test('Spectrum Clear is the only stylesheet loaded by authenticated pages', () => {
   const header = read('views/partials_header.ejs');
   const stylesheets = Array.from(header.matchAll(/<link[^>]+rel=["']stylesheet["'][^>]+href=["']([^"']+)/g), match => match[1]);
-  assert.deepEqual(stylesheets, ['/css/spectrum-clear.css?v=240']);
+  assert.deepEqual(stylesheets, ['/css/spectrum-clear.css?v=242']);
   for (const legacy of ['style.css', 'redesign.css', 'nexus-ui.css', 'branding.css', 'stage87.css', 'stage90.css']) {
     assert.equal(header.includes(legacy), false, `legacy stylesheet must not be loaded: ${legacy}`);
   }
@@ -20,7 +20,7 @@ test('Spectrum Clear is the only stylesheet loaded by authenticated pages', () =
 test('login and public subscription pages use the same design system', () => {
   for (const file of ['views/login.ejs', 'views/open_sub.ejs']) {
     const source = read(file);
-    assert.match(source, /\/css\/spectrum-clear\.css\?v=240/);
+    assert.match(source, /\/css\/spectrum-clear\.css\?v=242/);
     assert.match(source, /class="[^"]*nexus-spectrum/);
     assert.doesNotMatch(source, /\/css\/(?:style|redesign|nexus-ui|branding|stage\d+)\.css/);
   }

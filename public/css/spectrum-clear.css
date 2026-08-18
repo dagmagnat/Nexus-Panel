@@ -2152,3 +2152,191 @@ body.client-modal-open { overflow: hidden; overscroll-behavior: none; }
   .portal-node-state { max-width: 72px; padding-inline: 6px; }
   .portal-footer { align-items: flex-start; flex-direction: column; gap: 3px; }
 }
+
+/* Spectrum Clear 2.4.2 — dense desktop workspaces and aligned dialogs. */
+.existing-client-editor-modal {
+  position: relative;
+  width: min(980px, 100%);
+  scrollbar-gutter: stable;
+}
+.existing-client-editor-modal > .modal-close {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  margin-right: 4px;
+}
+.client-editor-summary { align-items: stretch; }
+.client-summary-uuid code { white-space: normal; overflow-wrap: anywhere; }
+.client-summary-link-actions .btn-secondary {
+  color: var(--text-strong);
+  background: var(--surface-strong);
+}
+.client-editor-form .node-bulk-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 13px;
+}
+.client-editor-form .node-bulk-head > div:first-child { min-width: 0; flex: 1; }
+.client-editor-form .node-bulk-head h3 { margin-bottom: 3px; }
+.client-editor-form .node-bulk-head p { margin: 0; }
+.client-editor-form .node-select-actions { display: flex; flex: 0 0 auto; gap: 7px; }
+.client-editor-form > .modal-actions { justify-content: flex-end; }
+.client-editor-form > .modal-actions .btn-main { min-width: 150px; }
+.existing-client-editor-modal .extend-form { margin-top: 12px; }
+.existing-client-editor-modal .extend-form .stretch-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+.existing-client-editor-modal .extend-form + .modal-actions { justify-content: flex-end; }
+
+.client-quick-primary-actions {
+  display: grid;
+  grid-template-columns: auto minmax(250px, 360px);
+  align-items: center;
+  gap: 8px;
+}
+.client-quick-primary-actions > .btn-main {
+  min-height: 39px;
+  color: #fff;
+  background: var(--brand-gradient);
+  opacity: 1;
+}
+.client-quick-renew-form {
+  display: grid;
+  grid-template-columns: 80px minmax(110px, auto);
+  gap: 7px;
+  margin: 0;
+}
+.client-quick-actions.modern {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+  margin-top: 4px;
+}
+.client-quick-actions.modern > *,
+.client-quick-actions.modern form,
+.client-quick-actions.modern button { width: 100%; min-width: 0; }
+.client-quick-actions.modern .client-quick-wide-action { grid-column: span 2; }
+.client-quick-node-chip.empty {
+  min-height: 42px;
+  padding: 9px;
+  place-items: initial;
+  justify-content: flex-start;
+  text-align: left;
+}
+
+.qr-modal-card.is-pair { width: min(900px, 100%); padding: 18px; }
+.qr-modal-card.is-pair > h2 { margin-bottom: 10px; }
+.qr-pair-card { display: grid; align-content: start; padding: 12px; }
+.qr-pair-card-head { justify-content: flex-start; }
+.qr-pair-card-head > div { display: grid; min-width: 0; gap: 3px; }
+.qr-pair-card-head strong,
+.qr-pair-card-head span { display: block; }
+.qr-pair-card-head > div > span { color: var(--muted); font-size: 10px; line-height: 1.3; }
+.qr-format-badge.is-json { color: #b9a7ff; background: color-mix(in srgb, var(--violet) 12%, var(--surface)); border-color: color-mix(in srgb, var(--violet) 30%, var(--line)); }
+.qr-modal-card.is-pair .qr-code-frame { width: min(220px, 100%); margin-block: 10px; }
+.qr-copy-button { width: 100%; }
+.qr-modal-text { margin: 8px 0 0; }
+
+.top-usage-item { align-content: start; gap: 7px; }
+.top-usage-grid {
+  grid-template-columns: repeat(4, max-content);
+  justify-content: start;
+  gap: 7px 22px;
+  margin-top: 2px;
+}
+.top-usage-grid > div { display: flex; align-items: baseline; gap: 4px; }
+.top-usage-grid span { color: var(--muted); font-size: 10px; }
+.top-usage-grid strong { font-size: 12px; }
+.top-usage-item .live-node-tags { margin-top: 2px; }
+.top-usage-item .live-node-tags > span { padding: 5px 7px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; font-size: 10px; }
+
+.online-modal-card { width: min(920px, 100%); scrollbar-gutter: stable; }
+.online-modal-card .online-list {
+  max-height: min(62vh, 620px);
+  padding-right: 4px;
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+.online-modal-card .online-client-card-v2 {
+  grid-template-columns: 8px minmax(190px, 1fr) minmax(125px, auto) minmax(92px, auto) auto;
+}
+
+.routing-form .preset-card > span { display: grid; min-width: 0; gap: 3px; }
+.routing-form .preset-card strong { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 5px; line-height: 1.3; }
+.routing-form .preset-card small { display: block; color: var(--muted); line-height: 1.4; overflow-wrap: anywhere; }
+.routing-form .mode-grid .preset-card { min-height: 88px; }
+
+@media (min-width: 1200px) {
+  .page-clients .clients-toolbar-actions { flex-wrap: nowrap; }
+  .page-clients .clients-toolbar-actions > * { min-height: 36px; padding: 7px 10px; font-size: 10px; white-space: nowrap; }
+  .page-clients .client-directory-toolbar { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .page-clients .client-directory-toolbar-actions { grid-column: 1 / -1; justify-content: flex-end; padding-top: 1px; }
+
+  .page-nodes [data-node-add-form] > .form-grid { gap: 10px 12px; }
+  .page-nodes [data-node-add-form] .field { gap: 4px; }
+  .page-nodes [data-node-add-form] .hint { font-size: 10px; line-height: 1.35; }
+  .page-nodes [data-node-add-form] .auth-token-fields { display: grid; grid-template-columns: minmax(0, 1fr); gap: 5px; }
+  .page-nodes [data-node-add-form] .is-disabled-by-sni-mode { display: none; }
+
+  .expiry-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .expiry-list .dashboard-client-card {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto auto;
+    min-height: 76px;
+    gap: 4px 10px;
+  }
+  .expiry-list .dashboard-client-main { grid-column: 1; grid-row: 1; }
+  .expiry-list .dashboard-client-meta { grid-column: 1; grid-row: 2; gap: 5px 12px; font-size: 9px; }
+  .expiry-list .mini-extend-form { grid-column: 2; grid-row: 1 / span 2; }
+}
+
+@media (min-width: 901px) and (max-width: 1199px) {
+  .page-clients .client-directory-toolbar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .page-clients .client-directory-toolbar-actions { grid-column: 1 / -1; }
+}
+
+@media (max-width: 900px) {
+  .existing-client-editor-modal { scrollbar-gutter: auto; }
+  .existing-client-editor-modal > .modal-close { margin-right: 0; }
+  .client-editor-form .node-bulk-head { display: grid; align-items: stretch; gap: 6px; }
+  .client-editor-form .node-bulk-head p { display: none; }
+  .client-editor-form .node-select-actions { display: grid; width: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .client-quick-primary-actions { grid-template-columns: 1fr; }
+  .client-quick-renew-form { grid-template-columns: minmax(0, 1fr) auto; }
+  .client-quick-actions.modern { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .client-quick-actions.modern .client-quick-wide-action { grid-column: 1 / -1; }
+  .online-modal-card .online-client-card-v2 { grid-template-columns: 7px minmax(0, 1fr) auto; }
+  .online-modal-card .online-client-expiry-v4 { grid-column: 2; }
+  .online-modal-card .online-node-preview-list { grid-column: 3; grid-row: 1 / span 2; }
+  .online-modal-card .online-details-toggle-v4 { grid-column: 2 / -1; justify-self: end; }
+  .top-usage-grid { grid-template-columns: repeat(2, max-content); gap: 5px 14px; }
+  .qr-modal-card.is-pair { padding: 13px; }
+}
+
+@media (max-width: 600px) {
+  .page-clients .client-directory-toolbar-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 7px;
+  }
+  .page-clients .client-online-refresh-controls {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+  .page-clients .client-directory-result { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+  .page-clients .client-directory-reset { min-height: 32px; padding: 5px 8px; font-size: 9px; white-space: nowrap; }
+  .client-editor-form .node-bulk-head { display: grid; align-items: stretch; gap: 6px; }
+  .client-editor-form .node-select-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .existing-client-editor-modal .extend-form .stretch-row { grid-template-columns: 1fr; }
+  .existing-client-editor-modal .extend-form button,
+  .existing-client-editor-modal .extend-form + .modal-actions button { width: 100%; }
+  .top-usage-grid { grid-template-columns: 1fr 1fr; }
+  .qr-pair-view { grid-template-columns: 1fr; }
+}

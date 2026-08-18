@@ -1309,7 +1309,7 @@
     const root = select.dataset.target ? document.getElementById(select.dataset.target) : form;
     const scope = root || form;
     scope.querySelectorAll('.auth-token-fields').forEach(function(el){
-      const hide = mode !== 'token'; el.hidden = hide; el.classList.toggle('hidden', hide); el.style.setProperty('display', hide ? 'none' : 'flex', 'important');
+      const hide = mode !== 'token'; el.hidden = hide; el.classList.toggle('hidden', hide); el.style.setProperty('display', hide ? 'none' : 'grid', 'important');
     });
     scope.querySelectorAll('.auth-password-fields').forEach(function(el){
       const hide = mode !== 'password'; el.hidden = hide; el.classList.toggle('hidden', hide); el.style.setProperty('display', hide ? 'none' : 'grid', 'important');
@@ -1485,7 +1485,7 @@
     root.querySelectorAll('.auth-token-fields').forEach(function(el){
       const hide = mode !== 'token';
       el.hidden = hide; el.classList.toggle('hidden', hide);
-      el.style.setProperty('display', hide ? 'none' : 'flex', 'important');
+      el.style.setProperty('display', hide ? 'none' : 'grid', 'important');
       el.querySelectorAll('input,select,textarea').forEach(function(i){ i.disabled = hide; i.required = !hide && i.dataset.requiredWhen === 'token' && i.dataset.hasSavedSecret !== '1'; });
     });
   }
@@ -1652,7 +1652,7 @@
     });
     root.querySelectorAll('.auth-token-fields').forEach(function(el){
       const hide = mode !== 'token';
-      el.hidden = hide; el.classList.toggle('hidden', hide); el.style.setProperty('display', hide ? 'none' : 'flex', 'important');
+      el.hidden = hide; el.classList.toggle('hidden', hide); el.style.setProperty('display', hide ? 'none' : 'grid', 'important');
       el.querySelectorAll('input,select,textarea').forEach(function(i){ i.disabled = hide; i.required = !hide && i.dataset.requiredWhen === 'token' && i.dataset.hasSavedSecret !== '1'; });
     });
   }
