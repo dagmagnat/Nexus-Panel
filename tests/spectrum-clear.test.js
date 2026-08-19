@@ -11,7 +11,7 @@ const read = relative => fs.readFileSync(path.join(root, relative), 'utf8');
 test('Spectrum Clear is the only stylesheet loaded by authenticated pages', () => {
   const header = read('views/partials_header.ejs');
   const stylesheets = Array.from(header.matchAll(/<link[^>]+rel=["']stylesheet["'][^>]+href=["']([^"']+)/g), match => match[1]);
-  assert.deepEqual(stylesheets, ['/css/spectrum-clear.css?v=251']);
+  assert.deepEqual(stylesheets, ['/css/spectrum-clear.css?v=260']);
   for (const legacy of ['style.css', 'redesign.css', 'nexus-ui.css', 'branding.css', 'stage87.css', 'stage90.css']) {
     assert.equal(header.includes(legacy), false, `legacy stylesheet must not be loaded: ${legacy}`);
   }
@@ -20,7 +20,7 @@ test('Spectrum Clear is the only stylesheet loaded by authenticated pages', () =
 test('login and public subscription pages use the same design system', () => {
   for (const file of ['views/login.ejs', 'views/open_sub.ejs']) {
     const source = read(file);
-    assert.match(source, /\/css\/spectrum-clear\.css\?v=251/);
+    assert.match(source, /\/css\/spectrum-clear\.css\?v=260/);
     assert.match(source, /class="[^"]*nexus-spectrum/);
     assert.doesNotMatch(source, /\/css\/(?:style|redesign|nexus-ui|branding|stage\d+)\.css/);
   }
@@ -149,4 +149,24 @@ test('2.5.1 client bulk metadata and helper restart controls remain wired end to
   assert.match(forwarder, /redirect_helper_restart\.request/);
   assert.match(installer, /PathExists=.*redirect_helper_restart\.request/);
   assert.match(css, /2\.5\.1 final cascade/);
+});
+
+test('2.6.0 HWID device registry and subscription notices are wired into the UI', () => {
+  const app = read('app.js');
+  const clients = read('views/clients.ejs');
+  const settings = read('views/settings.ejs');
+  const openSub = read('views/open_sub.ejs');
+  const css = read('public/css/spectrum-clear.css');
+  assert.match(app, /CREATE TABLE IF NOT EXISTS subscription_devices/);
+  assert.match(app, /device_limit INTEGER NOT NULL DEFAULT 0/);
+  assert.match(app, /buildSubscriptionEntriesForRequest/);
+  assert.match(app, /x-hwid-max-devices-reached/);
+  assert.match(clients, /Устройства клиента/);
+  assert.match(clients, /client-device-count-link/);
+  assert.match(settings, /Блокировать устройства сверх лимита/);
+  assert.match(settings, /Заменять узлы после окончания подписки/);
+  assert.match(openSub, /<h3>INCY<\/h3>/);
+  assert.match(openSub, /incy:\/\/import\//);
+  assert.match(openSub, /<h3>v2RayTun<\/h3>/);
+  assert.match(css, /subscription HWID device registry/);
 });

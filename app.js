@@ -1152,6 +1152,7 @@ function initDb() {
       duration_days INTEGER NOT NULL DEFAULT 0,
       traffic_gb INTEGER NOT NULL DEFAULT 0,
       limit_ip INTEGER NOT NULL DEFAULT 1,
+      device_limit INTEGER NOT NULL DEFAULT 0,
       expiry_time INTEGER NOT NULL DEFAULT 0,
       enabled INTEGER NOT NULL DEFAULT 1,
       comment TEXT NOT NULL DEFAULT '',
@@ -1198,6 +1199,24 @@ function initDb() {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(client_id, node_id)
     );
+
+    CREATE TABLE IF NOT EXISTS subscription_devices (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      client_id INTEGER NOT NULL,
+      hwid_hash TEXT NOT NULL,
+      hwid_hint TEXT NOT NULL DEFAULT '',
+      os_name TEXT NOT NULL DEFAULT '',
+      os_version TEXT NOT NULL DEFAULT '',
+      device_model TEXT NOT NULL DEFAULT '',
+      app_name TEXT NOT NULL DEFAULT '',
+      request_count INTEGER NOT NULL DEFAULT 1,
+      first_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(client_id, hwid_hash)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_subscription_devices_client
+      ON subscription_devices(client_id, last_seen_at DESC);
 
     CREATE TABLE IF NOT EXISTS node_inbound_cache (
       node_id INTEGER PRIMARY KEY,
@@ -1371,6 +1390,7 @@ function initDb() {
   addColumnIfMissing('clients', 'duration_days', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing('clients', 'traffic_gb', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing('clients', 'limit_ip', 'INTEGER NOT NULL DEFAULT 1');
+  addColumnIfMissing('clients', 'device_limit', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing('clients', 'expiry_time', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing('clients', 'enabled', 'INTEGER NOT NULL DEFAULT 1');
   addColumnIfMissing('clients', 'comment', "TEXT NOT NULL DEFAULT ''");
@@ -1447,13 +1467,19 @@ function initDb() {
     ['subscription_show_empty_limits', '0'],
     ['subscription_revision', '1'],
     ['subscription_happ_info_enabled', '1'],
-    ['subscription_happ_info_template', '👤 Логин: {login}\n📱 Устройств: {ip_usage}\n\n{support_note}'],
+    ['subscription_happ_info_template', '👤 Логин: {login}\n📱 Устройства: {device_usage}\n\n{support_note}'],
     ['subscription_happ_info_announce_fallback_enabled', '1'],
     ['subscription_happ_info_color', 'blue'],
     ['subscription_happ_info_button_text', 'Поддержка'],
     ['subscription_happ_info_button_link', ''],
     ['subscription_happ_server_description_enabled', '1'],
     ['subscription_happ_server_description_template', 'VLESS / {network} / JSON'],
+    ['subscription_device_tracking_enabled', '1'],
+    ['subscription_device_limit_enforced', '1'],
+    ['subscription_device_require_hwid', '0'],
+    ['subscription_expired_notice_enabled', '1'],
+    ['subscription_expired_notice_title', '⛔ Продлите подписку'],
+    ['subscription_device_limit_notice_title', '⚠️ Превышен лимит устройств'],
     ['happ_provider_id', ''],
     ['json_mux_enabled', '0'],
     ['json_sniffing_enabled', '0'],
@@ -1514,6 +1540,8 @@ function initDb() {
     if (!existing) db.prepare('INSERT INTO app_settings (key, value) VALUES (?, ?)').run(key, value);
   }
 
+  migrateSubscriptionDeviceLimitsOnce();
+
   // Мягкая миграция старого шаблона: "Ключ" заменяем на более понятный "Логин".
   const currentHappTemplate = getSetting('subscription_happ_info_template', '');
   if (currentHappTemplate && currentHappTemplate.includes('Ключ: {login}')) {
@@ -1525,6 +1553,21 @@ function initDb() {
   if (String(currentServerDescriptionTemplate || '').trim() === 'VLESS / {network} / REALITY / JSON') {
     setSetting('subscription_happ_server_description_template', 'VLESS / {network} / JSON');
   }
+}
+
+function migrateSubscriptionDeviceLimitsOnce() {
+  // Existing installations historically used limit_ip as the only visible
+  // "device" allowance in subscription metadata. Copy it once into the new
+  // HWID limit so an update keeps the administrator's existing intent. The
+  // values become independent after this one-time migration.
+  const marker = db.prepare('SELECT value FROM app_settings WHERE key = ?').get('subscription_device_limit_migrated_v1');
+  if (marker) return false;
+  const tx = db.transaction(() => {
+    db.prepare('UPDATE clients SET device_limit = CASE WHEN limit_ip > 0 THEN limit_ip ELSE 0 END WHERE device_limit = 0').run();
+    db.prepare('INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)').run('subscription_device_limit_migrated_v1', '1');
+  });
+  tx();
+  return true;
 }
 
 initDb();
@@ -2184,13 +2227,15 @@ function getExpiredSubscriptionNotice() {
 }
 
 function getEffectiveSubscriptionSupportNote(clientRow) {
-  return isClientExpired(clientRow) ? getExpiredSubscriptionNotice() : getSubscriptionSupportNote();
+  const note = getSubscriptionSupportNote();
+  if (!isClientExpired(clientRow)) return note;
+  return [getExpiredSubscriptionNotice(), note].filter(Boolean).join('\n');
 }
 
 function getEffectiveSubscriptionSupportMeta(clientRow) {
   const meta = getSubscriptionSupportMeta();
   if (isClientExpired(clientRow)) {
-    return { ...meta, note: getExpiredSubscriptionNotice() };
+    return { ...meta, note: [getExpiredSubscriptionNotice(), meta.note].filter(Boolean).join('\n') };
   }
   return meta;
 }
@@ -2221,7 +2266,7 @@ function isHappInfoAnnounceFallbackEnabled() {
 function getHappInfoTemplate() {
   return String(getSetting(
     'subscription_happ_info_template',
-    '👤 Логин: {login}\n📱 Устройств: {ip_usage}\n\n{support_note}'
+    '👤 Логин: {login}\n📱 Устройства: {device_usage}\n\n{support_note}'
   ) || '').trim();
 }
 
@@ -2270,6 +2315,227 @@ function getClientLimitIpText(clientRow) {
   return limitIp > 0 ? String(limitIp) : '∞';
 }
 
+function isSubscriptionDeviceTrackingEnabled() {
+  return getSetting('subscription_device_tracking_enabled', '1') !== '0';
+}
+
+function isSubscriptionDeviceLimitEnforced() {
+  return getSetting('subscription_device_limit_enforced', '1') !== '0';
+}
+
+function isSubscriptionDeviceHwidRequired() {
+  return getSetting('subscription_device_require_hwid', '0') === '1';
+}
+
+function getClientDeviceLimit(clientRow) {
+  return Math.max(0, Number(clientRow?.device_limit ?? 0));
+}
+
+function countSubscriptionDevices(clientId) {
+  if (!Number(clientId)) return 0;
+  return Number(db.prepare('SELECT COUNT(*) AS count FROM subscription_devices WHERE client_id = ?').get(Number(clientId))?.count || 0);
+}
+
+function getClientDeviceUsageText(clientRow) {
+  const used = countSubscriptionDevices(clientRow?.id);
+  const limit = getClientDeviceLimit(clientRow);
+  return `${used}/${limit > 0 ? limit : '∞'}`;
+}
+
+function sanitizeSubscriptionDeviceText(value, maxLen = 120) {
+  return String(value || '')
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLen);
+}
+
+function normalizeSubscriptionHwid(value) {
+  const hwid = String(value || '').trim();
+  // Keep the same conservative envelope documented by Remnawave for the
+  // Happ HWID standard. Happ, INCY and v2RayTun all fit this format.
+  if (!/^[A-Za-z0-9=-]{10,64}$/.test(hwid)) return '';
+  return hwid;
+}
+
+function subscriptionDeviceHash(clientRow, hwid) {
+  // A one-way hash is enough for equality checks and survives APP_SECRET
+  // rotation/backup restore. UUID is stable in Nexus and prevents the same
+  // app HWID from becoming a cross-client correlation key in the database.
+  const clientKey = String(clientRow?.uuid || clientRow?.id || '0');
+  return createHash('sha256')
+    .update(`subscription-device:v1:${clientKey}:${String(hwid || '')}`, 'utf8')
+    .digest('hex');
+}
+
+function detectSubscriptionAppName(userAgent) {
+  const ua = String(userAgent || '').toLowerCase();
+  if (ua.includes('v2raytun') || ua.includes('v2ray tun')) return 'v2RayTun';
+  if (ua.includes('incy')) return 'INCY';
+  if (ua.includes('happ')) return 'Happ';
+  if (ua.includes('hiddify')) return 'Hiddify';
+  if (ua.includes('shadowrocket')) return 'Shadowrocket';
+  return '';
+}
+
+function getSubscriptionDeviceFromRequest(req) {
+  const hwid = normalizeSubscriptionHwid(req.get('x-hwid'));
+  const userAgent = sanitizeSubscriptionDeviceText(req.get('user-agent'), 180);
+  return {
+    hwid,
+    hwidHint: hwid ? `${hwid.slice(0, 4)}…${hwid.slice(-6)}` : '',
+    osName: sanitizeSubscriptionDeviceText(req.get('x-device-os'), 40),
+    osVersion: sanitizeSubscriptionDeviceText(req.get('x-ver-os'), 40),
+    deviceModel: sanitizeSubscriptionDeviceText(req.get('x-device-model'), 80),
+    appName: detectSubscriptionAppName(userAgent)
+  };
+}
+
+function listSubscriptionDevices(clientId) {
+  if (!Number(clientId)) return [];
+  return db.prepare(`
+    SELECT id, client_id, hwid_hint, os_name, os_version, device_model,
+           app_name, request_count, first_seen_at, last_seen_at
+    FROM subscription_devices
+    WHERE client_id = ?
+    ORDER BY datetime(last_seen_at) DESC, id DESC
+  `).all(Number(clientId));
+}
+
+function registerSubscriptionDevice(req, clientRow, options = {}) {
+  const trackingEnabled = isSubscriptionDeviceTrackingEnabled();
+  const limit = getClientDeviceLimit(clientRow);
+  const info = getSubscriptionDeviceFromRequest(req);
+  const base = {
+    trackingEnabled,
+    limit,
+    limitActive: trackingEnabled && limit > 0 && isSubscriptionDeviceLimitEnforced(),
+    count: countSubscriptionDevices(clientRow?.id),
+    hasHwid: Boolean(info.hwid),
+    allowed: true,
+    reason: '',
+    device: info,
+    existing: false,
+    registered: false
+  };
+
+  if (!trackingEnabled || !clientRow?.id) return base;
+
+  if (!info.hwid) {
+    if (limit > 0 && isSubscriptionDeviceLimitEnforced() && isSubscriptionDeviceHwidRequired()) {
+      return { ...base, allowed: false, reason: 'hwid-required' };
+    }
+    return base;
+  }
+
+  const hwidHash = subscriptionDeviceHash(clientRow, info.hwid);
+  const upsertDevice = db.transaction(() => {
+    const existing = db.prepare('SELECT id FROM subscription_devices WHERE client_id = ? AND hwid_hash = ?')
+      .get(Number(clientRow.id), hwidHash);
+
+    if (existing) {
+      db.prepare(`
+        UPDATE subscription_devices
+        SET hwid_hint = ?, os_name = ?, os_version = ?, device_model = ?, app_name = ?,
+            request_count = request_count + 1, last_seen_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(
+        info.hwidHint, info.osName, info.osVersion, info.deviceModel, info.appName, existing.id
+      );
+      return { allowed: true, existing: true, registered: true, count: countSubscriptionDevices(clientRow.id) };
+    }
+
+    const currentCount = countSubscriptionDevices(clientRow.id);
+    if (options.allowNew === false) {
+      return { allowed: true, existing: false, registered: false, count: currentCount, reason: 'new-device-skipped' };
+    }
+    if (limit > 0 && isSubscriptionDeviceLimitEnforced() && currentCount >= limit) {
+      return { allowed: false, existing: false, registered: false, count: currentCount, reason: 'device-limit' };
+    }
+
+    db.prepare(`
+      INSERT INTO subscription_devices (
+        client_id, hwid_hash, hwid_hint, os_name, os_version, device_model, app_name, request_count
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+    `).run(
+      Number(clientRow.id), hwidHash, info.hwidHint, info.osName, info.osVersion,
+      info.deviceModel, info.appName
+    );
+    return { allowed: true, existing: false, registered: true, count: currentCount + 1 };
+  });
+
+  return { ...base, ...upsertDevice() };
+}
+
+function applySubscriptionDeviceHeaders(res, deviceState) {
+  if (!deviceState?.limitActive) return;
+  res.setHeader('x-hwid-active', 'true');
+  if (!deviceState.hasHwid) res.setHeader('x-hwid-not-supported', 'true');
+  if (!deviceState.allowed && ['device-limit', 'hwid-required'].includes(deviceState.reason)) {
+    res.setHeader('x-hwid-max-devices-reached', 'true');
+    // Backwards compatibility used by v2RayTun and Remnawave-compatible apps.
+    res.setHeader('x-hwid-limit', 'true');
+  }
+}
+
+function isExpiredSubscriptionNoticeEnabled() {
+  return getSetting('subscription_expired_notice_enabled', '1') !== '0';
+}
+
+function getSubscriptionNoticeTitle(kind) {
+  const fallback = kind === 'device-limit' ? '⚠️ Превышен лимит устройств' : '⛔ Продлите подписку';
+  const key = kind === 'device-limit' ? 'subscription_device_limit_notice_title' : 'subscription_expired_notice_title';
+  return sanitizeSubscriptionDeviceText(getSetting(key, fallback), 80) || fallback;
+}
+
+function buildSubscriptionNoticeEntry(kind) {
+  const title = getSubscriptionNoticeTitle(kind);
+  const noticeUuid = kind === 'device-limit'
+    ? '00000000-0000-4000-8000-000000000002'
+    : '00000000-0000-4000-8000-000000000001';
+  const line = `vless://${noticeUuid}@127.0.0.1:1?encryption=none&security=none&type=tcp#${encodeURIComponent(title)}`;
+  return {
+    line,
+    nodeId: null,
+    nodeType: 'notice',
+    nodeName: title,
+    baseNodeName: title,
+    subscriptionInfo: {
+      source: 'nexus-notice',
+      uploadBytes: 0,
+      downloadBytes: 0,
+      usedBytes: 0,
+      totalBytes: 0,
+      expiryTimeMs: 0,
+      enabled: false
+    }
+  };
+}
+
+async function buildSubscriptionEntriesForRequest(req, res, clientRow, options = {}) {
+  const expired = isClientExpired(clientRow);
+  // After expiry, a refresh may update an already-known device's last_seen, but
+  // it must not consume a fresh activation slot while access is suspended.
+  const deviceState = registerSubscriptionDevice(req, clientRow, { allowNew: !expired });
+  // Expiry is the primary access state. Do not tell a supported app that the
+  // HWID limit was exceeded when the only real reason for the service notice
+  // is an expired subscription.
+  applySubscriptionDeviceHeaders(res, expired ? { ...deviceState, allowed: true, reason: '' } : deviceState);
+
+  if (expired && isExpiredSubscriptionNoticeEnabled()) {
+    await enforceExpiredClientRemoteState(clientRow);
+    return { entries: [buildSubscriptionNoticeEntry('expired')], deviceState, accessState: 'expired' };
+  }
+
+  if (!deviceState.allowed) {
+    return { entries: [buildSubscriptionNoticeEntry('device-limit')], deviceState, accessState: deviceState.reason || 'device-limit' };
+  }
+
+  if (isClientExpired(clientRow)) await enforceExpiredClientRemoteState(clientRow);
+  const entries = await buildSubscriptionEntries(clientRow, true, options);
+  return { entries, deviceState, accessState: 'active' };
+}
+
 function formatClientTrafficUsageFromUserInfo(subscriptionUserInfo) {
   const raw = String(subscriptionUserInfo || '');
   const pairs = Object.fromEntries(raw.split(';').map(part => {
@@ -2299,7 +2565,12 @@ function buildHappInfoText(clientRow, subscriptionUserInfo = '') {
     login: clientRow?.login || '',
     display_name: clientRow?.display_name || clientRow?.login || '',
     limit_ip: getClientLimitIpText(clientRow),
-    ip_usage: getClientLimitIpText(clientRow),
+    device_limit: getClientDeviceLimit(clientRow) > 0 ? String(getClientDeviceLimit(clientRow)) : '∞',
+    device_count: String(countSubscriptionDevices(clientRow?.id)),
+    device_usage: getClientDeviceUsageText(clientRow),
+    // Backward compatibility: the old template used {ip_usage} even though
+    // operators expected a device counter. Keep existing templates working.
+    ip_usage: getClientDeviceUsageText(clientRow),
     traffic_usage: formatClientTrafficUsageFromUserInfo(subscriptionUserInfo),
     days_left: getDaysLeftText(expiryMs),
     expiry_date: expiryMs > 0 ? new Date(expiryMs).toLocaleDateString('ru-RU') : '∞',
@@ -2477,13 +2748,19 @@ function ensureMissingAppSettings() {
     ['subscription_show_empty_limits', '0'],
     ['subscription_revision', '1'],
     ['subscription_happ_info_enabled', '1'],
-    ['subscription_happ_info_template', '👤 Логин: {login}\n📱 Устройств: {ip_usage}\n\n{support_note}'],
+    ['subscription_happ_info_template', '👤 Логин: {login}\n📱 Устройства: {device_usage}\n\n{support_note}'],
     ['subscription_happ_info_announce_fallback_enabled', '1'],
     ['subscription_happ_info_color', 'blue'],
     ['subscription_happ_info_button_text', 'Поддержка'],
     ['subscription_happ_info_button_link', ''],
     ['subscription_happ_server_description_enabled', '1'],
     ['subscription_happ_server_description_template', 'VLESS / {network} / JSON'],
+    ['subscription_device_tracking_enabled', '1'],
+    ['subscription_device_limit_enforced', '1'],
+    ['subscription_device_require_hwid', '0'],
+    ['subscription_expired_notice_enabled', '1'],
+    ['subscription_expired_notice_title', '⛔ Продлите подписку'],
+    ['subscription_device_limit_notice_title', '⚠️ Превышен лимит устройств'],
     ['happ_provider_id', ''],
     ['json_mux_enabled', '0'],
     ['json_sniffing_enabled', '0'],
@@ -8555,7 +8832,7 @@ function buildSubscriptionPortalModel(entries, clientRow) {
     displayName: String(clientRow?.display_name || clientRow?.login || ''),
     enabled,
     statusText: enabled ? 'Активна' : (expired ? 'Срок истёк' : 'Отключена'),
-    deviceLimitText: getClientLimitIpText(clientRow),
+    deviceLimitText: getClientDeviceUsageText(clientRow),
     expiryTimeMs: summary.expiryTimeMs,
     expiryText: formatSubscriptionExpiry(summary.expiryTimeMs),
     daysLeftText: getDaysLeftText(summary.expiryTimeMs),
@@ -8857,8 +9134,8 @@ function upsertLocalClientFromRemote(rc, sourceNode = null) {
   if (!clientRow) {
     const subSlug = chooseSubSlugForRemote(rc, 0);
     const info = db.prepare(`
-      INSERT INTO clients (login, display_name, uuid, sub_slug, duration_days, traffic_gb, limit_ip, expiry_time, enabled, comment, flow)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO clients (login, display_name, uuid, sub_slug, duration_days, traffic_gb, limit_ip, device_limit, expiry_time, enabled, comment, flow)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       makeUniqueLogin(remoteLogin),
       remoteLogin,
@@ -8866,6 +9143,7 @@ function upsertLocalClientFromRemote(rc, sourceNode = null) {
       subSlug,
       remoteDurationDays,
       remoteTrafficGb,
+      Math.max(0, Number(rc.limitIp ?? 1)),
       Math.max(0, Number(rc.limitIp ?? 1)),
       normalizeRemoteEpochMillis(rc.expiryTime || 0),
       rc.enable !== false ? 1 : 0,
@@ -11419,6 +11697,7 @@ async function deleteClientEverywhere(client, deleteMode, options = {}) {
   const tx = db.transaction(() => {
     db.prepare('DELETE FROM client_nodes WHERE client_id = ?').run(client.id);
     db.prepare('DELETE FROM client_tag_assignments WHERE client_id = ?').run(client.id);
+    db.prepare('DELETE FROM subscription_devices WHERE client_id = ?').run(client.id);
     db.prepare('DELETE FROM clients WHERE id = ?').run(client.id);
   });
   tx();
@@ -12787,6 +13066,12 @@ app.get('/settings', requireAuth, async (req, res) => {
     subscriptionHappInfoAnnounceFallbackEnabled: isHappInfoAnnounceFallbackEnabled(),
     subscriptionHappServerDescriptionEnabled: isHappServerDescriptionEnabled(),
     subscriptionHappServerDescriptionTemplate: getHappServerDescriptionTemplate(),
+    subscriptionDeviceTrackingEnabled: isSubscriptionDeviceTrackingEnabled(),
+    subscriptionDeviceLimitEnforced: isSubscriptionDeviceLimitEnforced(),
+    subscriptionDeviceRequireHwid: isSubscriptionDeviceHwidRequired(),
+    subscriptionExpiredNoticeEnabled: isExpiredSubscriptionNoticeEnabled(),
+    subscriptionExpiredNoticeTitle: getSubscriptionNoticeTitle('expired'),
+    subscriptionDeviceLimitNoticeTitle: getSubscriptionNoticeTitle('device-limit'),
     jsonMuxEnabled: isJsonMuxEnabled(),
     jsonSniffingEnabled: isJsonSniffingEnabled(),
     happAppControlsEnabled: isHappAppControlsCheckboxEnabled(),
@@ -12987,6 +13272,12 @@ app.post('/settings/happ-control', requireAuth, (req, res) => {
       happInfoAnnounceFallbackEnabled: getSetting('subscription_happ_info_announce_fallback_enabled', '1'),
       serverDescriptionEnabled: getSetting('subscription_happ_server_description_enabled', '1'),
       serverDescriptionTemplate: getSetting('subscription_happ_server_description_template', ''),
+      deviceTracking: getSetting('subscription_device_tracking_enabled', '1'),
+      deviceLimitEnforced: getSetting('subscription_device_limit_enforced', '1'),
+      deviceRequireHwid: getSetting('subscription_device_require_hwid', '0'),
+      expiredNoticeEnabled: getSetting('subscription_expired_notice_enabled', '1'),
+      expiredNoticeTitle: getSetting('subscription_expired_notice_title', '⛔ Продлите подписку'),
+      deviceLimitNoticeTitle: getSetting('subscription_device_limit_notice_title', '⚠️ Превышен лимит устройств'),
       jsonMux: getSetting('json_mux_enabled', '0'),
       jsonSniffing: getSetting('json_sniffing_enabled', '0'),
       routing: getSetting('routing_config', '')
@@ -13012,6 +13303,13 @@ app.post('/settings/happ-control', requireAuth, (req, res) => {
     setSetting('subscription_happ_info_announce_fallback_enabled', req.body.subscription_happ_info_announce_fallback_enabled === '1' ? '1' : '0');
     setSetting('subscription_happ_server_description_enabled', req.body.subscription_happ_server_description_enabled === '1' ? '1' : '0');
     setSetting('subscription_happ_server_description_template', String(req.body.subscription_happ_server_description_template || '').trim());
+
+    setSetting('subscription_device_tracking_enabled', req.body.subscription_device_tracking_enabled === '1' ? '1' : '0');
+    setSetting('subscription_device_limit_enforced', req.body.subscription_device_limit_enforced === '1' ? '1' : '0');
+    setSetting('subscription_device_require_hwid', req.body.subscription_device_require_hwid === '1' ? '1' : '0');
+    setSetting('subscription_expired_notice_enabled', req.body.subscription_expired_notice_enabled === '1' ? '1' : '0');
+    setSetting('subscription_expired_notice_title', sanitizeSubscriptionDeviceText(req.body.subscription_expired_notice_title, 80) || '⛔ Продлите подписку');
+    setSetting('subscription_device_limit_notice_title', sanitizeSubscriptionDeviceText(req.body.subscription_device_limit_notice_title, 80) || '⚠️ Превышен лимит устройств');
 
     setSetting('json_mux_enabled', req.body.json_mux_enabled === '1' ? '1' : '0');
     setSetting('json_sniffing_enabled', req.body.json_sniffing_enabled === '1' ? '1' : '0');
@@ -13098,13 +13396,19 @@ app.post('/settings/happ-control', requireAuth, (req, res) => {
       happInfoAnnounceFallbackEnabled: getSetting('subscription_happ_info_announce_fallback_enabled', '1'),
       serverDescriptionEnabled: getSetting('subscription_happ_server_description_enabled', '1'),
       serverDescriptionTemplate: getSetting('subscription_happ_server_description_template', ''),
+      deviceTracking: getSetting('subscription_device_tracking_enabled', '1'),
+      deviceLimitEnforced: getSetting('subscription_device_limit_enforced', '1'),
+      deviceRequireHwid: getSetting('subscription_device_require_hwid', '0'),
+      expiredNoticeEnabled: getSetting('subscription_expired_notice_enabled', '1'),
+      expiredNoticeTitle: getSetting('subscription_expired_notice_title', '⛔ Продлите подписку'),
+      deviceLimitNoticeTitle: getSetting('subscription_device_limit_notice_title', '⚠️ Превышен лимит устройств'),
       jsonMux: getSetting('json_mux_enabled', '0'),
       jsonSniffing: getSetting('json_sniffing_enabled', '0'),
       routing: getSetting('routing_config', '')
     });
     if (beforeSnapshot !== afterSnapshot) bumpSubscriptionRevision();
 
-    res.redirect('/settings?message=' + encodeURIComponent('Happ Control App сохранён. Подписки применят изменения при следующем обновлении.'));
+    res.redirect('/settings?message=' + encodeURIComponent('Настройки подписок и приложений сохранены. Изменения применятся при следующем обновлении подписки.'));
   } catch (err) {
     res.redirect('/settings?error=' + encodeURIComponent(String(err.message || err)));
   }
@@ -13392,7 +13696,7 @@ app.post('/settings/telegram-test', requireAuth, async (req, res) => {
 });
 
 function exportBackupPayload(req = null) {
-  const tables = ['app_users', 'app_settings', 'nodes', 'client_groups', 'client_tags', 'clients', 'client_tag_assignments', 'client_nodes', 'node_inbound_cache', 'sni_profiles', 'telegram_users', 'telegram_orders', 'telegram_tickets', 'telegram_ticket_messages', 'telegram_announcements', 'vpn_hosts', 'vpn_services', 'vpn_clients', 'vpn_jobs'];
+  const tables = ['app_users', 'app_settings', 'nodes', 'client_groups', 'client_tags', 'clients', 'subscription_devices', 'client_tag_assignments', 'client_nodes', 'node_inbound_cache', 'sni_profiles', 'telegram_users', 'telegram_orders', 'telegram_tickets', 'telegram_ticket_messages', 'telegram_announcements', 'vpn_hosts', 'vpn_services', 'vpn_clients', 'vpn_jobs'];
   const data = {};
   for (const table of tables) data[table] = db.prepare(`SELECT * FROM ${table}`).all();
   return {
@@ -13418,8 +13722,8 @@ function ensureAdminUserExists() {
 
 function restoreBackupPayload(payload) {
   if (!payload || payload.app !== '3xui-aggregator' || !payload.data) throw new Error('Неверный файл резервной копии');
-  const deleteTables = ['vpn_jobs', 'vpn_clients', 'vpn_services', 'vpn_hosts', 'telegram_ticket_messages', 'telegram_tickets', 'telegram_orders', 'telegram_announcements', 'telegram_users', 'sni_profiles', 'node_inbound_cache', 'client_nodes', 'client_tag_assignments', 'clients', 'client_tags', 'client_groups', 'nodes', 'app_settings', 'app_users'];
-  const restoreTables = ['app_users', 'app_settings', 'nodes', 'client_groups', 'client_tags', 'clients', 'client_tag_assignments', 'client_nodes', 'node_inbound_cache', 'sni_profiles', 'telegram_users', 'telegram_orders', 'telegram_tickets', 'telegram_ticket_messages', 'telegram_announcements', 'vpn_hosts', 'vpn_services', 'vpn_clients', 'vpn_jobs'];
+  const deleteTables = ['vpn_jobs', 'vpn_clients', 'vpn_services', 'vpn_hosts', 'telegram_ticket_messages', 'telegram_tickets', 'telegram_orders', 'telegram_announcements', 'telegram_users', 'sni_profiles', 'node_inbound_cache', 'client_nodes', 'client_tag_assignments', 'subscription_devices', 'clients', 'client_tags', 'client_groups', 'nodes', 'app_settings', 'app_users'];
+  const restoreTables = ['app_users', 'app_settings', 'nodes', 'client_groups', 'client_tags', 'clients', 'subscription_devices', 'client_tag_assignments', 'client_nodes', 'node_inbound_cache', 'sni_profiles', 'telegram_users', 'telegram_orders', 'telegram_tickets', 'telegram_ticket_messages', 'telegram_announcements', 'vpn_hosts', 'vpn_services', 'vpn_clients', 'vpn_jobs'];
   const columnCache = new Map();
   const tx = db.transaction(() => {
     for (const table of deleteTables) db.prepare(`DELETE FROM ${table}`).run();
@@ -13449,6 +13753,7 @@ function restoreBackupPayload(payload) {
   // перезаписывая клиентов, узлы и уже существующие настройки backup-файла.
   ensureAdminUserExists();
   ensureMissingAppSettings();
+  migrateSubscriptionDeviceLimitsOnce();
   repairStage103HappMetadataRegression();
   backfillSchemaDefaults();
   seedDefaultSniProfiles();
@@ -14389,6 +14694,8 @@ app.get('/clients', requireAuth, (req, res) => {
 
   for (const client of clients) {
     client.tags = tagsByClient.get(Number(client.id)) || [];
+    client.devices = listSubscriptionDevices(client.id);
+    client.device_count = client.devices.length;
     client.node_limits = db.prepare(`
       SELECT
         n.id AS node_id,
@@ -14556,7 +14863,7 @@ app.post('/client-tags/:id/delete', requireAuth, (req, res) => {
 
 app.post('/clients', requireAuth, async (req, res) => {
   try {
-    const { login, limit_ip, duration_days, traffic_gb, comment } = req.body;
+    const { login, limit_ip, device_limit, duration_days, traffic_gb, comment } = req.body;
     let nodeIds = req.body.node_ids || [];
 
     if (!Array.isArray(nodeIds)) nodeIds = [nodeIds];
@@ -14587,6 +14894,7 @@ app.post('/clients', requireAuth, async (req, res) => {
     }
 
     const cleanLimitIp = Math.max(0, Number(limit_ip ?? 1));
+    const cleanDeviceLimit = Math.max(0, Number(device_limit ?? cleanLimitIp));
     const cleanDurationDays = Math.max(0, Number(duration_days || 0));
     const cleanTrafficGb = Math.max(0, Number(traffic_gb || 0));
     const totalGbBytes = toTotalGbBytes(cleanTrafficGb);
@@ -14601,9 +14909,9 @@ app.post('/clients', requireAuth, async (req, res) => {
     const subSlug = sharedSubId;
 
     const clientInfo = db.prepare(`
-      INSERT INTO clients (login, display_name, uuid, sub_slug, duration_days, traffic_gb, limit_ip, expiry_time, comment, group_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(cleanLogin, cleanDisplayName, uuid, subSlug, cleanDurationDays, cleanTrafficGb, cleanLimitIp, expiryTime, cleanComment, groupId);
+      INSERT INTO clients (login, display_name, uuid, sub_slug, duration_days, traffic_gb, limit_ip, device_limit, expiry_time, comment, group_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(cleanLogin, cleanDisplayName, uuid, subSlug, cleanDurationDays, cleanTrafficGb, cleanLimitIp, cleanDeviceLimit, expiryTime, cleanComment, groupId);
 
     const clientId = clientInfo.lastInsertRowid;
     replaceClientTags(clientId, req.body.tag_ids);
@@ -15059,6 +15367,9 @@ app.get('/clients/:id/summary.json', requireAuth, async (req, res) => {
         durationDays: client.duration_days || 0,
         trafficGb: client.traffic_gb || 0,
         limitIp: client.limit_ip ?? 0,
+        deviceLimit: getClientDeviceLimit(client),
+        deviceCount: countSubscriptionDevices(client.id),
+        devices: listSubscriptionDevices(client.id),
         nodeCount: nodes.length,
         nodes: nodes.slice(0, 12),
         links: {
@@ -15088,6 +15399,34 @@ app.get('/clients/:id', requireAuth, async (req, res) => {
   }
 });
 
+app.post('/clients/:id/devices/:deviceId/delete', requireAuth, (req, res) => {
+  try {
+    const clientId = Number(req.params.id);
+    const deviceId = Number(req.params.deviceId);
+    const client = db.prepare('SELECT id, login FROM clients WHERE id = ?').get(clientId);
+    if (!client) throw new Error('Клиент не найден');
+    const result = db.prepare('DELETE FROM subscription_devices WHERE id = ? AND client_id = ?').run(deviceId, clientId);
+    if (!result.changes) throw new Error('Устройство не найдено');
+    const back = String(req.body.back || `/clients?q=${encodeURIComponent(client.login)}&edit=${clientId}`);
+    res.redirect(appendMessageToBackUrl(back, 'Устройство удалено. Слот освобождён.', '', '/clients'));
+  } catch (err) {
+    res.redirect('/clients?error=' + encodeURIComponent(String(err.message || err)));
+  }
+});
+
+app.post('/clients/:id/devices/reset', requireAuth, (req, res) => {
+  try {
+    const clientId = Number(req.params.id);
+    const client = db.prepare('SELECT id, login FROM clients WHERE id = ?').get(clientId);
+    if (!client) throw new Error('Клиент не найден');
+    const result = db.prepare('DELETE FROM subscription_devices WHERE client_id = ?').run(clientId);
+    const back = String(req.body.back || `/clients?q=${encodeURIComponent(client.login)}&edit=${clientId}`);
+    res.redirect(appendMessageToBackUrl(back, `Устройства сброшены: ${result.changes}.`, '', '/clients'));
+  } catch (err) {
+    res.redirect('/clients?error=' + encodeURIComponent(String(err.message || err)));
+  }
+});
+
 app.post('/clients/:id/edit', requireAuth, async (req, res) => {
   try {
     const clientId = Number(req.params.id);
@@ -15097,6 +15436,7 @@ app.post('/clients/:id/edit', requireAuth, async (req, res) => {
     const login = String(req.body.login || '').trim() || client.login;
     const displayName = String(req.body.display_name || login).trim() || login;
     const limitIp = Math.max(0, Number(req.body.limit_ip ?? client.limit_ip ?? 1));
+    const deviceLimit = Math.max(0, Number(req.body.device_limit ?? client.device_limit ?? limitIp));
     const rawDurationDays = String(req.body.duration_days ?? '').trim();
     const durationWasChanged = rawDurationDays !== '';
     const durationDays = durationWasChanged
@@ -15122,9 +15462,9 @@ app.post('/clients/:id/edit', requireAuth, async (req, res) => {
 
     db.prepare(`
       UPDATE clients
-      SET login = ?, display_name = ?, limit_ip = ?, duration_days = ?, traffic_gb = ?, expiry_time = ?, comment = ?, group_id = ?
+      SET login = ?, display_name = ?, limit_ip = ?, device_limit = ?, duration_days = ?, traffic_gb = ?, expiry_time = ?, comment = ?, group_id = ?
       WHERE id = ?
-    `).run(login, displayName, limitIp, durationDays, trafficGb, expiryTime, comment, groupId, clientId);
+    `).run(login, displayName, limitIp, deviceLimit, durationDays, trafficGb, expiryTime, comment, groupId, clientId);
     replaceClientTags(clientId, req.body.tag_ids);
 
     const updatedClient = db.prepare('SELECT * FROM clients WHERE id = ?').get(clientId);
@@ -15325,9 +15665,7 @@ app.get('/happ/:slug', async (req, res) => {
 
   if (maybeRedirectToCurrentSubscriptionRevision(req, res)) return;
 
-  await enforceExpiredClientRemoteState(client);
-
-  const entries = await buildSubscriptionEntries(client, true);
+  const { entries } = await buildSubscriptionEntriesForRequest(req, res, client);
   const lines = entries.map(e => e.line);
   const subscriptionName = getSetting('subscription_name', DEFAULT_SUBSCRIPTION_NAME);
   const subscriptionUserInfo = buildSubscriptionUserInfo(entries, client);
@@ -15361,9 +15699,7 @@ app.get('/sub/:slug', async (req, res) => {
 
   if (maybeRedirectToCurrentSubscriptionRevision(req, res)) return;
 
-  await enforceExpiredClientRemoteState(client);
-
-  const entries = await buildSubscriptionEntries(client, true);
+  const { entries } = await buildSubscriptionEntriesForRequest(req, res, client);
   const lines = entries.map(e => e.line);
   const subscriptionName = getSetting('subscription_name', DEFAULT_SUBSCRIPTION_NAME);
   const subscriptionUserInfo = buildSubscriptionUserInfo(entries, client);
@@ -15393,9 +15729,7 @@ app.get('/sub-plain/:slug', async (req, res) => {
 
   if (maybeRedirectToCurrentSubscriptionRevision(req, res)) return;
 
-  await enforceExpiredClientRemoteState(client);
-
-  const entries = await buildSubscriptionEntries(client, true);
+  const { entries } = await buildSubscriptionEntriesForRequest(req, res, client);
   const lines = entries
     .map(entry => String(entry?.line || '').trim())
     .filter(line => /^(?:vless|vmess|trojan|ss|socks|hysteria2?|hy2|tuic|wireguard):\/\//i.test(line));
@@ -15416,8 +15750,7 @@ app.get('/hiddify/:slug', async (req, res) => {
   if (!client) return res.status(404).send('Subscription not found');
   if (maybeRedirectToCurrentSubscriptionRevision(req, res)) return;
 
-  await enforceExpiredClientRemoteState(client);
-  const entries = await buildSubscriptionEntries(client, true);
+  const { entries } = await buildSubscriptionEntriesForRequest(req, res, client);
   const lines = entries
     .map(entry => String(entry?.line || '').trim())
     .filter(line => /^(?:vless|vmess|trojan|ss|socks|hysteria2?|hy2|tuic|wireguard):\/\//i.test(line));
@@ -16645,8 +16978,6 @@ app.get('/json/:slug', async (req, res) => {
 
   if (maybeRedirectToCurrentSubscriptionRevision(req, res)) return;
 
-  await enforceExpiredClientRemoteState(client);
-
   // A real browser navigation opens the branded subscription portal, including
   // old links containing ?raw=1. Subscription clients normally fetch with
   // Sec-Fetch-Mode other than "navigate" (or without Sec-Fetch headers) and
@@ -16655,7 +16986,7 @@ app.get('/json/:slug', async (req, res) => {
     return res.redirect(302, buildPublicOpenUrl(client.sub_slug));
   }
 
-  const entries = await buildSubscriptionEntries(client, true);
+  const { entries } = await buildSubscriptionEntriesForRequest(req, res, client);
   const lines = entries.map(e => e.line);
   const subscriptionName = getSetting('subscription_name', DEFAULT_SUBSCRIPTION_NAME);
   const subscriptionUserInfo = buildSubscriptionUserInfo(entries, client);
@@ -16710,7 +17041,7 @@ app.get('/json/:slug', async (req, res) => {
           entry.line,
           subscriptionName,
           index,
-          isRoutingEnabledForNode(entry.nodeId),
+          entry.nodeType === 'notice' ? false : isRoutingEnabledForNode(entry.nodeId),
           // A locally generated 3x-ui link must preserve the same XHTTP
           // padding/obfuscation settings as the original panel. Disabling
           // xPaddingObfsMode changes the wire format and can make the public
@@ -16728,7 +17059,7 @@ app.get('/json/:slug', async (req, res) => {
       ? Math.min(Math.max(requestedNode - 1, 0), vlessLines.length - 1)
       : 0;
     const selectedEntry = entries.filter(e => String(e.line).startsWith('vless://'))[selectedIndex];
-    return res.json(buildHappJsonConfigFromLine(client, selectedEntry.line, subscriptionName, selectedIndex, isRoutingEnabledForNode(selectedEntry.nodeId), { preserveXhttpExtra: [NODE_TYPE_3XUI, NODE_TYPE_H1CLOUD_3XUI, NODE_TYPE_REMNAWAVE].includes(selectedEntry.nodeType) }));
+    return res.json(buildHappJsonConfigFromLine(client, selectedEntry.line, subscriptionName, selectedIndex, selectedEntry.nodeType === 'notice' ? false : isRoutingEnabledForNode(selectedEntry.nodeId), { preserveXhttpExtra: [NODE_TYPE_3XUI, NODE_TYPE_H1CLOUD_3XUI, NODE_TYPE_REMNAWAVE].includes(selectedEntry.nodeType) }));
   }
 
   return res.json({
@@ -16804,6 +17135,7 @@ app.get('/open/:slug', async (req, res) => {
     supportUrl: getSubscriptionSupportUrl(),
     appDownloads: {
       happ: 'https://www.happ.su/main',
+      incy: 'https://incy.cc/',
       v2rayTun: 'https://v2raytun.com/',
       hiddify: 'https://hiddify.com/'
     }
@@ -17224,7 +17556,7 @@ function formatClientAccess(client) {
     `Логин: ${client.login}`,
     `Осталось: ${leftDays} дн.`,
     `Дата окончания: ${expiryText}`,
-    `Количество устройств: ${formatDeviceLimit(client.limit_ip || 0)}`,
+    `Устройства: ${getClientDeviceUsageText(client)}`,
     '',
     'Ваша HAPP-ссылка для приложения Happ:',
     happUrl,

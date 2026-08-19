@@ -69,8 +69,8 @@ const seed = db.transaction(() => {
   });
 
   const addClient = db.prepare(`
-    INSERT INTO clients (login, display_name, uuid, sub_slug, duration_days, traffic_gb, limit_ip, expiry_time, enabled, comment, last_online_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO clients (login, display_name, uuid, sub_slug, duration_days, traffic_gb, limit_ip, device_limit, expiry_time, enabled, comment, last_online_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const addLink = db.prepare(`
     INSERT INTO client_nodes (client_id, node_id, remote_email, remote_uuid, traffic_gb, limit_ip, upload_bytes, download_bytes, used_bytes, enabled)
@@ -89,6 +89,7 @@ const seed = db.transaction(() => {
       `spectrum-preview-${idText}`,
       30,
       index % 4 === 0 ? 0 : 100,
+      index % 5 === 0 ? 3 : 1,
       index % 5 === 0 ? 3 : 1,
       expiry,
       disabled ? 0 : 1,

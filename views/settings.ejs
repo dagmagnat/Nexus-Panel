@@ -103,8 +103,8 @@
   </section>
 
   <section class="card span-12 happ-control-card" id="happ-control-app" data-settings-key="happ">
-    <h2><span class="section-icon" aria-hidden="true">🧭</span>Happ Control App</h2>
-    <p class="muted">Здесь собраны только параметры Happ и совместимых приложений: автообновление профиля, userinfo, support-url, announce/sub-info, подпись сервера и JSON/Xray. Маршрутизация настраивается только в отдельном разделе «Маршрутизация».</p>
+    <h2><span class="section-icon" aria-hidden="true">🧭</span>Подписки и приложения</h2>
+    <p class="muted">Общие параметры для Happ, INCY, v2RayTun и совместимых клиентов: автообновление, HWID-устройства, ограничения, userinfo, support-url, announce/sub-info и JSON/Xray. Платный Happ Provider ID не используется.</p>
 
     <form method="post" action="/settings/happ-control" class="happ-control-form">
       <div class="happ-control-layout">
@@ -138,7 +138,40 @@
             </label>
           </div>
 
-          <div class="happ-section-title">2. Текст, поддержка и карточка Happ</div>
+          <div class="happ-section-title">2. Устройства и блокировки</div>
+          <div class="happ-control-grid">
+            <label class="switch-row compact happ-help-source" data-help-title="Учитывать HWID-устройства" data-help-text="При обновлении подписки Nexus сохраняет X-HWID и доступные данные устройства. Happ, INCY и v2RayTun поддерживают этот формат. HWID хранится только в виде одностороннего SHA-256 хеша и короткой подсказки.">
+              <input type="checkbox" name="subscription_device_tracking_enabled" value="1" <%= subscriptionDeviceTrackingEnabled ? 'checked' : '' %> />
+              <span><strong>Учитывать устройства по HWID</strong><small>Показывает 2/5, ОС, модель, приложение и последнее обновление.</small></span>
+            </label>
+
+            <label class="switch-row compact happ-help-source" data-help-title="Ограничивать новые устройства" data-help-text="Если число зарегистрированных HWID достигло лимита клиента, новый HWID получит один служебный узел вместо реальных серверов. Уже зарегистрированные устройства продолжат обновляться.">
+              <input type="checkbox" name="subscription_device_limit_enforced" value="1" <%= subscriptionDeviceLimitEnforced ? 'checked' : '' %> />
+              <span><strong>Блокировать устройства сверх лимита</strong><small>Например, шестое устройство при лимите 5.</small></span>
+            </label>
+
+            <label class="switch-row compact happ-help-source" data-help-title="Требовать HWID" data-help-text="Если включить, клиент без X-HWID при заданном лимите устройств не получит реальные узлы. Оставьте выключенным для совместимости со старыми и неподдерживаемыми приложениями.">
+              <input type="checkbox" name="subscription_device_require_hwid" value="1" <%= subscriptionDeviceRequireHwid ? 'checked' : '' %> />
+              <span><strong>Требовать HWID при лимите</strong><small>Строгий режим. По умолчанию выключен для совместимости.</small></span>
+            </label>
+
+            <div class="field happ-help-source" data-help-title="Название при превышении лимита" data-help-text="Короткое название единственного служебного VLESS-узла, который увидит новое устройство после достижения лимита.">
+              <label>Узел при превышении лимита</label>
+              <input name="subscription_device_limit_notice_title" maxlength="80" value="<%= subscriptionDeviceLimitNoticeTitle || '' %>" placeholder="⚠️ Превышен лимит устройств" />
+            </div>
+
+            <label class="switch-row compact happ-help-source" data-help-title="Скрывать узлы после окончания срока" data-help-text="После окончания срока реальные узлы не выдаются. Клиент получает один служебный узел с понятным сообщением, а удалённая учётная запись остаётся отключённой как и раньше.">
+              <input type="checkbox" name="subscription_expired_notice_enabled" value="1" <%= subscriptionExpiredNoticeEnabled ? 'checked' : '' %> />
+              <span><strong>Заменять узлы после окончания подписки</strong><small>Показывает один служебный узел вместо всех серверов.</small></span>
+            </label>
+
+            <div class="field happ-help-source" data-help-title="Название просроченного узла" data-help-text="Короткое название единственного служебного узла после окончания срока. Подробный текст по-прежнему можно передать через announce/support.">
+              <label>Узел после окончания срока</label>
+              <input name="subscription_expired_notice_title" maxlength="80" value="<%= subscriptionExpiredNoticeTitle || '' %>" placeholder="⛔ Продлите подписку" />
+            </div>
+          </div>
+
+          <div class="happ-section-title">3. Текст, поддержка и карточка подписки</div>
           <div class="happ-control-grid">
             <div class="field happ-help-source" data-help-title="Текст помощи" data-help-text="Короткое сообщение для клиента. Оно используется на странице подключения и может попадать в announce/sub-info, если включён инфо-блок Happ.">
               <label>Текст помощи для клиента</label>
@@ -160,9 +193,9 @@
               <span><strong>Дублировать в announce</strong><small>Больше совместимости между версиями Happ.</small></span>
             </label>
 
-            <div class="field happ-help-source" data-help-title="Шаблон Happ-инфо" data-help-text="Можно использовать переменные {login}, {display_name}, {limit_ip}, {ip_usage}, {traffic_usage}, {days_left}, {expiry_date}, {support_note}. Текст ограничивается безопасной длиной для Happ.">
-              <label>Шаблон Happ-инфо</label>
-              <textarea name="subscription_happ_info_template" rows="4" placeholder="👤 Логин: {login}&#10;📱 Устройств: {ip_usage}&#10;{support_note}"><%= subscriptionHappInfoTemplate || '' %></textarea>
+            <div class="field happ-help-source" data-help-title="Шаблон инфо-блока" data-help-text="Можно использовать {login}, {display_name}, {device_usage}, {device_count}, {device_limit}, {limit_ip}, {traffic_usage}, {days_left}, {expiry_date}, {support_note}. Старый {ip_usage} сохранён как синоним {device_usage}.">
+              <label>Шаблон инфо-блока</label>
+              <textarea name="subscription_happ_info_template" rows="4" placeholder="👤 Логин: {login}&#10;📱 Устройства: {device_usage}&#10;{support_note}"><%= subscriptionHappInfoTemplate || '' %></textarea>
             </div>
 
             <div class="field half happ-help-source" data-help-title="Цвет инфо-блока" data-help-text="Цвет карточки sub-info в Happ, если версия приложения поддерживает расширенный инфо-блок.">
@@ -195,7 +228,7 @@
             </div>
           </div>
 
-          <div class="happ-section-title">3. JSON/Xray и маршрутизация</div>
+          <div class="happ-section-title">4. JSON/Xray и маршрутизация</div>
           <div class="happ-control-grid">
             <label class="switch-row compact happ-help-source" data-help-title="Sniffing в JSON" data-help-text="Включает sniffing у локальных SOCKS/HTTP inbounds в JSON-профиле. Это обычная настройка Xray-конфига, не платный Happ app-control.">
               <input type="checkbox" name="json_sniffing_enabled" value="1" <%= jsonSniffingEnabled ? 'checked' : '' %> />
@@ -218,7 +251,7 @@
           </div>
 
           <div class="actions">
-            <button type="submit" class="icon-btn">💾 Сохранить Happ Control App</button>
+            <button type="submit" class="icon-btn">💾 Сохранить подписки и приложения</button>
             <a class="link-btn secondary" href="/routing">Открыть расширенную маршрутизацию</a>
           </div>
         </div>

@@ -51,6 +51,7 @@ function createSchema(db) {
       duration_days INTEGER NOT NULL DEFAULT 0,
       traffic_gb INTEGER NOT NULL DEFAULT 0,
       limit_ip INTEGER NOT NULL DEFAULT 1,
+      device_limit INTEGER NOT NULL DEFAULT 0,
       expiry_time INTEGER NOT NULL DEFAULT 0,
       enabled INTEGER NOT NULL DEFAULT 1,
       comment TEXT NOT NULL DEFAULT '',
@@ -90,12 +91,12 @@ function createSourceDatabase(file) {
   `).run();
   const insertClient = db.prepare(`
     INSERT INTO clients
-      (login, display_name, uuid, sub_slug, duration_days, traffic_gb, limit_ip, expiry_time, enabled, comment, flow, last_online_at, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (login, display_name, uuid, sub_slug, duration_days, traffic_gb, limit_ip, device_limit, expiry_time, enabled, comment, flow, last_online_at, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const alice = Number(insertClient.run(
     'Alice', 'Телефон Alice', '11111111-1111-4111-8111-111111111111', 'alice-old-link',
-    30, 100, 2, 1800000000000, 1, 'важный клиент', 'xtls-rprx-vision', '2026-08-10T10:00:00Z', '2026-01-01 00:00:00'
+    30, 100, 2, 5, 1800000000000, 1, 'важный клиент', 'xtls-rprx-vision', '2026-08-10T10:00:00Z', '2026-01-01 00:00:00'
   ).lastInsertRowid);
   const groupId = Number(db.prepare("INSERT INTO client_groups (name, color) VALUES ('Яблоко', '#64748b')").run().lastInsertRowid);
   const tagId = Number(db.prepare("INSERT INTO client_tags (name, color) VALUES ('Друг', '#22c55e')").run().lastInsertRowid);
@@ -103,7 +104,7 @@ function createSourceDatabase(file) {
   db.prepare('INSERT INTO client_tag_assignments (client_id, tag_id) VALUES (?, ?)').run(alice, tagId);
   insertClient.run(
     'Bob', 'Bob', '22222222-2222-4222-8222-222222222222', 'bob-old-link',
-    0, 0, 1, 0, 1, '', '', '', '2026-01-02 00:00:00'
+    0, 0, 1, 3, 0, 1, '', '', '', '2026-01-02 00:00:00'
   );
   db.prepare(`
     INSERT INTO client_nodes
@@ -139,6 +140,7 @@ test('direct SQLite export preserves credentials and excludes node secrets', () 
     assert.equal(document.format, 'nexus-panel-client-transfer');
     assert.equal(document.clients[0].uuid, '11111111-1111-4111-8111-111111111111');
     assert.equal(document.clients[0].subSlug, 'alice-old-link');
+    assert.equal(document.clients[0].deviceLimit, 5);
     assert.equal(document.clients[0].nodeAssignments[0].nodeRef.inboundId, 1);
     assert.deepEqual(document.clients[0].group, { name: 'Яблоко', color: '#64748b' });
     assert.deepEqual(document.clients[0].tags, [{ name: 'Друг', color: '#22c55e' }]);
@@ -193,6 +195,7 @@ test('dry-run rolls back, then import keeps UUID/sub_slug and matches a changed 
     assert.equal(alice.uuid, '11111111-1111-4111-8111-111111111111');
     assert.equal(alice.sub_slug, 'alice-old-link');
     assert.equal(alice.display_name, 'Телефон Alice');
+    assert.equal(alice.device_limit, 5);
     const assignment = db.prepare('SELECT * FROM client_nodes WHERE client_id=?').get(alice.id);
     assert.equal(assignment.node_id, 42);
     assert.equal(assignment.used_bytes, 3000);

@@ -81,7 +81,11 @@
     return (client.node_limits || []).filter(row => row.client_node_id).map(row => String(row.node_id)).join(' ');
   }
   function clientDirectorySearch(client) {
-    return [client.id, client.login, client.display_name, client.comment, client.uuid, client.sub_slug, client.group_name, ...(client.tags || []).map(tag => tag.name)]
+    return [
+      client.id, client.login, client.display_name, client.comment, client.uuid, client.sub_slug, client.group_name,
+      ...(client.tags || []).map(tag => tag.name),
+      ...(client.devices || []).flatMap(device => [device.os_name, device.os_version, device.device_model, device.app_name, device.hwid_hint])
+    ]
       .filter(value => value !== null && value !== undefined)
       .join(' ');
   }
@@ -162,6 +166,37 @@
     const limitGb = Math.max(0, Number(client.traffic_gb || 0));
     if (!limitGb) return clientUsedBytes(client) > 0 ? 100 : 0;
     return Math.max(0, Math.min(100, clientUsedBytes(client) / (limitGb * 1024 ** 3) * 100));
+  }
+  function clientDeviceUsage(client) {
+    const used = Math.max(0, Number(client.device_count ?? (client.devices || []).length));
+    const limit = Math.max(0, Number(client.device_limit || 0));
+    return `${used}/${limit > 0 ? limit : '∞'}`;
+  }
+  function deviceIcon(device) {
+    const text = `${device.os_name || ''} ${device.device_model || ''}`.toLowerCase();
+    if (/ios|iphone|ipad/.test(text)) return '📱';
+    if (/android/.test(text)) return '📱';
+    if (/windows/.test(text)) return '💻';
+    if (/macos|macbook|imac|mac /.test(text)) return '💻';
+    if (/linux/.test(text)) return '🖥️';
+    if (/tvos|tv|телевиз/.test(text)) return '📺';
+    return '📟';
+  }
+  function deviceTitle(device) {
+    return String(device.device_model || device.os_name || device.app_name || 'Устройство').trim();
+  }
+  function deviceMeta(device) {
+    return [device.os_name, device.os_version, device.app_name].map(v => String(v || '').trim()).filter(Boolean).join(' · ');
+  }
+  function relativeDeviceSeen(value) {
+    const ts = Date.parse(String(value || '').replace(' ', 'T') + (String(value || '').includes('T') ? '' : 'Z'));
+    if (!Number.isFinite(ts)) return String(value || '—');
+    const sec = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+    if (sec < 60) return 'только что';
+    if (sec < 3600) return `${Math.floor(sec / 60)} мин. назад`;
+    if (sec < 86400) return `${Math.floor(sec / 3600)} ч. назад`;
+    if (sec < 7 * 86400) return `${Math.floor(sec / 86400)} дн. назад`;
+    return new Date(ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
   }
   function clientRemainingMeta(client) {
     const expiry = Number(client.expiry_time || 0);
@@ -365,7 +400,6 @@
       const displayTitle = compactTitle(client);
       const secondaryText = secondaryClientText(client);
       const nodeLimitRows = (client.node_limits || []).filter(nl => nl.client_node_id);
-      const nodeLimitTextShort = client.limit_ip && Number(client.limit_ip) > 0 ? '0/' + Number(client.limit_ip) : '∞';
       const filterKeys = mobileClientFilterKeys(client).join(' ');
       const canShowSub = Boolean(showSubLinks);
     %>
@@ -396,7 +430,7 @@
         <div class="mobile-client-metrics">
           <div><span>Трафик</span><strong><%= clientTrafficHeadline(client) %></strong></div>
           <div><span>Лимит дней</span><strong><%= termShort(client) %></strong></div>
-          <div><span>Лимит IP</span><strong><%= client.limit_ip && Number(client.limit_ip) > 0 ? client.limit_ip : '∞' %></strong></div>
+          <div><span>Устройства</span><button type="button" class="client-device-count-link" onclick="event.stopPropagation(); openModalById('deviceDetails-<%= client.id %>')"><%= clientDeviceUsage(client) %></button></div>
         </div>
         <div class="mobile-client-expiry"><span>Действует до: <strong><%= expiryDateTime(client.expiry_time) %></strong></span><button type="button" class="mobile-client-edit-link" onclick="openClientEditor(<%= client.id %>)">Изменить ›</button></div>
 
@@ -432,7 +466,7 @@
           </label>
           <small><%= client.id %></small>
         </div>
-        <button type="button" class="desktop-client-name" data-client-quick="<%= client.id %>"><%= displayTitle %></button>
+        <button type="button" class="desktop-client-name" data-client-quick="<%= client.id %>"><%= displayTitle %> <span class="client-device-inline"><%= clientDeviceUsage(client) %></span></button>
         <div class="desktop-client-comment" title="<%= client.comment || '-' %>">
           <%= client.comment || '-' %>
           <% if (client.group_name || (client.tags || []).length) { %><div class="client-meta-chips"><% if (client.group_name) { %><span class="client-group-chip" style="--chip-color:<%= client.group_color %>"><%= client.group_name %></span><% } %><% (client.tags || []).forEach(tag => { %><span class="client-tag-chip" style="--chip-color:<%= tag.color %>"><%= tag.name %></span><% }) %></div><% } %>
@@ -528,6 +562,7 @@
             <th>Комментарий</th>
             <th>Группа / метки</th>
             <th>Трафик</th>
+            <th>Устройства</th>
             <th>Срок</th>
           </tr>
         </thead>
@@ -610,6 +645,7 @@
               <div><span><%= trafficLimitGb > 0 ? formatClientBytes(usedBytes) : clientTrafficHeadline(client) %></span><b><%= trafficLimitGb > 0 ? trafficLimitGb + ' ГБ' : (clientLimitedNodes(client).length ? 'по узлам' : '∞') %></b></div>
               <% if (trafficLimitGb > 0) { %><div class="modern-traffic-track"><i style="width:<%= clientTrafficPercent(client).toFixed(1) %>%"></i></div><% } %>
             </td>
+            <td class="modern-device-cell"><button type="button" class="client-device-count-link" onclick="openModalById('deviceDetails-<%= client.id %>')" title="Показать устройства"><%= clientDeviceUsage(client) %></button></td>
             <td><span class="modern-term <%= remaining.key %>" title="Действует до <%= expiryDateTime(client.expiry_time) %>"><%= termShort(client) %><%= termShort(client) === '∞' ? '' : ' дн.' %></span></td>
           </tr>
         <% }) %>
@@ -732,6 +768,11 @@
           <label>Лимит IP</label>
           <input name="limit_ip" type="number" min="0" value="1" required />
           <small class="hint">0 = без лимита IP.</small>
+        </div>
+        <div class="field third">
+          <label>Лимит устройств</label>
+          <input name="device_limit" type="number" min="0" value="1" required />
+          <small class="hint">HWID-активации подписки. 0 = без лимита.</small>
         </div>
       </div>
 
@@ -1050,6 +1091,7 @@
         <div><span>Срок</span><strong><%= termShort(client) %> дн.</strong><small>до <%= expiryDateTime(client.expiry_time) %></small></div>
         <div><span>Общий лимит</span><strong><%= client.traffic_gb && client.traffic_gb > 0 ? client.traffic_gb + ' ГБ' : '∞' %></strong></div>
         <div><span>Лимит IP</span><strong><%= client.limit_ip && Number(client.limit_ip) > 0 ? client.limit_ip : '∞' %></strong></div>
+        <div><span>Устройства</span><button type="button" class="client-device-count-link" onclick="openModalById('deviceDetails-<%= client.id %>')"><%= clientDeviceUsage(client) %></button></div>
         <div><span>Узлов</span><strong><%= clientAssignedNodes(client).length %></strong></div>
         <div class="client-summary-uuid"><span>UUID</span><code><%= client.uuid %></code></div>
         <div>
@@ -1094,6 +1136,11 @@
           <div class="field half">
             <label>Лимит IP</label>
             <input name="limit_ip" type="number" min="0" value="<%= client.limit_ip ?? 1 %>" />
+          </div>
+          <div class="field half">
+            <label>Лимит устройств</label>
+            <input name="device_limit" type="number" min="0" value="<%= client.device_limit ?? 0 %>" />
+            <small class="hint">HWID-активации подписки. 0 = без лимита.</small>
           </div>
           <div class="field half">
             <label>Новый срок в днях</label>
@@ -1171,6 +1218,48 @@
       </div>
     </div>
   <% } %>
+<% }) %>
+
+<% clients.forEach(client => { %>
+  <div id="deviceDetails-<%= client.id %>" class="modal hidden" onclick="closeModalById(event, 'deviceDetails-<%= client.id %>')">
+    <div class="modal-card device-details-card" onclick="event.stopPropagation()">
+      <button type="button" class="modal-close" onclick="hideModalById('deviceDetails-<%= client.id %>')">×</button>
+      <div class="device-details-head">
+        <div>
+          <h2>Устройства клиента</h2>
+          <p class="muted"><%= client.login %> · <strong><%= clientDeviceUsage(client) %></strong></p>
+        </div>
+        <% if ((client.devices || []).length) { %>
+          <form method="post" action="/clients/<%= client.id %>/devices/reset" onsubmit="return confirm('Сбросить все зарегистрированные устройства этого клиента?')">
+            <input type="hidden" name="back" value="/clients?q=<%= encodeURIComponent(client.login || '') %>&edit=<%= client.id %>" />
+            <button type="submit" class="btn-danger">Сбросить все</button>
+          </form>
+        <% } %>
+      </div>
+
+      <% if (!(client.devices || []).length) { %>
+        <div class="device-empty-state">Устройства появятся здесь после обновления подписки из Happ, INCY, v2RayTun или другого клиента, который передаёт <code>X-HWID</code>.</div>
+      <% } else { %>
+        <div class="device-details-list">
+          <% (client.devices || []).forEach(device => { %>
+            <div class="device-details-row">
+              <div class="device-platform-icon" aria-hidden="true"><%= deviceIcon(device) %></div>
+              <div class="device-details-main">
+                <strong><%= deviceTitle(device) %></strong>
+                <span><%= deviceMeta(device) || 'Данные платформы не переданы' %></span>
+                <small>Последнее обновление: <%= relativeDeviceSeen(device.last_seen_at) %> · запросов: <%= device.request_count || 1 %></small>
+                <small>HWID: <code><%= device.hwid_hint || 'скрыт' %></code></small>
+              </div>
+              <form method="post" action="/clients/<%= client.id %>/devices/<%= device.id %>/delete" onsubmit="return confirm('Удалить это устройство и освободить слот?')">
+                <input type="hidden" name="back" value="/clients?q=<%= encodeURIComponent(client.login || '') %>&edit=<%= client.id %>" />
+                <button type="submit" class="btn-secondary device-delete-btn">Удалить</button>
+              </form>
+            </div>
+          <% }) %>
+        </div>
+      <% } %>
+    </div>
+  </div>
 <% }) %>
 
 <% } else { %>
@@ -1840,7 +1929,7 @@ function closeQr() {
 }
 function hideQr(e) { if (e.target.id === 'qrModal') closeQr(); }
 function syncClientModalScrollLock() {
-  const open = Array.from(document.querySelectorAll('#createClientModal, #createVpnClientModal, [id^="clientEditor-"], [id^="vpnClientEditor-"]')).some(modal => !modal.classList.contains('hidden'));
+  const open = Array.from(document.querySelectorAll('#createClientModal, #createVpnClientModal, [id^="clientEditor-"], [id^="vpnClientEditor-"], [id^="deviceDetails-"]')).some(modal => !modal.classList.contains('hidden'));
   document.body.classList.toggle('client-modal-open', open);
 }
 function openModalById(id) { document.getElementById(id)?.classList.remove('hidden'); syncClientModalScrollLock(); }

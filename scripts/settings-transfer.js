@@ -27,6 +27,7 @@ const SKIPPED_SETTING_KEYS = new Set([
   'sub_url_mode',
   'update_repo_url',
   'subscription_revision',
+  'subscription_device_limit_migrated_v1',
   'install_panel_access_key_env_fingerprint_v1',
   'install_public_url_fingerprint'
 ]);

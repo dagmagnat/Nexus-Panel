@@ -91,6 +91,7 @@ function createSource(file) {
   db.prepare("INSERT INTO app_settings (key,value) VALUES ('panel_access_key', ?)").run(`enc:v1:${encrypt('must-not-migrate', sourceSecret)}`);
   db.prepare("INSERT INTO app_settings (key,value) VALUES ('panel_public_url', 'https://old.example')").run();
   db.prepare("INSERT INTO app_settings (key,value) VALUES ('admin_allowed_ips', '10.0.0.1')").run();
+  db.prepare("INSERT INTO app_settings (key,value) VALUES ('subscription_device_limit_migrated_v1', '1')").run();
   db.prepare(`
     INSERT INTO nodes (id,name,node_type,panel_url,panel_path,username,password_enc,api_auth_mode,api_token_enc,remnawave_caddy_token_enc,inbound_id,enabled,last_status)
     VALUES (7,'EU','3xui','https://node.example','/panel','admin',?,'token',?,'',1,1,'online')
@@ -118,6 +119,7 @@ function createTarget(file) {
   db.prepare("INSERT INTO app_settings (key,value) VALUES ('panel_access_key', ?)").run(`enc:v1:${encrypt('new-panel-key', targetSecret)}`);
   db.prepare("INSERT INTO app_settings (key,value) VALUES ('panel_public_url', 'https://new.example')").run();
   db.prepare("INSERT INTO app_settings (key,value) VALUES ('admin_allowed_ips', '203.0.113.10')").run();
+  db.prepare("INSERT INTO app_settings (key,value) VALUES ('subscription_device_limit_migrated_v1', 'target-marker')").run();
   db.prepare(`
     INSERT INTO nodes (id,name,node_type,panel_url,panel_path,username,password_enc,api_auth_mode,api_token_enc,inbound_id)
     VALUES (42,'Existing EU','3xui','https://NODE.example/','panel','new-admin',?,'password','',1)
@@ -193,6 +195,7 @@ test('encrypted settings bundle re-encrypts secrets and never imports clients or
     assert.equal(decrypt(backupTelegram.slice('enc:v1:'.length), targetSecret), 'legacy-plaintext-token');
     assert.equal(db.prepare("SELECT value FROM app_settings WHERE key='panel_public_url'").get().value, 'https://new.example');
     assert.equal(db.prepare("SELECT value FROM app_settings WHERE key='admin_allowed_ips'").get().value, '203.0.113.10');
+    assert.equal(db.prepare("SELECT value FROM app_settings WHERE key='subscription_device_limit_migrated_v1'").get().value, 'target-marker');
     assert.equal(decrypt(db.prepare("SELECT value FROM app_settings WHERE key='panel_access_key'").get().value.slice('enc:v1:'.length), targetSecret), 'new-panel-key');
     assert.equal(db.prepare('SELECT COUNT(*) AS n FROM clients').get().n, 1);
     assert.equal(db.prepare('SELECT login FROM clients').get().login, 'new-client');

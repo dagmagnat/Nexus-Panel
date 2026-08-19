@@ -25,7 +25,7 @@
     }
   })();
   </script>
-  <link rel="stylesheet" href="/css/spectrum-clear.css?v=251" />
+  <link rel="stylesheet" href="/css/spectrum-clear.css?v=260" />
 </head>
 <body class="nexus-spectrum public-page subscription-portal-page">
   <% const allowJson = typeof showJsonLinks === 'undefined' ? true : Boolean(showJsonLinks); %>
@@ -35,6 +35,7 @@
   <% const compatibleSubUrl = allowSub ? hiddifyUrl : (allowJson ? happImportUrl : ''); %>
   <% const genericSubUrl = allowSub ? plainSubUrl : compatibleSubUrl; %>
   <% const profileName = encodeURIComponent(subscriptionName || 'VPN'); %>
+  <% const incyDeepLink = genericSubUrl ? ('incy://import/' + genericSubUrl) : ''; %>
 
   <main class="subscription-portal">
     <header class="portal-topbar">
@@ -110,11 +111,11 @@
 
         <% if (allowSub) { %>
         <article class="portal-app-card">
-          <span class="portal-app-icon hiddify">H</span>
-          <div><h3>Hiddify</h3><p>SUB · iOS, Android, Windows</p></div>
+          <span class="portal-app-icon incy">I</span>
+          <div><h3>INCY</h3><p>SUB · iOS, Android, Windows, macOS, Linux</p></div>
           <div class="portal-app-actions">
-            <a class="link-btn" href="hiddify://import/<%= hiddifyUrl %>#<%= profileName %>" data-app-name="Hiddify" data-subscription-url="<%= hiddifyUrl %>" onclick="return launchSubscriptionApp(event, this)">Добавить</a>
-            <a class="link-btn secondary" href="<%= appDownloads.hiddify %>" target="_blank" rel="noopener">Скачать</a>
+            <a class="link-btn" href="<%= incyDeepLink %>" data-app-name="INCY" data-subscription-url="<%= genericSubUrl %>" onclick="return launchSubscriptionApp(event, this)">Добавить</a>
+            <a class="link-btn secondary" href="<%= appDownloads.incy %>" target="_blank" rel="noopener">Скачать</a>
           </div>
         </article>
 
@@ -156,6 +157,7 @@
     <details class="portal-links">
       <summary>Ссылки для ручного подключения</summary>
       <div>
+        <% if (allowSub) { %><button type="button" class="link-btn secondary" onclick="copyPortalUrl('<%= genericSubUrl %>', this)">INCY / v2RayTun SUB</button><% } %>
         <% if (allowSub) { %><button type="button" class="link-btn secondary" onclick="copyPortalUrl('<%= hiddifyUrl %>', this)">Hiddify SUB</button><% } %>
         <% if (allowSub) { %><button type="button" class="link-btn secondary" onclick="copyPortalUrl('<%= plainSubUrl %>', this)">Обычная SUB</button><% } %>
         <% if (allowJson) { %><button type="button" class="link-btn secondary" onclick="copyPortalUrl('<%= happImportUrl %>', this)">JSON Happ</button><% } %>
