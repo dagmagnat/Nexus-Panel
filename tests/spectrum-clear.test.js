@@ -11,7 +11,7 @@ const read = relative => fs.readFileSync(path.join(root, relative), 'utf8');
 test('Spectrum Clear is the only stylesheet loaded by authenticated pages', () => {
   const header = read('views/partials_header.ejs');
   const stylesheets = Array.from(header.matchAll(/<link[^>]+rel=["']stylesheet["'][^>]+href=["']([^"']+)/g), match => match[1]);
-  assert.deepEqual(stylesheets, ['/css/spectrum-clear.css?v=260']);
+  assert.deepEqual(stylesheets, ['/css/spectrum-clear.css?v=270']);
   for (const legacy of ['style.css', 'redesign.css', 'nexus-ui.css', 'branding.css', 'stage87.css', 'stage90.css']) {
     assert.equal(header.includes(legacy), false, `legacy stylesheet must not be loaded: ${legacy}`);
   }
@@ -20,7 +20,7 @@ test('Spectrum Clear is the only stylesheet loaded by authenticated pages', () =
 test('login and public subscription pages use the same design system', () => {
   for (const file of ['views/login.ejs', 'views/open_sub.ejs']) {
     const source = read(file);
-    assert.match(source, /\/css\/spectrum-clear\.css\?v=260/);
+    assert.match(source, /\/css\/spectrum-clear\.css\?v=270/);
     assert.match(source, /class="[^"]*nexus-spectrum/);
     assert.doesNotMatch(source, /\/css\/(?:style|redesign|nexus-ui|branding|stage\d+)\.css/);
   }
@@ -169,4 +169,50 @@ test('2.6.0 HWID device registry and subscription notices are wired into the UI'
   assert.match(openSub, /incy:\/\/import\//);
   assert.match(openSub, /<h3>v2RayTun<\/h3>/);
   assert.match(css, /subscription HWID device registry/);
+});
+
+test('2.7.0 unifies client limits, exposes devices and wires grace/support nodes', () => {
+  const app = read('app.js');
+  const clients = read('views/clients.ejs');
+  const settings = read('views/settings.ejs');
+  const css = read('public/css/spectrum-clear.css');
+  const transfer = read('scripts/client-transfer.py');
+
+  assert.match(app, /subscription_device_limit_unified_v2/);
+  assert.match(app, /limit_ip is the source of truth/);
+  assert.match(app, /subscription_expired_grace_days/);
+  assert.match(app, /subscription_expired_grace_node_ids/);
+  assert.match(app, /subscription_device_limit_node_ids/);
+  assert.match(app, /slot > limit/);
+  assert.match(app, /onlyNodeIds: grace\.nodeIds/);
+  assert.match(app, /subscriptionExpiryOverride: grace\.active \? grace\.graceExpiryTime : 0/);
+  assert.match(app, /onlyNodeIds: allowedNodeIds/);
+  assert.match(app, /excludeNodeIds: uniqueList/);
+  assert.match(app, /ensureSubscriptionPolicyNodesForClient/);
+  assert.match(app, /limitIp: 0[\s\S]{0,120}trafficGb: 0/);
+  assert.match(app, /Subscription policy node provision failed/);
+  assert.match(app, /subscription_policy_only INTEGER NOT NULL DEFAULT 0/);
+  assert.match(app, /excludePolicyOnly: true/);
+
+  assert.match(clients, /Лимит IP \/ устройств/);
+  assert.doesNotMatch(clients, /name="device_limit"/);
+  assert.match(clients, /Ссылка подписки/);
+  assert.match(clients, /↗ Открыть/);
+  assert.match(clients, /device-slot-badge/);
+  assert.match(clients, /сверх лимита/);
+  assert.match(clients, /Показать устройства клиента/);
+
+  assert.match(settings, /Узлы, доступные при превышении лимита устройств/);
+  assert.match(settings, /Служебный доступ после окончания/);
+  assert.match(settings, /option value="3"/);
+  assert.match(settings, /option value="7"/);
+  assert.match(settings, /Узлы, доступные после окончания подписки/);
+  assert.match(settings, /enabled=true, destOverride=\[http,tls\]/);
+  assert.match(settings, /concurrency=100, xudpConcurrency=200, xudpProxyUDP443=skip/);
+
+  assert.match(css, /2\.7 subscription policies/);
+  assert.match(css, /grid-template-columns: repeat\(8, minmax\(0, 1fr\)\)/);
+  assert.match(css, /device-details-row\.is-over-limit/);
+  assert.match(css, /\.page-clients \.mobile-client-tabs/);
+  assert.match(transfer, /"deviceLimit": clamp_int\(row_value\(row, "limit_ip"\), 1\)/);
 });

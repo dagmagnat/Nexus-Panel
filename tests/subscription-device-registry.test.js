@@ -42,7 +42,9 @@ async function startApp(dataDir) {
       SUB_PUBLIC_URL: `http://127.0.0.1:${port}`,
       BASE_URL: `http://127.0.0.1:${port}`,
       SESSION_SECURE: '0',
-      TRUST_PROXY: '0'
+      TRUST_PROXY: '0',
+      NODE_API_TIMEOUT_MS: '500',
+      FETCH_TIMEOUT_MS: '500'
     },
     stdio: ['ignore', 'pipe', 'pipe']
   });
@@ -104,31 +106,43 @@ function seedClients(dataDir) {
         login, display_name, uuid, sub_slug, duration_days, traffic_gb,
         limit_ip, device_limit, expiry_time, enabled
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run('device-user', 'Device User', uuid, 'device-user', 30, 0, 5, 2, Date.now() + 30 * 86400000, 1);
+    `).run('device-user', 'Device User', uuid, 'device-user', 30, 0, 2, 2, Date.now() + 30 * 86400000, 1);
     db.prepare(`
       INSERT INTO client_nodes (
         client_id, node_id, remote_email, remote_uuid, traffic_gb, limit_ip, enabled
       ) VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(active.lastInsertRowid, node.lastInsertRowid, 'device-user', uuid, 0, 5, 1);
-    const inbound = {
-      id: 1,
-      port: 2053,
-      protocol: 'vless',
-      settings: JSON.stringify({ decryption: 'none', clients: [{ id: uuid, email: 'device-user', enable: true }] }),
-      streamSettings: JSON.stringify({ network: 'tcp', security: 'none' })
-    };
-    db.prepare('INSERT INTO node_inbound_cache (node_id, inbound_id, inbound_json) VALUES (?, ?, ?)')
-      .run(node.lastInsertRowid, 1, JSON.stringify(inbound));
-
-    db.prepare(`
+    `).run(active.lastInsertRowid, node.lastInsertRowid, 'device-user', uuid, 0, 2, 1);
+    const expiredUuid = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+    const expired = db.prepare(`
       INSERT INTO clients (
         login, display_name, uuid, sub_slug, duration_days, traffic_gb,
         limit_ip, device_limit, expiry_time, enabled
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      'expired-user', 'Expired User', 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', 'expired-user',
-      30, 0, 5, 2, Date.now() - 86400000, 1
+      'expired-user', 'Expired User', expiredUuid, 'expired-user',
+      30, 0, 2, 2, Date.now() - 86400000, 1
     );
+    db.prepare(`
+      INSERT INTO client_nodes (
+        client_id, node_id, remote_email, remote_uuid, traffic_gb, limit_ip, enabled
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(expired.lastInsertRowid, node.lastInsertRowid, 'expired-user', expiredUuid, 0, 2, 1);
+
+    const inbound = {
+      id: 1,
+      port: 2053,
+      protocol: 'vless',
+      settings: JSON.stringify({
+        decryption: 'none',
+        clients: [
+          { id: uuid, email: 'device-user', enable: true },
+          { id: expiredUuid, email: 'expired-user', enable: true }
+        ]
+      }),
+      streamSettings: JSON.stringify({ network: 'tcp', security: 'none' })
+    };
+    db.prepare('INSERT INTO node_inbound_cache (node_id, inbound_id, inbound_json) VALUES (?, ?, ?)')
+      .run(node.lastInsertRowid, 1, JSON.stringify(inbound));
   } finally {
     db.close();
   }
@@ -199,13 +213,18 @@ test('Nexus tracks HWID devices, reuses known slots, blocks the extra device and
   assert.ok(devices.every(device => !device.hwid_hash.includes('DEVICE')), 'raw HWID must not be stored in the hash column');
   db.close();
 
+  db = new Database(path.join(dataDir, 'app.db'));
+  const specialNodeId = Number(db.prepare("SELECT id FROM nodes WHERE name = 'Device test node'").get().id);
+  db.prepare("UPDATE app_settings SET value = ? WHERE key = 'subscription_device_limit_node_ids'").run(JSON.stringify([specialNodeId]));
+  db.close();
+
   response = await fetchRaw(app.port, 'device-user', extraHwid, 'v2RayTun/2.3.5 iOS');
   assert.equal(response.status, 200);
   assert.equal(response.headers.get('x-hwid-max-devices-reached'), 'true');
   assert.equal(response.headers.get('x-hwid-limit'), 'true');
   body = decodeURIComponent(await response.text());
   assert.match(body, /⚠️ Превышен лимит устройств/);
-  assert.doesNotMatch(body, /Device test node|Германия/);
+  assert.match(body, /Device test node|Германия/);
 
   response = await fetch(`http://127.0.0.1:${app.port}/json/device-user`, {
     headers: subscriptionHeaders(extraHwid, 'v2RayTun/2.3.5 iOS')
@@ -213,17 +232,46 @@ test('Nexus tracks HWID devices, reuses known slots, blocks the extra device and
   assert.equal(response.status, 200);
   const json = await response.json();
   assert.ok(Array.isArray(json));
-  assert.equal(json.length, 1);
+  assert.equal(json.length, 2);
   assert.match(String(json[0].name || json[0].remarks || ''), /Превышен лимит устройств/);
+  assert.match(JSON.stringify(json), /Device test node|Германия/);
 
   db = new Database(path.join(dataDir, 'app.db'));
   assert.equal(db.prepare("SELECT COUNT(*) AS c FROM subscription_devices WHERE client_id = (SELECT id FROM clients WHERE sub_slug='device-user')").get().c, 2);
+
+  // Legacy-client regression: if an operator lowers a previously populated
+  // client from 2 -> 1, the second already-known HWID must no longer be
+  // grandfathered. limit_ip is the unified source of truth; device_limit may
+  // still contain a stale value from a 2.6 backup without changing behavior.
+  db.prepare("UPDATE clients SET limit_ip = 1, device_limit = 99 WHERE sub_slug = 'device-user'").run();
+  db.prepare("UPDATE app_settings SET value = '[]' WHERE key = 'subscription_device_limit_node_ids'").run();
+  db.close();
+
+  response = await fetchRaw(app.port, 'device-user', secondHwid, 'INCY/1.3 iOS');
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('x-hwid-max-devices-reached'), 'true');
+  body = decodeURIComponent(await response.text());
+  assert.match(body, /⚠️ Превышен лимит устройств/);
+
+  response = await fetchRaw(app.port, 'device-user', firstHwid, 'Happ/3.2 iOS');
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('x-hwid-max-devices-reached'), null);
+  body = decodeURIComponent(await response.text());
+  assert.doesNotMatch(body, /Превышен лимит устройств/);
+
+  db = new Database(path.join(dataDir, 'app.db'));
+  db.prepare("UPDATE app_settings SET value = ? WHERE key = 'subscription_expired_grace_node_ids'").run(JSON.stringify([specialNodeId]));
+  db.prepare("UPDATE app_settings SET value = '3' WHERE key = 'subscription_expired_grace_days'").run();
   db.close();
 
   response = await fetchRaw(app.port, 'expired-user', 'EXPIREDDEVICE001', 'Happ/3.0 iOS');
   assert.equal(response.status, 200);
+  const graceUserInfo = String(response.headers.get('subscription-userinfo') || '');
+  const graceExpire = Number((graceUserInfo.match(/(?:^|;\s*)expire=(\d+)/) || [])[1] || 0);
+  assert.ok(graceExpire > Math.floor(Date.now() / 1000), 'grace subscription metadata must stay active until the grace deadline');
   body = decodeURIComponent(await response.text());
   assert.match(body, /⛔ Продлите подписку/);
+  assert.match(body, /Device test node|Германия/, 'expired subscription should include the selected grace node after the notice');
 
   db = new Database(path.join(dataDir, 'app.db'));
   assert.equal(db.prepare("SELECT COUNT(*) AS c FROM subscription_devices WHERE client_id = (SELECT id FROM clients WHERE sub_slug='expired-user')").get().c, 0, 'expired refresh must not consume a new device slot');

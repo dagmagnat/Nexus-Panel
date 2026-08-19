@@ -169,7 +169,7 @@
   }
   function clientDeviceUsage(client) {
     const used = Math.max(0, Number(client.device_count ?? (client.devices || []).length));
-    const limit = Math.max(0, Number(client.device_limit || 0));
+    const limit = Math.max(0, Number(client.limit_ip ?? client.device_limit ?? 0));
     return `${used}/${limit > 0 ? limit : '∞'}`;
   }
   function deviceIcon(device) {
@@ -430,7 +430,7 @@
         <div class="mobile-client-metrics">
           <div><span>Трафик</span><strong><%= clientTrafficHeadline(client) %></strong></div>
           <div><span>Лимит дней</span><strong><%= termShort(client) %></strong></div>
-          <div><span>Устройства</span><button type="button" class="client-device-count-link" onclick="event.stopPropagation(); openModalById('deviceDetails-<%= client.id %>')"><%= clientDeviceUsage(client) %></button></div>
+          <div><span>Устройства</span><button type="button" class="client-device-count-link" title="Показать устройства клиента" aria-label="Показать устройства клиента" onclick="event.stopPropagation(); openModalById('deviceDetails-<%= client.id %>')"><%= clientDeviceUsage(client) %></button></div>
         </div>
         <div class="mobile-client-expiry"><span>Действует до: <strong><%= expiryDateTime(client.expiry_time) %></strong></span><button type="button" class="mobile-client-edit-link" onclick="openClientEditor(<%= client.id %>)">Изменить ›</button></div>
 
@@ -765,14 +765,9 @@
           <small class="hint">0 = без лимита.</small>
         </div>
         <div class="field third">
-          <label>Лимит IP</label>
+          <label>Лимит IP / устройств</label>
           <input name="limit_ip" type="number" min="0" value="1" required />
-          <small class="hint">0 = без лимита IP.</small>
-        </div>
-        <div class="field third">
-          <label>Лимит устройств</label>
-          <input name="device_limit" type="number" min="0" value="1" required />
-          <small class="hint">HWID-активации подписки. 0 = без лимита.</small>
+          <small class="hint">Единый лимит: IP на узлах + HWID-активации подписки. 0 = без лимита.</small>
         </div>
       </div>
 
@@ -1015,8 +1010,9 @@
           </select>
         </div>
         <div class="field half">
-          <label>Лимит IP</label>
+          <label>Лимит IP на выбранном узле</label>
           <input name="limit_ip" type="number" min="0" placeholder="сохранить текущий" />
+          <small class="hint">Это массовое действие меняет лимит только на выбранном узле и не меняет общий лимит устройств клиента.</small>
         </div>
         <div class="field half">
           <label>Лимит ГБ</label>
@@ -1090,8 +1086,8 @@
         <div><span>Статус</span><strong class="badge <%= clientStatusMeta(client).key %>"><%= clientStatusMeta(client).label %></strong></div>
         <div><span>Срок</span><strong><%= termShort(client) %> дн.</strong><small>до <%= expiryDateTime(client.expiry_time) %></small></div>
         <div><span>Общий лимит</span><strong><%= client.traffic_gb && client.traffic_gb > 0 ? client.traffic_gb + ' ГБ' : '∞' %></strong></div>
-        <div><span>Лимит IP</span><strong><%= client.limit_ip && Number(client.limit_ip) > 0 ? client.limit_ip : '∞' %></strong></div>
-        <div><span>Устройства</span><button type="button" class="client-device-count-link" onclick="openModalById('deviceDetails-<%= client.id %>')"><%= clientDeviceUsage(client) %></button></div>
+        <div><span>Лимит IP / устройств</span><strong><%= client.limit_ip && Number(client.limit_ip) > 0 ? client.limit_ip : '∞' %></strong></div>
+        <div class="client-summary-device-card"><span>Устройства</span><button type="button" class="client-device-count-link" title="Показать устройства клиента" aria-label="Показать устройства клиента" onclick="openModalById('deviceDetails-<%= client.id %>')"><strong><%= clientDeviceUsage(client) %></strong><small>Посмотреть</small></button></div>
         <div><span>Узлов</span><strong><%= clientAssignedNodes(client).length %></strong></div>
         <div class="client-summary-uuid"><span>UUID</span><code><%= client.uuid %></code></div>
         <div>
@@ -1107,6 +1103,10 @@
             <% if (canShowSubInEditor) { %><button type="button" class="btn-secondary" onclick="showQr('<%= baseUrl %>/sub-plain/<%= client.sub_slug %>', '<%= client.login %> · Общая SUB')">SUB QR</button><% } %>
             <button type="button" class="btn-secondary" onclick="showQr('<%= baseUrl %>/json/<%= client.sub_slug %>?raw=1', '<%= client.login %> · JSON')"><%= canShowSubInEditor ? 'JSON QR' : 'Показать QR' %></button>
           </div>
+        </div>
+        <div class="client-summary-open">
+          <span>Ссылка подписки</span>
+          <a class="link-btn secondary client-summary-open-btn" href="/open/<%= client.sub_slug %>" target="_blank" rel="noopener">↗ Открыть</a>
         </div>
       </div>
 
@@ -1134,13 +1134,9 @@
             <div class="client-label-picker"><% if (!clientTags.length) { %><small class="hint">Метки ещё не созданы.</small><% } %><% clientTags.forEach(tag => { const selected = (client.tags || []).some(item => Number(item.id) === Number(tag.id)); %><label><input type="checkbox" name="tag_ids" value="<%= tag.id %>" <%= selected ? 'checked' : '' %>><span class="client-tag-chip" style="--chip-color:<%= tag.color %>"><%= tag.name %></span></label><% }) %></div>
           </div>
           <div class="field half">
-            <label>Лимит IP</label>
+            <label>Лимит IP / устройств</label>
             <input name="limit_ip" type="number" min="0" value="<%= client.limit_ip ?? 1 %>" />
-          </div>
-          <div class="field half">
-            <label>Лимит устройств</label>
-            <input name="device_limit" type="number" min="0" value="<%= client.device_limit ?? 0 %>" />
-            <small class="hint">HWID-активации подписки. 0 = без лимита.</small>
+            <small class="hint">Одно число используется как IP limit на узлах и как HWID-лимит подписки. 0 = без лимита.</small>
           </div>
           <div class="field half">
             <label>Новый срок в днях</label>
@@ -1169,7 +1165,7 @@
           %>
             <label class="node-item node-edit-row">
               <input class="inline" type="checkbox" name="node_enabled_<%= row.node_id %>" value="1" <%= row.client_node_id && row.enabled !== 0 ? 'checked' : '' %> />
-              <span class="node-info"><strong><%- flagIcon(row.country_code, row.country_flag, row.country_name_ru || row.node_name || row.name, row.node_type) %><span><%= nodeLabel %></span></strong><small><%= row.client_node_id ? (row.enabled !== 0 ? 'узел включён' : 'узел отключён для клиента') : 'узел не назначен' %></small></span>
+              <span class="node-info"><strong><%- flagIcon(row.country_code, row.country_flag, row.country_name_ru || row.node_name || row.name, row.node_type) %><span><%= nodeLabel %></span><% if (Number(row.subscription_policy_only || 0) === 1) { %><em class="transport-chip">служебный</em><% } %></strong><small><%= row.client_node_id ? (Number(row.subscription_policy_only || 0) === 1 ? 'создан Nexus для grace/лимита; скрыт из обычной подписки' : (row.enabled !== 0 ? 'узел включён' : 'узел отключён для клиента')) : 'узел не назначен' %></small></span>
               <input class="node-gb-input" name="node_traffic_gb_<%= row.node_id %>" type="number" min="0" step="1" value="<%= row.traffic_gb || '' %>" placeholder="ГБ" />
             </label>
           <% }) %>
@@ -1241,11 +1237,11 @@
         <div class="device-empty-state">Устройства появятся здесь после обновления подписки из Happ, INCY, v2RayTun или другого клиента, который передаёт <code>X-HWID</code>.</div>
       <% } else { %>
         <div class="device-details-list">
-          <% (client.devices || []).forEach(device => { %>
-            <div class="device-details-row">
+          <% (client.devices || []).forEach(device => { const deviceLimit = Math.max(0, Number(client.limit_ip ?? client.device_limit ?? 0)); const overLimit = deviceLimit > 0 && Number(device.slot || 0) > deviceLimit; %>
+            <div class="device-details-row <%= overLimit ? 'is-over-limit' : '' %>">
               <div class="device-platform-icon" aria-hidden="true"><%= deviceIcon(device) %></div>
               <div class="device-details-main">
-                <strong><%= deviceTitle(device) %></strong>
+                <strong><%= deviceTitle(device) %> <span class="device-slot-badge <%= overLimit ? 'is-blocked' : '' %>"><%= overLimit ? 'сверх лимита' : ('слот ' + (device.slot || '?') + (deviceLimit > 0 ? '/' + deviceLimit : '')) %></span></strong>
                 <span><%= deviceMeta(device) || 'Данные платформы не переданы' %></span>
                 <small>Последнее обновление: <%= relativeDeviceSeen(device.last_seen_at) %> · запросов: <%= device.request_count || 1 %></small>
                 <small>HWID: <code><%= device.hwid_hint || 'скрыт' %></code></small>

@@ -1196,6 +1196,7 @@ function initDb() {
       download_bytes INTEGER NOT NULL DEFAULT 0,
       used_bytes INTEGER NOT NULL DEFAULT 0,
       enabled INTEGER NOT NULL DEFAULT 1,
+      subscription_policy_only INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(client_id, node_id)
     );
@@ -1405,6 +1406,7 @@ function initDb() {
   addColumnIfMissing('client_nodes', 'used_bytes', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing('traffic_snapshots', 'source_kind', "TEXT NOT NULL DEFAULT 'legacy'");
   addColumnIfMissing('client_nodes', 'enabled', 'INTEGER NOT NULL DEFAULT 1');
+  addColumnIfMissing('client_nodes', 'subscription_policy_only', 'INTEGER NOT NULL DEFAULT 0');
 
   addColumnIfMissing('telegram_users', 'username', "TEXT DEFAULT ''");
   addColumnIfMissing('telegram_users', 'first_name', "TEXT DEFAULT ''");
@@ -1480,6 +1482,9 @@ function initDb() {
     ['subscription_expired_notice_enabled', '1'],
     ['subscription_expired_notice_title', '⛔ Продлите подписку'],
     ['subscription_device_limit_notice_title', '⚠️ Превышен лимит устройств'],
+    ['subscription_expired_grace_days', '7'],
+    ['subscription_expired_grace_node_ids', '[]'],
+    ['subscription_device_limit_node_ids', '[]'],
     ['happ_provider_id', ''],
     ['json_mux_enabled', '0'],
     ['json_sniffing_enabled', '0'],
@@ -1556,15 +1561,16 @@ function initDb() {
 }
 
 function migrateSubscriptionDeviceLimitsOnce() {
-  // Existing installations historically used limit_ip as the only visible
-  // "device" allowance in subscription metadata. Copy it once into the new
-  // HWID limit so an update keeps the administrator's existing intent. The
-  // values become independent after this one-time migration.
-  const marker = db.prepare('SELECT value FROM app_settings WHERE key = ?').get('subscription_device_limit_migrated_v1');
+  // 2.7 uses a single operator-facing limit: limit_ip is mirrored into the
+  // legacy device_limit column for backup/import compatibility. A new marker is
+  // required because installations that already ran the 2.6 migration have the
+  // v1 marker but may contain different values.
+  const marker = db.prepare('SELECT value FROM app_settings WHERE key = ?').get('subscription_device_limit_unified_v2');
   if (marker) return false;
   const tx = db.transaction(() => {
-    db.prepare('UPDATE clients SET device_limit = CASE WHEN limit_ip > 0 THEN limit_ip ELSE 0 END WHERE device_limit = 0').run();
+    db.prepare('UPDATE clients SET device_limit = CASE WHEN limit_ip > 0 THEN limit_ip ELSE 0 END').run();
     db.prepare('INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)').run('subscription_device_limit_migrated_v1', '1');
+    db.prepare('INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)').run('subscription_device_limit_unified_v2', '1');
   });
   tx();
   return true;
@@ -2246,12 +2252,36 @@ function isClientEffectivelyEnabled(clientRow, expiryOverride = undefined) {
   return !isClientExpiredAt(expiry || 0);
 }
 
-async function enforceExpiredClientRemoteState(clientRow) {
+async function enforceExpiredClientRemoteState(clientRow, options = {}) {
   if (!clientRow || !isClientExpired(clientRow)) return;
-  try {
-    await updateClientEverywhere(clientRow, { enabled: false });
-  } catch (err) {
-    console.error('Expired client auto-disable failed:', err.message || err);
+
+  const graceNodeIds = new Set((options.graceNodeIds || []).map(Number).filter(id => id > 0));
+  const graceExpiryTime = Math.max(0, Number(options.graceExpiryTime || 0));
+  const graceActive = graceExpiryTime > Date.now() && graceNodeIds.size > 0;
+  const mappings = db.prepare('SELECT * FROM client_nodes WHERE client_id = ?').all(clientRow.id);
+
+  const results = await runWithConcurrency(mappings, 4, async map => {
+    const node = db.prepare('SELECT * FROM nodes WHERE id = ?').get(map.node_id);
+    if (!node) return;
+
+    const keepGraceAccess = graceActive && graceNodeIds.has(Number(map.node_id));
+    await updateClientOnNode(node, map, clientRow, {
+      enabled: keepGraceAccess,
+      node_enabled: keepGraceAccess ? true : map.enabled !== 0,
+      // Dedicated grace nodes must remain reachable even when the ordinary
+      // client's traffic/IP allowance is exhausted. Their SERVER routing is
+      // responsible for restricting access (for example Telegram/WhatsApp).
+      ...(keepGraceAccess ? { limit_ip: 0, traffic_gb: 0 } : {}),
+      // On a dedicated grace node we intentionally extend only the REMOTE
+      // expiry to the grace deadline. The Nexus client itself remains expired.
+      expiry_time: keepGraceAccess ? graceExpiryTime : clientRow.expiry_time
+    });
+  });
+
+  for (const result of results) {
+    if (result?.status === 'rejected') {
+      console.error('Expired client auto-state update failed:', result.reason?.message || result.reason);
+    }
   }
 }
 
@@ -2328,6 +2358,11 @@ function isSubscriptionDeviceHwidRequired() {
 }
 
 function getClientDeviceLimit(clientRow) {
+  // Nexus uses one operator-facing limit for both remote IP limiting and
+  // subscription HWID activations. device_limit stays in the schema for
+  // backwards-compatible backups/imports, but limit_ip is the source of truth.
+  const limitIp = Math.max(0, Number(clientRow?.limit_ip ?? 0));
+  if (Number.isFinite(limitIp)) return limitIp;
   return Math.max(0, Number(clientRow?.device_limit ?? 0));
 }
 
@@ -2394,11 +2429,13 @@ function getSubscriptionDeviceFromRequest(req) {
 function listSubscriptionDevices(clientId) {
   if (!Number(clientId)) return [];
   return db.prepare(`
-    SELECT id, client_id, hwid_hint, os_name, os_version, device_model,
-           app_name, request_count, first_seen_at, last_seen_at
-    FROM subscription_devices
-    WHERE client_id = ?
-    ORDER BY datetime(last_seen_at) DESC, id DESC
+    SELECT sd.id, sd.client_id, sd.hwid_hint, sd.os_name, sd.os_version, sd.device_model,
+           sd.app_name, sd.request_count, sd.first_seen_at, sd.last_seen_at,
+           (SELECT COUNT(*) FROM subscription_devices older
+             WHERE older.client_id = sd.client_id AND older.id <= sd.id) AS slot
+    FROM subscription_devices sd
+    WHERE sd.client_id = ?
+    ORDER BY datetime(sd.last_seen_at) DESC, sd.id DESC
   `).all(Number(clientId));
 }
 
@@ -2442,7 +2479,24 @@ function registerSubscriptionDevice(req, clientRow, options = {}) {
       `).run(
         info.hwidHint, info.osName, info.osVersion, info.deviceModel, info.appName, existing.id
       );
-      return { allowed: true, existing: true, registered: true, count: countSubscriptionDevices(clientRow.id) };
+
+      // Old clients may already have more stored HWIDs than the current limit
+      // (for example after the operator lowered 5 -> 1). Do not grandfather all
+      // previously registered rows forever: only the oldest N slots remain
+      // allowed. This makes the limit effective immediately for legacy clients.
+      const slot = Number(db.prepare(`
+        SELECT COUNT(*) AS slot
+        FROM subscription_devices
+        WHERE client_id = ? AND id <= ?
+      `).get(Number(clientRow.id), Number(existing.id))?.slot || 0);
+      const blockedByCurrentLimit = limit > 0 && isSubscriptionDeviceLimitEnforced() && slot > limit;
+      return {
+        allowed: !blockedByCurrentLimit,
+        existing: true,
+        registered: true,
+        count: countSubscriptionDevices(clientRow.id),
+        reason: blockedByCurrentLimit ? 'device-limit' : ''
+      };
     }
 
     const currentCount = countSubscriptionDevices(clientRow.id);
@@ -2512,6 +2566,129 @@ function buildSubscriptionNoticeEntry(kind) {
   };
 }
 
+function normalizeSubscriptionPolicyNodeIds(value) {
+  let source = value;
+  if (typeof source === 'string') {
+    const raw = source.trim();
+    if (!raw) return [];
+    try {
+      source = JSON.parse(raw);
+    } catch (_) {
+      source = raw.split(/[\s,;]+/);
+    }
+  }
+  if (!Array.isArray(source)) source = source === undefined || source === null ? [] : [source];
+  return uniqueList(source.map(item => Number(item)).filter(item => Number.isInteger(item) && item > 0));
+}
+
+function getSubscriptionPolicyNodeIds(settingKey) {
+  return normalizeSubscriptionPolicyNodeIds(getSetting(settingKey, '[]'));
+}
+
+function getSubscriptionExpiredGraceDays() {
+  const days = Number(getSetting('subscription_expired_grace_days', '7'));
+  return days === 3 ? 3 : 7;
+}
+
+function getSubscriptionExpiredGraceNodeIds() {
+  return getSubscriptionPolicyNodeIds('subscription_expired_grace_node_ids');
+}
+
+function getSubscriptionDeviceLimitNodeIds() {
+  return getSubscriptionPolicyNodeIds('subscription_device_limit_node_ids');
+}
+
+function getSubscriptionReservedNodeIds() {
+  return uniqueList([
+    ...getSubscriptionExpiredGraceNodeIds(),
+    ...getSubscriptionDeviceLimitNodeIds()
+  ].map(Number).filter(id => id > 0));
+}
+
+function getExpiredGraceState(clientRow, nowMs = Date.now()) {
+  const expiryMs = normalizeEpochMillis(clientRow?.expiry_time || 0);
+  const days = getSubscriptionExpiredGraceDays();
+  const nodeIds = getSubscriptionExpiredGraceNodeIds();
+  const graceExpiryTime = expiryMs > 0 ? expiryMs + days * 24 * 60 * 60 * 1000 : 0;
+  return {
+    days,
+    nodeIds,
+    graceExpiryTime,
+    active: Boolean(expiryMs > 0 && expiryMs <= nowMs && graceExpiryTime > nowMs && nodeIds.length)
+  };
+}
+
+function sanitizeSubscriptionPolicyNodeIdsFromBody(value) {
+  const requested = normalizeSubscriptionPolicyNodeIds(value);
+  if (!requested.length) return [];
+  const known = new Set(db.prepare('SELECT id FROM nodes WHERE enabled = 1').all().map(row => Number(row.id)));
+  return requested.filter(id => known.has(Number(id)));
+}
+
+function getSubscriptionPolicyNodesByIds(nodeIds) {
+  const wanted = new Set(normalizeSubscriptionPolicyNodeIds(nodeIds).map(Number));
+  if (!wanted.size) return [];
+  return db.prepare(`SELECT * FROM nodes WHERE enabled = 1 ORDER BY ${nodeOrderSql()}`).all()
+    .filter(node => isClientManagedNode(node) && wanted.has(Number(node.id)));
+}
+
+async function ensureSubscriptionPolicyNodesForClient(clientRow, nodeIds, options = {}) {
+  const nodes = getSubscriptionPolicyNodesByIds(nodeIds);
+  if (!clientRow || !nodes.length) return { nodes: [], errors: [] };
+
+  const forceRemoteState = options.forceRemoteState === true;
+  const enabled = options.enabled !== undefined ? Boolean(options.enabled) : clientRow.enabled !== 0;
+  const expiryTime = Math.max(0, Number(options.expiryTime ?? clientRow.expiry_time ?? 0));
+  const limitIp = Math.max(0, Number(options.limitIp ?? clientRow.limit_ip ?? 0));
+  const trafficGb = Math.max(0, Number(options.trafficGb ?? 0));
+  const errors = [];
+
+  const results = await runWithConcurrency(nodes, 3, async node => {
+    let map = db.prepare('SELECT * FROM client_nodes WHERE client_id = ? AND node_id = ?').get(clientRow.id, node.id);
+    const existedBefore = Boolean(map);
+    try {
+      if (!map) {
+        await ensureAggregatorClientOnNode(node, clientRow, {
+          uuid: clientRow.uuid,
+          email: clientRow.login,
+          subId: clientRow.sub_slug || randomUUID().replace(/-/g, '').slice(0, 16),
+          limit_ip: limitIp,
+          duration_days: clientRow.duration_days,
+          traffic_gb: trafficGb,
+          expiry_time: expiryTime,
+          enabled,
+          node_enabled: true,
+          comment: clientRow.comment || ''
+        });
+        map = db.prepare('SELECT * FROM client_nodes WHERE client_id = ? AND node_id = ?').get(clientRow.id, node.id);
+        if (map && !existedBefore) {
+          // Keep lazily provisioned support/grace mappings out of a normal
+          // subscription even if the administrator later changes the global
+          // policy-node selection. Pre-existing manual mappings are untouched.
+          db.prepare('UPDATE client_nodes SET subscription_policy_only = 1 WHERE id = ?').run(map.id);
+          map.subscription_policy_only = 1;
+        }
+      } else if (forceRemoteState) {
+        await updateClientOnNode(node, map, clientRow, {
+          enabled,
+          node_enabled: true,
+          limit_ip: limitIp,
+          traffic_gb: trafficGb,
+          expiry_time: expiryTime
+        });
+      }
+      return { node, map };
+    } catch (err) {
+      const text = `${getNodePublicName(node)}: ${err.message || err}`;
+      errors.push(text);
+      console.error('Subscription policy node provision failed:', text);
+      return { node, map, error: err };
+    }
+  });
+
+  return { nodes, results, errors };
+}
+
 async function buildSubscriptionEntriesForRequest(req, res, clientRow, options = {}) {
   const expired = isClientExpired(clientRow);
   // After expiry, a refresh may update an already-known device's last_seen, but
@@ -2523,17 +2700,84 @@ async function buildSubscriptionEntriesForRequest(req, res, clientRow, options =
   applySubscriptionDeviceHeaders(res, expired ? { ...deviceState, allowed: true, reason: '' } : deviceState);
 
   if (expired && isExpiredSubscriptionNoticeEnabled()) {
-    await enforceExpiredClientRemoteState(clientRow);
-    return { entries: [buildSubscriptionNoticeEntry('expired')], deviceState, accessState: 'expired' };
+    const grace = getExpiredGraceState(clientRow);
+    if (grace.active) {
+      // A policy node is global: the client does not need to have been manually
+      // assigned to it beforehand. Provision a missing remote account lazily on
+      // the first expired refresh, then keep only these nodes enabled until the
+      // grace deadline.
+      await ensureSubscriptionPolicyNodesForClient(clientRow, grace.nodeIds, {
+        enabled: true,
+        expiryTime: grace.graceExpiryTime,
+        limitIp: 0,
+        trafficGb: 0,
+        forceRemoteState: true
+      });
+    }
+    await enforceExpiredClientRemoteState(clientRow, grace.active ? {
+      graceNodeIds: grace.nodeIds,
+      graceExpiryTime: grace.graceExpiryTime
+    } : {});
+
+    const graceEntries = grace.active
+      ? await buildSubscriptionEntries(clientRow, true, {
+          ...options,
+          onlyNodeIds: grace.nodeIds,
+          excludeNodeIds: []
+        })
+      : [];
+
+    return {
+      entries: [buildSubscriptionNoticeEntry('expired'), ...graceEntries],
+      deviceState,
+      accessState: grace.active ? 'expired-grace' : 'expired',
+      subscriptionExpiryOverride: grace.active ? grace.graceExpiryTime : 0
+    };
   }
 
   if (!deviceState.allowed) {
-    return { entries: [buildSubscriptionNoticeEntry('device-limit')], deviceState, accessState: deviceState.reason || 'device-limit' };
+    const allowedNodeIds = getSubscriptionDeviceLimitNodeIds();
+    if (allowedNodeIds.length) {
+      // Same behavior as grace nodes: the administrator selects policy nodes
+      // globally, so Nexus creates the client on a missing selected node on the
+      // first over-limit refresh instead of requiring manual assignment first.
+      await ensureSubscriptionPolicyNodesForClient(clientRow, allowedNodeIds, {
+        enabled: true,
+        expiryTime: clientRow.expiry_time,
+        limitIp: 0,
+        trafficGb: 0,
+        forceRemoteState: true
+      });
+    }
+    const limitedEntries = allowedNodeIds.length
+      ? await buildSubscriptionEntries(clientRow, true, {
+          ...options,
+          onlyNodeIds: allowedNodeIds,
+          excludeNodeIds: []
+        })
+      : [];
+    return {
+      entries: [buildSubscriptionNoticeEntry('device-limit'), ...limitedEntries],
+      deviceState,
+      accessState: deviceState.reason || 'device-limit',
+      subscriptionExpiryOverride: 0
+    };
   }
 
-  if (isClientExpired(clientRow)) await enforceExpiredClientRemoteState(clientRow);
-  const entries = await buildSubscriptionEntries(clientRow, true, options);
-  return { entries, deviceState, accessState: 'active' };
+  if (expired) await enforceExpiredClientRemoteState(clientRow);
+
+  // Nodes reserved for expiry/device-limit support are intentionally hidden
+  // from an ordinary active subscription. They appear only in their matching
+  // access state, so a dedicated Telegram/WhatsApp node does not clutter the
+  // normal list.
+  const reservedNodeIds = getSubscriptionReservedNodeIds();
+  const explicitExcluded = normalizeSubscriptionPolicyNodeIds(options.excludeNodeIds || []);
+  const entries = await buildSubscriptionEntries(clientRow, true, {
+    ...options,
+    excludeNodeIds: uniqueList([...explicitExcluded, ...reservedNodeIds]),
+    excludePolicyOnly: true
+  });
+  return { entries, deviceState, accessState: 'active', subscriptionExpiryOverride: 0 };
 }
 
 function formatClientTrafficUsageFromUserInfo(subscriptionUserInfo) {
@@ -2761,6 +3005,9 @@ function ensureMissingAppSettings() {
     ['subscription_expired_notice_enabled', '1'],
     ['subscription_expired_notice_title', '⛔ Продлите подписку'],
     ['subscription_device_limit_notice_title', '⚠️ Превышен лимит устройств'],
+    ['subscription_expired_grace_days', '7'],
+    ['subscription_expired_grace_node_ids', '[]'],
+    ['subscription_device_limit_node_ids', '[]'],
     ['happ_provider_id', ''],
     ['json_mux_enabled', '0'],
     ['json_sniffing_enabled', '0'],
@@ -7321,6 +7568,7 @@ async function buildSubscriptionEntries(clientRow, includeOffline = true, option
       cn.upload_bytes,
       cn.download_bytes,
       cn.used_bytes,
+      cn.subscription_policy_only,
       n.panel_url,
       n.panel_path,
       n.sub_base_url,
@@ -7358,10 +7606,17 @@ async function buildSubscriptionEntries(clientRow, includeOffline = true, option
 
   const excludedNodeTypes = new Set((options.excludeNodeTypes || []).map(value => String(value || '').trim()));
   const onlyNodeTypes = new Set((options.onlyNodeTypes || []).map(value => String(value || '').trim()));
+  const excludedNodeIds = new Set(normalizeSubscriptionPolicyNodeIds(options.excludeNodeIds || []).map(Number));
+  const onlyNodeIds = new Set(normalizeSubscriptionPolicyNodeIds(options.onlyNodeIds || []).map(Number));
+  const excludePolicyOnly = options.excludePolicyOnly === true;
   const rows = mappedRows.filter(row => {
     const nodeType = getNodeType(row);
+    const nodeId = Number(row.node_id || row.id || 0);
     if (excludedNodeTypes.has(nodeType)) return false;
     if (onlyNodeTypes.size && !onlyNodeTypes.has(nodeType)) return false;
+    if (excludedNodeIds.has(nodeId)) return false;
+    if (onlyNodeIds.size && !onlyNodeIds.has(nodeId)) return false;
+    if (excludePolicyOnly && Number(row.subscription_policy_only || 0) === 1) return false;
     return true;
   });
   const seen = new Set();
@@ -8852,10 +9107,18 @@ function buildSubscriptionPortalModel(entries, clientRow) {
   };
 }
 
-function buildSubscriptionUserInfo(entries, clientRow) {
+function buildSubscriptionUserInfo(entries, clientRow, options = {}) {
   if (!shouldSendSubscriptionUserInfo()) return '';
 
-  const summary = buildSubscriptionUsageSummary(entries, clientRow);
+  // During an expired grace window the Nexus account must stay expired, but
+  // subscription clients need a future metadata expiry or some of them may
+  // disable the whole profile before the Telegram/WhatsApp support node can be
+  // used. Override only the emitted Subscription-Userinfo timestamp.
+  const expiryOverride = Math.max(0, Number(options.expiryTime || 0));
+  const effectiveClientRow = expiryOverride > 0
+    ? { ...clientRow, expiry_time: expiryOverride }
+    : clientRow;
+  const summary = buildSubscriptionUsageSummary(entries, effectiveClientRow);
   const parts = [
     `upload=${summary.uploadBytes}`,
     `download=${summary.downloadBytes}`
@@ -13072,6 +13335,10 @@ app.get('/settings', requireAuth, async (req, res) => {
     subscriptionExpiredNoticeEnabled: isExpiredSubscriptionNoticeEnabled(),
     subscriptionExpiredNoticeTitle: getSubscriptionNoticeTitle('expired'),
     subscriptionDeviceLimitNoticeTitle: getSubscriptionNoticeTitle('device-limit'),
+    subscriptionExpiredGraceDays: getSubscriptionExpiredGraceDays(),
+    subscriptionExpiredGraceNodeIds: getSubscriptionExpiredGraceNodeIds(),
+    subscriptionDeviceLimitNodeIds: getSubscriptionDeviceLimitNodeIds(),
+    subscriptionPolicyNodes: db.prepare(`SELECT * FROM nodes WHERE enabled = 1 ORDER BY ${nodeOrderSql()}`).all().filter(isClientManagedNode).map(enrichNodeFlagFields),
     jsonMuxEnabled: isJsonMuxEnabled(),
     jsonSniffingEnabled: isJsonSniffingEnabled(),
     happAppControlsEnabled: isHappAppControlsCheckboxEnabled(),
@@ -13278,6 +13545,9 @@ app.post('/settings/happ-control', requireAuth, (req, res) => {
       expiredNoticeEnabled: getSetting('subscription_expired_notice_enabled', '1'),
       expiredNoticeTitle: getSetting('subscription_expired_notice_title', '⛔ Продлите подписку'),
       deviceLimitNoticeTitle: getSetting('subscription_device_limit_notice_title', '⚠️ Превышен лимит устройств'),
+      expiredGraceDays: getSetting('subscription_expired_grace_days', '7'),
+      expiredGraceNodeIds: getSetting('subscription_expired_grace_node_ids', '[]'),
+      deviceLimitNodeIds: getSetting('subscription_device_limit_node_ids', '[]'),
       jsonMux: getSetting('json_mux_enabled', '0'),
       jsonSniffing: getSetting('json_sniffing_enabled', '0'),
       routing: getSetting('routing_config', '')
@@ -13310,6 +13580,13 @@ app.post('/settings/happ-control', requireAuth, (req, res) => {
     setSetting('subscription_expired_notice_enabled', req.body.subscription_expired_notice_enabled === '1' ? '1' : '0');
     setSetting('subscription_expired_notice_title', sanitizeSubscriptionDeviceText(req.body.subscription_expired_notice_title, 80) || '⛔ Продлите подписку');
     setSetting('subscription_device_limit_notice_title', sanitizeSubscriptionDeviceText(req.body.subscription_device_limit_notice_title, 80) || '⚠️ Превышен лимит устройств');
+
+    const graceDays = Number(req.body.subscription_expired_grace_days) === 3 ? 3 : 7;
+    const expiredGraceNodeIds = sanitizeSubscriptionPolicyNodeIdsFromBody(req.body.subscription_expired_grace_node_ids);
+    const deviceLimitNodeIds = sanitizeSubscriptionPolicyNodeIdsFromBody(req.body.subscription_device_limit_node_ids);
+    setSetting('subscription_expired_grace_days', String(graceDays));
+    setSetting('subscription_expired_grace_node_ids', JSON.stringify(expiredGraceNodeIds));
+    setSetting('subscription_device_limit_node_ids', JSON.stringify(deviceLimitNodeIds));
 
     setSetting('json_mux_enabled', req.body.json_mux_enabled === '1' ? '1' : '0');
     setSetting('json_sniffing_enabled', req.body.json_sniffing_enabled === '1' ? '1' : '0');
@@ -13402,6 +13679,9 @@ app.post('/settings/happ-control', requireAuth, (req, res) => {
       expiredNoticeEnabled: getSetting('subscription_expired_notice_enabled', '1'),
       expiredNoticeTitle: getSetting('subscription_expired_notice_title', '⛔ Продлите подписку'),
       deviceLimitNoticeTitle: getSetting('subscription_device_limit_notice_title', '⚠️ Превышен лимит устройств'),
+      expiredGraceDays: getSetting('subscription_expired_grace_days', '7'),
+      expiredGraceNodeIds: getSetting('subscription_expired_grace_node_ids', '[]'),
+      deviceLimitNodeIds: getSetting('subscription_device_limit_node_ids', '[]'),
       jsonMux: getSetting('json_mux_enabled', '0'),
       jsonSniffing: getSetting('json_sniffing_enabled', '0'),
       routing: getSetting('routing_config', '')
@@ -14717,6 +14997,7 @@ app.get('/clients', requireAuth, (req, res) => {
         cn.upload_bytes,
         cn.download_bytes,
         cn.used_bytes,
+        COALESCE(cn.subscription_policy_only, 0) AS subscription_policy_only,
         CASE WHEN cn.id IS NULL THEN 0 ELSE cn.enabled END AS enabled
       FROM nodes n
       LEFT JOIN client_nodes cn ON cn.node_id = n.id AND cn.client_id = ?
@@ -14863,7 +15144,7 @@ app.post('/client-tags/:id/delete', requireAuth, (req, res) => {
 
 app.post('/clients', requireAuth, async (req, res) => {
   try {
-    const { login, limit_ip, device_limit, duration_days, traffic_gb, comment } = req.body;
+    const { login, limit_ip, duration_days, traffic_gb, comment } = req.body;
     let nodeIds = req.body.node_ids || [];
 
     if (!Array.isArray(nodeIds)) nodeIds = [nodeIds];
@@ -14894,7 +15175,7 @@ app.post('/clients', requireAuth, async (req, res) => {
     }
 
     const cleanLimitIp = Math.max(0, Number(limit_ip ?? 1));
-    const cleanDeviceLimit = Math.max(0, Number(device_limit ?? cleanLimitIp));
+    const cleanDeviceLimit = cleanLimitIp;
     const cleanDurationDays = Math.max(0, Number(duration_days || 0));
     const cleanTrafficGb = Math.max(0, Number(traffic_gb || 0));
     const totalGbBytes = toTotalGbBytes(cleanTrafficGb);
@@ -15436,7 +15717,7 @@ app.post('/clients/:id/edit', requireAuth, async (req, res) => {
     const login = String(req.body.login || '').trim() || client.login;
     const displayName = String(req.body.display_name || login).trim() || login;
     const limitIp = Math.max(0, Number(req.body.limit_ip ?? client.limit_ip ?? 1));
-    const deviceLimit = Math.max(0, Number(req.body.device_limit ?? client.device_limit ?? limitIp));
+    const deviceLimit = limitIp;
     const rawDurationDays = String(req.body.duration_days ?? '').trim();
     const durationWasChanged = rawDurationDays !== '';
     const durationDays = durationWasChanged
@@ -15665,10 +15946,10 @@ app.get('/happ/:slug', async (req, res) => {
 
   if (maybeRedirectToCurrentSubscriptionRevision(req, res)) return;
 
-  const { entries } = await buildSubscriptionEntriesForRequest(req, res, client);
+  const { entries, subscriptionExpiryOverride } = await buildSubscriptionEntriesForRequest(req, res, client);
   const lines = entries.map(e => e.line);
   const subscriptionName = getSetting('subscription_name', DEFAULT_SUBSCRIPTION_NAME);
-  const subscriptionUserInfo = buildSubscriptionUserInfo(entries, client);
+  const subscriptionUserInfo = buildSubscriptionUserInfo(entries, client, { expiryTime: subscriptionExpiryOverride });
   const subscriptionUpdateIntervalHours = getSubscriptionUpdateIntervalHours();
 
   setSubscriptionNoCacheHeaders(res, subscriptionName, 'txt');
@@ -15699,10 +15980,10 @@ app.get('/sub/:slug', async (req, res) => {
 
   if (maybeRedirectToCurrentSubscriptionRevision(req, res)) return;
 
-  const { entries } = await buildSubscriptionEntriesForRequest(req, res, client);
+  const { entries, subscriptionExpiryOverride } = await buildSubscriptionEntriesForRequest(req, res, client);
   const lines = entries.map(e => e.line);
   const subscriptionName = getSetting('subscription_name', DEFAULT_SUBSCRIPTION_NAME);
-  const subscriptionUserInfo = buildSubscriptionUserInfo(entries, client);
+  const subscriptionUserInfo = buildSubscriptionUserInfo(entries, client, { expiryTime: subscriptionExpiryOverride });
 
   const subscriptionUpdateIntervalHours = getSubscriptionUpdateIntervalHours();
 
@@ -15729,12 +16010,12 @@ app.get('/sub-plain/:slug', async (req, res) => {
 
   if (maybeRedirectToCurrentSubscriptionRevision(req, res)) return;
 
-  const { entries } = await buildSubscriptionEntriesForRequest(req, res, client);
+  const { entries, subscriptionExpiryOverride } = await buildSubscriptionEntriesForRequest(req, res, client);
   const lines = entries
     .map(entry => String(entry?.line || '').trim())
     .filter(line => /^(?:vless|vmess|trojan|ss|socks|hysteria2?|hy2|tuic|wireguard):\/\//i.test(line));
   const subscriptionName = getSetting('subscription_name', DEFAULT_SUBSCRIPTION_NAME);
-  const subscriptionUserInfo = buildSubscriptionUserInfo(entries, client);
+  const subscriptionUserInfo = buildSubscriptionUserInfo(entries, client, { expiryTime: subscriptionExpiryOverride });
 
   setSubscriptionNoCacheHeaders(res, subscriptionName, 'txt');
   setSubscriptionUserInfoHeaders(res, subscriptionUserInfo);
@@ -15750,12 +16031,12 @@ app.get('/hiddify/:slug', async (req, res) => {
   if (!client) return res.status(404).send('Subscription not found');
   if (maybeRedirectToCurrentSubscriptionRevision(req, res)) return;
 
-  const { entries } = await buildSubscriptionEntriesForRequest(req, res, client);
+  const { entries, subscriptionExpiryOverride } = await buildSubscriptionEntriesForRequest(req, res, client);
   const lines = entries
     .map(entry => String(entry?.line || '').trim())
     .filter(line => /^(?:vless|vmess|trojan|ss|socks|hysteria2?|hy2|tuic|wireguard):\/\//i.test(line));
   const subscriptionName = getSetting('subscription_name', DEFAULT_SUBSCRIPTION_NAME);
-  const subscriptionUserInfo = buildSubscriptionUserInfo(entries, client);
+  const subscriptionUserInfo = buildSubscriptionUserInfo(entries, client, { expiryTime: subscriptionExpiryOverride });
   const intervalHours = getSubscriptionUpdateIntervalHours();
 
   setSubscriptionNoCacheHeaders(res, subscriptionName, 'txt');
@@ -16986,10 +17267,10 @@ app.get('/json/:slug', async (req, res) => {
     return res.redirect(302, buildPublicOpenUrl(client.sub_slug));
   }
 
-  const { entries } = await buildSubscriptionEntriesForRequest(req, res, client);
+  const { entries, subscriptionExpiryOverride } = await buildSubscriptionEntriesForRequest(req, res, client);
   const lines = entries.map(e => e.line);
   const subscriptionName = getSetting('subscription_name', DEFAULT_SUBSCRIPTION_NAME);
-  const subscriptionUserInfo = buildSubscriptionUserInfo(entries, client);
+  const subscriptionUserInfo = buildSubscriptionUserInfo(entries, client, { expiryTime: subscriptionExpiryOverride });
   const subscriptionUpdateIntervalHours = getSubscriptionUpdateIntervalHours();
   const base64Title = Buffer.from(subscriptionName).toString('base64');
 
