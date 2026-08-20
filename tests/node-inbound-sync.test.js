@@ -307,6 +307,8 @@ test('node add imports the exact full inbound, isolates its fields and shows inb
   assert.equal(mock.updatePayloads[0]['allocate[refresh]'], '9');
   assert.equal(mock.updatePayloads[0]['customFutureField[enabled]'], 'true');
   assert.equal(mock.updatePayloads[0]['customFutureField[mode]'], 'next');
+  assert.equal(mock.updatePayloads[0]['settings[decryption]'], 'none');
+  assert.equal(mock.updatePayloads[0]['settings[clients]'], '');
   assert.equal(mock.updatePayloads[0]['streamSettings[xhttpSettings][mode]'], 'packet-up');
 
   const beforeInvalid = new Database(path.join(dataDir, 'app.db'), { readonly: true });

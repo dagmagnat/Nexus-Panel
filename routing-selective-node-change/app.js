@@ -5421,9 +5421,6 @@ function parseAdvancedInboundPayload(form, node, liveInbound) {
     const parsed = parseInboundJsonField(value, null);
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error(`Поле ${key} должно содержать JSON-объект.`);
   }
-  // 3x-ui rejects an update when settings is empty, even if the rest of the
-  // inbound JSON is valid. Keep existing clients and fill protocol defaults.
-  payload.settings = ensureInboundSettingsPayload(payload);
   return payload;
 }
 
