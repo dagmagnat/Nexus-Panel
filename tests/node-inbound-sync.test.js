@@ -94,8 +94,8 @@ async function startMock3xui() {
     remark: 'Selected xHTTP inbound',
     port: 2053,
     protocol: 'vless',
-    settings: JSON.stringify({ clients: [], decryption: 'none' }),
-    streamSettings: JSON.stringify({
+    settings: { clients: [], decryption: 'none' },
+    streamSettings: {
       network: 'xhttp',
       security: 'none',
       xhttpSettings: {
@@ -106,8 +106,8 @@ async function startMock3xui() {
         scMaxEachPostBytes: 1000000,
         scMinPostsIntervalMs: 30
       }
-    }),
-    sniffing: JSON.stringify({ enabled: true, destOverride: ['http', 'tls'] })
+    },
+    sniffing: { enabled: true, destOverride: ['http', 'tls'] }
   };
 
   const server = http.createServer((req, res) => {
@@ -276,8 +276,8 @@ test('node add imports the exact full inbound, isolates its fields and shows inb
     ...mock.selectedInbound,
     remark: 'Advanced exact payload',
     allocate: { strategy: 'always', refresh: 9, concurrency: 3 },
-    streamSettings: JSON.parse(mock.selectedInbound.streamSettings),
-    sniffing: JSON.parse(mock.selectedInbound.sniffing),
+    streamSettings: mock.selectedInbound.streamSettings,
+    sniffing: mock.selectedInbound.sniffing,
     customFutureField: { enabled: true, mode: 'next' }
   };
   response = await fetchWithJar(jar, `http://127.0.0.1:${appInstance.port}/nodes/${node.id}/edit`, {
@@ -307,9 +307,52 @@ test('node add imports the exact full inbound, isolates its fields and shows inb
   assert.equal(mock.updatePayloads[0]['allocate[refresh]'], '9');
   assert.equal(mock.updatePayloads[0]['customFutureField[enabled]'], 'true');
   assert.equal(mock.updatePayloads[0]['customFutureField[mode]'], 'next');
-  assert.equal(mock.updatePayloads[0]['settings[decryption]'], 'none');
-  assert.equal(mock.updatePayloads[0]['settings[clients]'], '');
-  assert.equal(mock.updatePayloads[0]['streamSettings[xhttpSettings][mode]'], 'packet-up');
+  assert.deepEqual(JSON.parse(mock.updatePayloads[0].settings), { clients: [], decryption: 'none' });
+  assert.equal(mock.updatePayloads[0]['settings[decryption]'], undefined);
+  assert.equal(mock.updatePayloads[0]['settings[clients]'], undefined);
+  assert.equal(JSON.parse(mock.updatePayloads[0].streamSettings).xhttpSettings.mode, 'packet-up');
+
+  mock.selectedInbound.settings = {
+    clients: [{ id: 'existing-client-id', email: 'existing@example.test' }],
+    decryption: 'none'
+  };
+  mock.selectedInbound.streamSettings = {
+    network: 'tcp',
+    security: 'tls',
+    tlsSettings: { serverName: 'old-sni.example.test', fingerprint: 'chrome' }
+  };
+  mock.selectedInbound.sniffing = { enabled: true, destOverride: ['http', 'tls'] };
+
+  response = await fetchWithJar(jar, `http://127.0.0.1:${appInstance.port}/nodes/${node.id}/edit`, {
+    method: 'POST',
+    redirect: 'manual',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      _csrf: editPage.csrf,
+      node_type: '3xui',
+      panel_url: `http://127.0.0.1:${mock.port}`,
+      panel_path: '',
+      api_auth_mode: 'token',
+      api_token: '',
+      inbound_id: '1',
+      country_code: 'DE',
+      label_suffix: 'TLS inbound',
+      sni_mode: 'inbound',
+      apply_inbound_settings: '1',
+      inbound_port: '2053',
+      inbound_protocol: 'vless',
+      inbound_network: 'raw',
+      inbound_sni: 'new-sni.example.test'
+    }).toString()
+  });
+  assert.equal(response.status, 302);
+  assert.equal(mock.updatePayloads.length, 2);
+  const tlsPayload = mock.updatePayloads[1];
+  assert.deepEqual(JSON.parse(tlsPayload.settings), mock.selectedInbound.settings);
+  assert.deepEqual(JSON.parse(tlsPayload.sniffing), mock.selectedInbound.sniffing);
+  assert.equal(JSON.parse(tlsPayload.streamSettings).tlsSettings.serverName, 'new-sni.example.test');
+  assert.equal(tlsPayload['settings[clients]'], undefined);
+  assert.equal(tlsPayload['streamSettings[tlsSettings][serverName]'], undefined);
 
   const beforeInvalid = new Database(path.join(dataDir, 'app.db'), { readonly: true });
   const beforeCount = beforeInvalid.prepare('SELECT COUNT(*) AS count FROM nodes').get().count;
