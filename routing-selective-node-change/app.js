@@ -5398,6 +5398,20 @@ function encodeInboundStructuredField(original, value) {
   return typeof original === 'string' ? stringifyInboundField(value) : value;
 }
 
+function prepareInboundUpdatePayload(inbound) {
+  const payload = { ...inbound };
+  // These form-urlencoded fields are JSON columns in 3x-ui. Keeping them as
+  // objects would flatten settings into settings[clients], which 3x-ui rejects.
+  for (const key of ['settings', 'streamSettings', 'sniffing']) {
+    const value = parseInboundJsonField(payload[key], null);
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error(`Поле ${key} inbound должно содержать JSON-объект перед сохранением.`);
+    }
+    payload[key] = stringifyInboundField(value);
+  }
+  return payload;
+}
+
 function parseAdvancedInboundPayload(form, node, liveInbound) {
   if (form.apply_inbound_advanced_json !== '1') return null;
   const raw = String(form.inbound_advanced_json || '').trim();
@@ -5421,7 +5435,8 @@ function parseAdvancedInboundPayload(form, node, liveInbound) {
     const parsed = parseInboundJsonField(value, null);
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error(`Поле ${key} должно содержать JSON-объект.`);
   }
-  return payload;
+  payload.settings = ensureInboundSettingsPayload(payload);
+  return prepareInboundUpdatePayload(payload);
 }
 
 async function updateInboundBasicSettings(node, form) {
@@ -5492,7 +5507,7 @@ async function updateInboundBasicSettings(node, form) {
   inbound.sniffing = encodeInboundStructuredField(originalSniffing, sniffing && typeof sniffing === 'object' ? sniffing : {});
   inbound.settings = ensureInboundSettingsPayload(inbound);
 
-  const payload = { ...inbound };
+  const payload = prepareInboundUpdatePayload(inbound);
   const data = await apiPost(node, `/panel/api/inbounds/update/${encodeURIComponent(inbound.id || node.inbound_id)}`, payload, true);
   saveInboundCache(node, inbound);
   return data;
