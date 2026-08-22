@@ -374,6 +374,10 @@
                   <span class="transport-chip transport-chip-full" title="<%= transportRowText %>"><%= transportRowText %></span><span class="transport-chip transport-chip-mobile" title="<%= transportRowText %>"><%= transportRowText %></span>
                   <span class="badge <%= isEnabled ? 'online' : 'offline' %>"><%= isEnabled ? 'Включён' : 'Отключён' %></span>
                   <span class="node-row-activity" data-node-live-status="<%= node.id %>"><span class="badge <%= activityStatus %>" data-node-live-badge><%= activityLabel(activityStatus) %></span><span class="signal-bars" aria-hidden="true"><i></i><i></i><i></i></span></span>
+                  <span class="node-mobile-health" aria-label="Статус узла">
+                    <i class="node-health-mark <%= isEnabled ? 'is-ok' : 'is-bad' %>" data-node-enabled-indicator title="<%= isEnabled ? 'Узел включён' : 'Узел отключён' %>"><%= isEnabled ? '✓' : '×' %></i>
+                    <i class="node-health-mark <%= activityStatus === 'online' ? 'is-ok' : (activityStatus === 'offline' || activityStatus === 'disabled' ? 'is-bad' : 'is-pending') %>" data-node-live-indicator title="<%= activityLabel(activityStatus) %>"><%= activityStatus === 'online' ? '✓' : (activityStatus === 'offline' || activityStatus === 'disabled' ? '×' : '·') %></i>
+                  </span>
                   <span class="node-row-error <%= node.last_error ? '' : 'hidden' %>" data-node-live-error="<%= node.id %>" title="<%= node.last_error ? humanizeError(node.last_error) : '' %>"><%= node.last_error ? humanizeError(node.last_error) : '' %></span>
                   <span class="node-row-chevron" aria-hidden="true">›</span>
                   <span class="node-mobile-edit-hint" aria-hidden="true">Изменить</span>
@@ -788,8 +792,15 @@ function initNodeDetailsPanel() {
     if (selector) {
       event.preventDefault();
       if (isMobileNodesLayout()) {
-        const editUrl = selector.dataset.nodeEditUrl || `/nodes/${encodeURIComponent(selector.dataset.selectNode)}/edit`;
-        window.location.assign(editUrl);
+        const row = selector.closest('.node-list-row');
+        if (!row) return;
+        if (row.dataset.suppressClick === '1') {
+          row.dataset.suppressClick = '0';
+          return;
+        }
+        const expand = !row.classList.contains('is-expanded');
+        getNodeRows().forEach(item => item.classList.toggle('is-expanded', item === row && expand));
+        selector.setAttribute('aria-expanded', expand ? 'true' : 'false');
         return;
       }
       selectNodeDetails(selector.dataset.selectNode, { openMobile: true });
@@ -889,6 +900,59 @@ function initMobileNodeOrder() {
     }
   });
 }
+
+function initMobileNodeLongPressOrder() {
+  const list = document.getElementById('nodesOrderBody');
+  if (!list || !window.PointerEvent) return;
+  let state = null;
+  const finish = async (save) => {
+    if (!state) return;
+    window.clearTimeout(state.timer);
+    const { row, moved, active } = state;
+    if (active) {
+      row.classList.remove('is-touch-dragging');
+      document.body.classList.remove('node-touch-reordering');
+      row.dataset.suppressClick = '1';
+      refreshMobileOrderControls();
+      if (save && moved) {
+        try { await saveNodeOrder(getMobileNodeOrder()); }
+        catch (err) { setNodeOrderStatus(err.message || String(err), true); }
+      }
+    }
+    state = null;
+  };
+  list.addEventListener('pointerdown', event => {
+    if (!isMobileNodesLayout() || !['touch', 'pen'].includes(event.pointerType)) return;
+    if (event.target.closest('a, button:not(.node-row-select), input, select, textarea')) return;
+    const row = event.target.closest('.node-list-row');
+    if (!row) return;
+    state = { row, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, active: false, moved: false, timer: 0 };
+    state.timer = window.setTimeout(() => {
+      if (!state || state.row !== row) return;
+      state.active = true;
+      row.classList.add('is-touch-dragging');
+      document.body.classList.add('node-touch-reordering');
+      row.setPointerCapture?.(event.pointerId);
+      setNodeOrderStatus('Перемещай узел вверх или вниз и отпусти', false);
+      navigator.vibrate?.(30);
+    }, 420);
+  }, { passive: true });
+  list.addEventListener('pointermove', event => {
+    if (!state || state.pointerId !== event.pointerId) return;
+    if (!state.active) {
+      if (Math.hypot(event.clientX - state.startX, event.clientY - state.startY) > 10) finish(false);
+      return;
+    }
+    event.preventDefault();
+    const target = document.elementFromPoint(event.clientX, event.clientY)?.closest('.node-list-row');
+    if (!target || target === state.row || target.parentElement !== list) return;
+    const before = event.clientY < target.getBoundingClientRect().top + target.offsetHeight / 2;
+    list.insertBefore(state.row, before ? target : target.nextElementSibling);
+    state.moved = true;
+  }, { passive: false });
+  list.addEventListener('pointerup', event => { if (state?.pointerId === event.pointerId) finish(true); });
+  list.addEventListener('pointercancel', event => { if (state?.pointerId === event.pointerId) finish(false); });
+}
 function showLoading(title, text) {
   const modal = document.getElementById('loadingModal');
   if (!modal) return;
@@ -954,6 +1018,12 @@ async function refreshNodeStatuses() {
           badge.textContent = label;
           badge.title = check.error || (check.ms ? `${check.ms} мс` : '');
         }
+        const indicator = container.closest('.node-list-row')?.querySelector('[data-node-live-indicator]');
+        if (indicator) {
+          indicator.className = `node-health-mark ${state === 'online' ? 'is-ok' : (state === 'offline' || state === 'disabled' ? 'is-bad' : 'is-pending')}`;
+          indicator.textContent = state === 'online' ? '✓' : (state === 'offline' || state === 'disabled' ? '×' : '·');
+          indicator.title = label;
+        }
       });
       if (check.inboundTraffic) {
         document.querySelectorAll(`[data-node-inbound-usage="${check.nodeId}"]`).forEach(row => {
@@ -986,6 +1056,7 @@ async function refreshNodeStatuses() {
 document.addEventListener('DOMContentLoaded', () => {
   initNodeDragOrder();
   initMobileNodeOrder();
+  initMobileNodeLongPressOrder();
   initNodeDetailsPanel();
   document.querySelectorAll('form.js-long-action').forEach(form => {
     form.addEventListener('submit', () => {

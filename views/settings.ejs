@@ -273,19 +273,29 @@
 
           <div class="happ-section-title">4. JSON/Xray и маршрутизация</div>
           <div class="happ-control-grid happ-json-toggle-grid">
-            <label class="switch-row compact happ-help-source" data-help-title="Sniffing в JSON" data-help-text="В generated JSON для SOCKS и HTTP inbound добавляется sniffing: enabled=true, destOverride=[http,tls]. Если маршрутизация Nexus включена, sniffing всё равно активируется автоматически, потому что доменные правила иначе могут не сработать по IP-назначению.">
-              <input type="checkbox" name="json_sniffing_enabled" value="1" <%= jsonSniffingEnabled ? 'checked' : '' %> />
-              <span><strong>Sniffing в JSON</strong><small><code>enabled: true · destOverride: [http, tls]</code></small></span>
-            </label>
-
-            <label class="switch-row compact danger-option happ-help-source" data-help-title="MUX в JSON" data-help-text="В каждый VLESS outbound generated JSON добавляется mux: enabled=true, concurrency=100, xudpConcurrency=200, xudpProxyUDP443=skip. Это агрессивные значения; MUX не нужен для серверного grace-маршрута Telegram/WhatsApp и может ухудшать некоторые соединения.">
-              <input type="checkbox" name="json_mux_enabled" value="1" <%= jsonMuxEnabled ? 'checked' : '' %> />
-              <span><strong>MUX в JSON</strong><small><code>100 TCP · 200 XUDP · UDP/443 skip</code></small></span>
-            </label>
+            <% [['sniffing', jsonSniffingEnabled, jsonSniffingNodeIds, 'Sniffing в JSON', 'enabled: true · destOverride: [http, tls]'], ['mux', jsonMuxEnabled, jsonMuxNodeIds, 'MUX в JSON', '100 TCP · 200 XUDP · UDP/443 skip']].forEach(([key, enabled, selectedIds, title, detail]) => { %>
+              <div class="json-node-policy <%= key === 'mux' ? 'danger-option' : '' %>" data-json-node-policy>
+                <label class="switch-row compact happ-help-source" data-help-title="<%= title %>" data-help-text="Параметр добавляется только в JSON-конфиги отмеченных ниже узлов. Он не наследуется из inbound 3x-ui: серверный inbound и клиентский outbound JSON — разные конфигурации.">
+                  <input type="checkbox" name="json_<%= key %>_enabled" value="1" <%= enabled ? 'checked' : '' %> data-json-policy-toggle />
+                  <span><strong><%= title %></strong><small><code><%= detail %></code></small></span>
+                </label>
+                <div class="json-node-picker" data-json-node-picker <%= enabled ? '' : 'hidden' %>>
+                  <div class="json-node-picker-head">
+                    <strong>Применять к узлам</strong>
+                    <span><button type="button" data-json-select-all>Все</button><button type="button" data-json-clear>Снять</button></span>
+                  </div>
+                  <div class="json-node-picker-list">
+                    <% subscriptionPolicyNodes.forEach(node => { %>
+                      <label><input type="checkbox" name="json_<%= key %>_node_ids" value="<%= node.id %>" <%= selectedIds.map(Number).includes(Number(node.id)) ? 'checked' : '' %> /><span><%- flagHtml(node.country_code, node.country_flag, node.country_name_ru || node.name) %><%= node.country_name_ru || node.name %></span></label>
+                    <% }) %>
+                  </div>
+                </div>
+              </div>
+            <% }) %>
           </div>
 
           <div class="alert ok happ-routing-link-note">
-            Маршруты, GeoSite/GeoIP, DNS и блокировка настраиваются только в разделе <a href="/routing">«Маршрутизация»</a>. Здесь эти параметры намеренно не дублируются.
+            Sniffing и MUX в JSON не копируются из 3x-ui автоматически: здесь настраивается клиентский JSON, а на сервере — inbound. Маршруты, GeoSite/GeoIP, DNS и блокировка находятся в разделе <a href="/routing">«Маршрутизация»</a>.
           </div>
 
           <div class="alert ok happ-free-only-note">
@@ -708,9 +718,31 @@ function initHappHelpPanel() {
   });
 }
 
+function initJsonNodePolicies() {
+  document.querySelectorAll('[data-json-node-policy]').forEach(policy => {
+    const toggle = policy.querySelector('[data-json-policy-toggle]');
+    const picker = policy.querySelector('[data-json-node-picker]');
+    const choices = [...policy.querySelectorAll('.json-node-picker-list input[type="checkbox"]')];
+    const sync = () => { if (picker) picker.hidden = !toggle?.checked; };
+    toggle?.addEventListener('change', sync);
+    policy.querySelector('[data-json-select-all]')?.addEventListener('click', () => choices.forEach(choice => { choice.checked = true; }));
+    policy.querySelector('[data-json-clear]')?.addEventListener('click', () => choices.forEach(choice => { choice.checked = false; }));
+    policy.closest('form')?.addEventListener('submit', event => {
+      if (toggle?.checked && !choices.some(choice => choice.checked)) {
+        event.preventDefault();
+        picker.hidden = false;
+        choices[0]?.focus();
+        alert(`Для «${policy.querySelector('strong')?.textContent || 'JSON-параметра'}» выбери хотя бы один узел.`);
+      }
+    });
+    sync();
+  });
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   syncHappGeoSourceFields();
   initHappHelpPanel();
+  initJsonNodePolicies();
 });
 
 

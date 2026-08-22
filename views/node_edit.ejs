@@ -292,14 +292,16 @@
           <% } %>
 
           <% if (currentNet === 'xhttp') { %>
-          <div id="xhttpSettingsBox" class="xhttp-settings-box form-grid xhttp-settings-grid">
-            <div class="field half"><label>XHTTP mode</label><input name="inbound_xhttp_mode" value="<%= inboundPreview.xhttpMode || 'stream-one' %>" placeholder="stream-one" /></div>
-            <div class="field half"><label>XHTTP legacy posts / bytes / interval (необязательно)</label><input name="inbound_xhttp_sc" value="<%= [inboundPreview.scMaxConcurrentPosts ?? '', inboundPreview.scMaxEachPostBytes ?? '', inboundPreview.scMinPostsIntervalMs ?? ''].join(', ') %>" placeholder="пусто; либо 0, 500000-1000000, 10-50" /></div>
-            <div class="field">
-              <label class="switch-row compact">
-                <input type="checkbox" name="inbound_xhttp_fragment" value="1" <%= inboundPreview.dialerProxy === 'fragment' ? 'checked' : '' %> />
-                <span><strong>XHTTP через fragment outbound</strong><small>Сохраняет/убирает sockopt.dialerProxy=fragment в inbound. Сам fragment outbound добавляется в JSON-подписку автоматически, если он нужен.</small></span>
-              </label>
+          <div id="xhttpSettingsBox" class="field full xhttp-settings-box">
+            <div class="xhttp-settings-grid">
+              <div class="field"><label>XHTTP mode</label><input name="inbound_xhttp_mode" value="<%= inboundPreview.xhttpMode || 'stream-one' %>" placeholder="stream-one" /></div>
+              <div class="field"><label>XHTTP legacy posts / bytes / interval (необязательно)</label><input name="inbound_xhttp_sc" value="<%= [inboundPreview.scMaxConcurrentPosts ?? '', inboundPreview.scMaxEachPostBytes ?? '', inboundPreview.scMinPostsIntervalMs ?? ''].join(', ') %>" placeholder="пусто; либо 0, 500000-1000000, 10-50" /></div>
+              <div class="field full">
+                <label class="switch-row compact">
+                  <input type="checkbox" name="inbound_xhttp_fragment" value="1" <%= inboundPreview.dialerProxy === 'fragment' ? 'checked' : '' %> />
+                  <span><strong>XHTTP через fragment outbound</strong><small>Сохраняет/убирает sockopt.dialerProxy=fragment в inbound. Сам fragment outbound добавляется в JSON-подписку автоматически, если он нужен.</small></span>
+                </label>
+              </div>
             </div>
           </div>
           <% } %>

@@ -8,24 +8,28 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 const read = relative => fs.readFileSync(path.join(root, relative), 'utf8');
 
-test('mobile node cards open the real editor and refresh sequentially at the configured interval', () => {
+test('mobile node cards expand compact controls, long-press reorder and refresh sequentially', () => {
   const app = read('app.js');
   const nodes = read('views/nodes.ejs');
   assert.match(nodes, /data-node-edit-url="\/nodes\/<%= node\.id %>\/edit"/);
-  assert.match(nodes, /window\.location\.assign\(editUrl\)/);
+  assert.match(nodes, /row\.classList\.contains\('is-expanded'\)/);
+  assert.match(nodes, /initMobileNodeLongPressOrder/);
+  assert.match(nodes, /data-node-live-indicator/);
   assert.match(nodes, /setInterval\(refreshNodeStatuses, nodeRefreshSeconds \* 1000\)/);
   assert.match(app, /async function runDashboardHealthSweep\(options = \{\}\)[\s\S]*for \(const node of nodes\)/);
   assert.doesNotMatch(app, /runDashboardHealthSweep\([\s\S]{0,3000}runWithConcurrency/);
 });
 
-test('mobile client cards open the local editor and compact its real form', () => {
+test('mobile client edit remains local while the information action opens a read-only summary', () => {
   const clients = read('views/clients.ejs');
   const footer = read('views/partials_footer.ejs');
   const css = read('public/css/spectrum-clear.css');
   assert.match(clients, /data-client-edit-card="<%= client\.id %>"/);
   assert.match(clients, /class="mobile-client-name" onclick="openClientEditor/);
   assert.match(clients, /class="[^"]*client-editor-shell/);
-  assert.match(footer, /const localEditor = document\.getElementById\('clientEditor-' \+ id\)/);
+  assert.doesNotMatch(footer, /const localEditor = document\.getElementById\('clientEditor-' \+ id\)/);
+  assert.match(footer, /Редактировать клиента/);
+  assert.match(footer, /client-quick-devices-grid/);
   assert.match(css, /\.client-editor-fields \{ display: grid; grid-template-columns: repeat\(2/);
   assert.match(css, /\.mobile-client-metrics \{ display: none; \}/);
 });

@@ -137,40 +137,42 @@
         <span><strong>Использовать маршрутизацию</strong><small>Если выключить, JSON будет без proxy-правил и почти всё пойдёт напрямую.</small></span>
       </label>
 
-      <label class="switch-row">
-        <input type="checkbox" name="routing_all_nodes" value="1" <%= routingAllNodes ? 'checked' : '' %> onchange="document.getElementById('excluded-routing-nodes').style.display = this.checked ? 'none' : 'block'" />
-        <span><strong>Маршруты на всех узлах 3x-ui</strong><small>Если снять галочку, можно выбрать 3x-ui узлы, где JSON будет без routing.</small></span>
-      </label>
-
-      <div id="excluded-routing-nodes" style="display:<%= routingAllNodes ? 'none' : 'block' %>; margin:12px 0 18px;">
-        <h3>Узлы без маршрутизации</h3>
-        <p class="hint">Отметь 3x-ui серверы, для которых не нужно применять маршруты. Например, РФ/RU сервер: он останется в JSON-подписке, но при подключении к нему весь трафик пойдёт через него.</p>
-        <div class="preset-grid">
-          <% nodes.forEach(n => { %>
-            <label class="preset-card">
-              <input type="checkbox" name="routing_excluded_node_ids" value="<%= n.id %>" <%= routingExcludedNodeIds.map(Number).includes(Number(n.id)) ? 'checked' : '' %> />
-              <span><strong><%- flagHtml(n.country_code, n.country_flag, n.country_name_ru || n.name) %><%= n.country_name_ru || n.name %></strong><small><%= n.label_suffix || nodeEndpointLabel(n) %> · <%= n.transport_label || 'не загружено' %></small></span>
+      <h3>Режимы и узлы</h3>
+      <p class="hint">Можно включить несколько режимов. Каждый узел назначается только одному режиму; панель автоматически блокирует его в остальных списках.</p>
+      <div class="routing-mode-assignments">
+        <% [
+          ['proxy-selected', 'Через текущий узел только выбранное', 'Через подключённый узел идут только правила из списков ниже.'],
+          ['proxy-except', 'Всё через proxy, кроме...', 'Исключения идут напрямую, остальной TCP/UDP трафик — в proxy.'],
+          ['node-selective', 'Выбранное через отдельный узел', 'GeoSite/GeoIP идут через указанный узел, остальной трафик — напрямую.']
+        ].forEach(([mode, title, description]) => { const assigned = (routingModeAssignments[mode] || []).map(Number); %>
+          <section class="routing-mode-assignment <%= assigned.length ? 'is-enabled' : '' %>" data-routing-mode-card="<%= mode %>">
+            <label class="switch-row compact">
+              <input type="checkbox" name="routing_modes" value="<%= mode %>" <%= assigned.length ? 'checked' : '' %> data-routing-mode-toggle />
+              <span><strong><%= title %></strong><small><%= description %></small></span>
             </label>
-          <% }) %>
-        </div>
-      </div>
-
-      <h3>Режим</h3>
-      <div class="mode-grid">
-        <label class="preset-card"><input type="radio" name="routing_mode" value="proxy-selected" <%= routingMode === 'proxy-selected' ? 'checked' : '' %> onchange="syncRoutingMode()" /><span><strong>Через текущий узел только выбранное</strong><small>Через подключённый узел идут только правила из списков ниже.</small></span></label>
-        <label class="preset-card"><input type="radio" name="routing_mode" value="proxy-except" <%= routingMode === 'proxy-except' ? 'checked' : '' %> onchange="syncRoutingMode()" /><span><strong>Всё через proxy, кроме...</strong><small>Исключения идут напрямую, остальной TCP/UDP трафик — в proxy.</small></span></label>
-        <label class="preset-card"><input type="radio" name="routing_mode" value="node-selective" <%= routingMode === 'node-selective' ? 'checked' : '' %> onchange="syncRoutingMode()" /><span><strong>Выбранное через отдельный узел</strong><small>GeoSite/GeoIP идут через указанный узел, весь остальной трафик — напрямую.</small></span></label>
-      </div>
-
-      <div id="routing-proxy-node-field" class="field" style="display:<%= routingMode === 'node-selective' ? 'block' : 'none' %>;">
-        <label for="routing-proxy-node-id">Узел для выбранных GeoSite / GeoIP</label>
-        <select id="routing-proxy-node-id" name="routing_proxy_node_id">
-          <option value="">Выбери узел</option>
-          <% nodes.forEach(n => { %>
-            <option value="<%= n.id %>" <%= Number(routingProxyNodeId) === Number(n.id) ? 'selected' : '' %>><%= n.country_name_ru || n.name %> · <%= n.label_suffix || nodeEndpointLabel(n) %></option>
-          <% }) %>
-        </select>
-        <small class="hint">Панель добавит этот узел отдельным outbound в каждый JSON-конфиг клиента. Например, выбери Telegram ниже: <code>geosite:telegram</code> и <code>geoip:telegram</code>.</small>
+            <div class="routing-mode-node-picker" data-routing-mode-picker <%= assigned.length ? '' : 'hidden' %>>
+              <div class="routing-node-picker-head"><strong>Узлы этого режима</strong><span><button type="button" data-routing-select-all>Все доступные</button><button type="button" data-routing-clear>Снять</button></span></div>
+              <div class="routing-node-checkboxes">
+                <% nodes.forEach(n => { %>
+                  <label data-routing-node-option data-node-id="<%= n.id %>">
+                    <input type="checkbox" name="routing_mode_nodes_<%= mode.replace(/-/g, '_') %>" value="<%= n.id %>" <%= assigned.includes(Number(n.id)) ? 'checked' : '' %> />
+                    <span><%- flagHtml(n.country_code, n.country_flag, n.country_name_ru || n.name) %><strong><%= n.country_name_ru || n.name %></strong><small><%= n.transport_label || 'параметры не загружены' %></small></span>
+                  </label>
+                <% }) %>
+              </div>
+              <% if (mode === 'node-selective') { %>
+                <div class="field routing-proxy-node-field">
+                  <label for="routing-proxy-node-id">Отдельный outbound для выбранных GeoSite / GeoIP</label>
+                  <select id="routing-proxy-node-id" name="routing_proxy_node_id">
+                    <option value="">Выбери узел</option>
+                    <% nodes.forEach(n => { %><option value="<%= n.id %>" <%= Number(routingProxyNodeId) === Number(n.id) ? 'selected' : '' %>><%= n.country_name_ru || n.name %> · <%= n.label_suffix || nodeEndpointLabel(n) %></option><% }) %>
+                  </select>
+                  <small class="hint">Этот узел станет отдельным outbound для правил из списков VPN ниже.</small>
+                </div>
+              <% } %>
+            </div>
+          </section>
+        <% }) %>
       </div>
 
       <div class="form-grid" style="margin-top:16px;">
@@ -292,7 +294,13 @@
         <strong>JSON-ссылка</strong>
         <div class="muted"><code><%= jsonUrlExample %></code></div>
       </div>
-      <% if (routingMode === 'node-selective') { const selectedRoutingNode = nodes.find(n => Number(n.id) === Number(routingProxyNodeId)); %>
+      <div class="kv-item">
+        <strong>Назначение режимов</strong>
+        <% [['proxy-selected', 'Только выбранное'], ['proxy-except', 'Всё, кроме исключений'], ['node-selective', 'Через отдельный узел']].forEach(([mode, title]) => { const ids = (routingModeAssignments[mode] || []).map(Number); if (!ids.length) return; %>
+          <div class="muted"><b><%= title %>:</b> <%= nodes.filter(node => ids.includes(Number(node.id))).map(node => node.country_name_ru || node.name).join(', ') %></div>
+        <% }) %>
+      </div>
+      <% if ((routingModeAssignments['node-selective'] || []).length) { const selectedRoutingNode = nodes.find(n => Number(n.id) === Number(routingProxyNodeId)); %>
         <div class="kv-item">
           <strong>Отдельный узел для правил</strong>
           <div class="muted"><%= selectedRoutingNode ? (selectedRoutingNode.country_name_ru || selectedRoutingNode.name) : 'Узел не выбран' %></div>
@@ -321,7 +329,7 @@
           <div class="muted">Нет приоритетных правил VPN.</div>
         <% } %>
       </div>
-      <% if (routingMode === 'proxy-except') { %>
+      <% if ((routingModeAssignments['proxy-except'] || []).length) { %>
         <div class="kv-item">
           <strong>2. Потом напрямую / direct</strong>
           <% if (directDomains.length || directIps.length) { %>
@@ -335,7 +343,7 @@
 
       <div class="kv-item">
         <strong>Всё остальное</strong>
-        <div class="muted"><%= routingMode === 'proxy-except' ? 'Идёт через proxy. Поэтому Mail.ru/My.ru можно держать выше, а RU — ниже direct.' : 'Идёт напрямую через direct.' %></div>
+        <div class="muted">Зависит от режима конкретного узла: для «всё, кроме» — через proxy, для остальных — напрямую.</div>
       </div>
     </div>
   </section>
@@ -371,12 +379,58 @@ const LOYAL_GEOIP_URL = 'https://github.com/Loyalsoldier/v2ray-rules-dat/release
 const RUSSIA_GEOSITE_URL = 'https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/geosite.dat';
 const RUSSIA_GEOIP_URL = 'https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/geoip.dat';
 
-function syncRoutingMode() {
-  const mode = document.querySelector('input[name="routing_mode"]:checked')?.value || 'proxy-selected';
-  const field = document.getElementById('routing-proxy-node-field');
-  const select = document.getElementById('routing-proxy-node-id');
-  if (field) field.style.display = mode === 'node-selective' ? 'block' : 'none';
-  if (select) select.required = mode === 'node-selective';
+function syncRoutingModeAssignments() {
+  const cards = [...document.querySelectorAll('[data-routing-mode-card]')];
+  const owners = new Map();
+  cards.forEach(card => {
+    const toggle = card.querySelector('[data-routing-mode-toggle]');
+    const picker = card.querySelector('[data-routing-mode-picker]');
+    card.classList.toggle('is-enabled', !!toggle?.checked);
+    if (picker) picker.hidden = !toggle?.checked;
+    card.querySelectorAll('[data-routing-node-option] input:checked').forEach(input => {
+      if (toggle?.checked) owners.set(String(input.value), card.dataset.routingModeCard);
+    });
+  });
+  cards.forEach(card => {
+    card.querySelectorAll('[data-routing-node-option]').forEach(option => {
+      const input = option.querySelector('input');
+      const owner = owners.get(String(input?.value || ''));
+      const unavailable = !!owner && owner !== card.dataset.routingModeCard;
+      if (input) input.disabled = unavailable;
+      option.classList.toggle('is-unavailable', unavailable);
+      option.title = unavailable ? 'Узел уже выбран в другом режиме' : '';
+    });
+  });
+  const selectiveEnabled = document.querySelector('[data-routing-mode-card="node-selective"] [data-routing-mode-toggle]')?.checked;
+  const proxySelect = document.getElementById('routing-proxy-node-id');
+  if (proxySelect) proxySelect.required = !!selectiveEnabled;
+}
+
+function initRoutingModeAssignments() {
+  const form = document.querySelector('.routing-form');
+  const cards = [...document.querySelectorAll('[data-routing-mode-card]')];
+  cards.forEach(card => {
+    card.addEventListener('change', syncRoutingModeAssignments);
+    card.querySelector('[data-routing-select-all]')?.addEventListener('click', () => {
+      card.querySelectorAll('[data-routing-node-option] input:not(:disabled)').forEach(input => { input.checked = true; });
+      syncRoutingModeAssignments();
+    });
+    card.querySelector('[data-routing-clear]')?.addEventListener('click', () => {
+      card.querySelectorAll('[data-routing-node-option] input').forEach(input => { input.checked = false; });
+      syncRoutingModeAssignments();
+    });
+  });
+  form?.addEventListener('submit', event => {
+    if (!form.querySelector('input[name="routing_enabled"]')?.checked) return;
+    const activeCards = cards.filter(card => card.querySelector('[data-routing-mode-toggle]')?.checked);
+    const invalid = activeCards.find(card => !card.querySelector('[data-routing-node-option] input:checked'));
+    if (!activeCards.length || invalid) {
+      event.preventDefault();
+      alert(!activeCards.length ? 'Включи хотя бы один режим маршрутизации.' : 'Для каждого включённого режима выбери хотя бы один узел.');
+      invalid?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+  });
+  syncRoutingModeAssignments();
 }
 
 function syncGeoSourceFields() {
@@ -555,7 +609,7 @@ function setupRoutingMobileViews() {
 
 document.addEventListener('DOMContentLoaded', () => {
   setupRoutingMobileViews();
-  syncRoutingMode();
+  initRoutingModeAssignments();
   loadGeodataCatalog(false);
 });
 </script>

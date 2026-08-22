@@ -207,8 +207,10 @@ test('2.7.0 unifies client limits, exposes devices and wires grace/support nodes
   assert.match(settings, /option value="3"/);
   assert.match(settings, /option value="7"/);
   assert.match(settings, /Узлы, доступные после окончания подписки/);
-  assert.match(settings, /enabled=true, destOverride=\[http,tls\]/);
-  assert.match(settings, /concurrency=100, xudpConcurrency=200, xudpProxyUDP443=skip/);
+  assert.match(settings, /name="json_<%= key %>_node_ids"/);
+  assert.match(settings, /\['sniffing', jsonSniffingEnabled, jsonSniffingNodeIds/);
+  assert.match(settings, /\['mux', jsonMuxEnabled, jsonMuxNodeIds/);
+  assert.match(settings, /data-json-node-picker/);
 
   assert.match(css, /2\.7 subscription policies/);
   assert.match(css, /grid-template-columns: repeat\(8, minmax\(0, 1fr\)\)/);

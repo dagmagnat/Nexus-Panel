@@ -1488,6 +1488,8 @@ function initDb() {
     ['happ_provider_id', ''],
     ['json_mux_enabled', '0'],
     ['json_sniffing_enabled', '0'],
+    ['json_mux_node_ids', '[]'],
+    ['json_sniffing_node_ids', '[]'],
     ['ios_safe_routing_enabled', '1'],
     ['happ_app_controls_enabled', '0'],
     ['happ_ping_tcp', '1'],
@@ -1507,6 +1509,8 @@ function initDb() {
     ['show_happ_links', '0'],
     ['json_mux_enabled', '0'],
     ['json_sniffing_enabled', '0'],
+    ['json_mux_node_ids', '[]'],
+    ['json_sniffing_node_ids', '[]'],
     ['ios_safe_routing_enabled', '1'],
     ['update_repo_url', OFFICIAL_REPOSITORY_URL],
     ['panel_interface_theme', 'classic'],
@@ -3029,6 +3033,8 @@ function ensureMissingAppSettings() {
     ['happ_provider_id', ''],
     ['json_mux_enabled', '0'],
     ['json_sniffing_enabled', '0'],
+    ['json_mux_node_ids', '[]'],
+    ['json_sniffing_node_ids', '[]'],
     ['ios_safe_routing_enabled', '1'],
     ['happ_app_controls_enabled', '0'],
     ['happ_ping_tcp', '1'],
@@ -3048,6 +3054,8 @@ function ensureMissingAppSettings() {
     ['show_happ_links', '0'],
     ['json_mux_enabled', '0'],
     ['json_sniffing_enabled', '0'],
+    ['json_mux_node_ids', '[]'],
+    ['json_sniffing_node_ids', '[]'],
     ['ios_safe_routing_enabled', '1'],
     ['update_repo_url', OFFICIAL_REPOSITORY_URL],
     ['panel_interface_theme', 'classic'],
@@ -12573,7 +12581,10 @@ async function buildIosSafetyReport() {
       const subscriptionName = getSetting('subscription_name', DEFAULT_SUBSCRIPTION_NAME);
       const jsonPayload = entries
         .filter(e => String(e.line || '').startsWith('vless://'))
-        .map((entry, index) => buildHappJsonConfigFromLine(client, entry.line, subscriptionName, index, isRoutingEnabledForNode(entry.nodeId)));
+        .map((entry, index) => buildHappJsonConfigFromLine(client, entry.line, subscriptionName, index, isRoutingEnabledForNode(entry.nodeId), {
+          nodeId: Number(entry.nodeId || 0),
+          routingMode: getRoutingModeForNode(entry.nodeId)
+        }));
       sampleJsonBytes = Buffer.byteLength(JSON.stringify(jsonPayload), 'utf8');
       sampleClient = { id: client.id, login: client.login, subSlug: client.sub_slug };
     } catch (err) {
@@ -12970,7 +12981,11 @@ app.get('/dashboard', requireAuth, async (req, res) => {
     WHERE enabled = 1 AND expiry_time > 0 AND expiry_time <= ?
     ORDER BY expiry_time ASC
     LIMIT 200
-  `).all(expiryWindow);
+  `).all(expiryWindow).map(client => ({
+    ...client,
+    device_count: countSubscriptionDevices(client.id),
+    device_limit: getClientDeviceLimit(client)
+  }));
 
   const showOnlineClients = req.query.online === '1';
   const onlineResult = showOnlineClients
@@ -13033,6 +13048,7 @@ app.get('/routing/geodata-index', requireAuth, async (req, res) => {
 
 app.get('/routing', requireAuth, (req, res) => {
   const cfg = getRoutingConfig();
+  const routableNodes = db.prepare(`SELECT * FROM nodes WHERE enabled = 1 AND node_type != ? ORDER BY ${nodeOrderSql()}`).all(NODE_TYPE_H1CLOUD).filter(isClientManagedNode).map(enrichNodeWithCachedTransport);
   render(res, 'routing', {
     routingPresets: ROUTING_PRESETS,
     selectedPresets: cfg.presets,
@@ -13056,8 +13072,9 @@ app.get('/routing', requireAuth, (req, res) => {
     routingEnabled: cfg.enabled !== false,
     routingAllNodes: cfg.allNodes !== false,
     routingExcludedNodeIds: cfg.excludedNodeIds || [],
+    routingModeAssignments: getRoutingModeAssignments(cfg, routableNodes.map(node => Number(node.id))),
     routingProxyNodeId: Number(cfg.proxyNodeId || 0),
-    nodes: db.prepare(`SELECT * FROM nodes WHERE enabled = 1 AND node_type != ? ORDER BY ${nodeOrderSql()}`).all(NODE_TYPE_H1CLOUD).filter(isClientManagedNode).map(enrichNodeWithCachedTransport),
+    nodes: routableNodes,
     proxyDomains: getRoutingProxyDomains(),
     proxyIps: getRoutingProxyIps(),
     directDomains: getRoutingDirectDomains(),
@@ -13095,23 +13112,37 @@ app.post('/routing', requireAuth, (req, res) => {
     const geodataUrls = uniqueList([effectiveGeositeUrl, effectiveGeoipUrl, ...parsePlainLines(req.body.geodata_urls || '')].filter(v => /^https?:\/\//i.test(v))); 
     const dnsPreset = String(req.body.dns_preset || 'cloudflare').trim();
     const dnsCustom = parsePlainLines(req.body.dns_custom || '').join('\n');
-    let excludedNodeIds = req.body.routing_excluded_node_ids || [];
-    if (!Array.isArray(excludedNodeIds)) excludedNodeIds = excludedNodeIds ? [excludedNodeIds] : [];
-    excludedNodeIds = uniqueList(excludedNodeIds.map(v => Number(v)).filter(v => Number.isInteger(v) && v > 0));
     const routableNodeIds = new Set(db.prepare('SELECT id FROM nodes WHERE enabled = 1 AND node_type != ?').all(NODE_TYPE_H1CLOUD).filter(isClientManagedNode).map(row => Number(row.id)));
-    excludedNodeIds = excludedNodeIds.filter(id => routableNodeIds.has(Number(id)));
-    const allNodes = req.body.routing_all_nodes === '1';
-    const routingMode = ['proxy-except', 'node-selective'].includes(req.body.routing_mode) ? req.body.routing_mode : 'proxy-selected';
-    const proxyNodeId = routingMode === 'node-selective' ? Number(req.body.routing_proxy_node_id || 0) : 0;
-    if (routingMode === 'node-selective' && !routableNodeIds.has(proxyNodeId)) throw new Error('Выбери доступный узел для выборочной маршрутизации.');
+    const allowedModes = ['proxy-selected', 'proxy-except', 'node-selective'];
+    const requestedModesRaw = req.body.routing_modes;
+    const requestedModes = uniqueList((Array.isArray(requestedModesRaw) ? requestedModesRaw : (requestedModesRaw ? [requestedModesRaw] : [])).map(String).filter(mode => allowedModes.includes(mode)));
+    const modeAssignments = {};
+    const assignedNodeIds = new Set();
+    for (const mode of requestedModes) {
+      const field = req.body[`routing_mode_nodes_${mode.replace(/-/g, '_')}`];
+      const ids = uniqueList((Array.isArray(field) ? field : (field ? [field] : [])).map(Number).filter(id => routableNodeIds.has(id)));
+      if (!ids.length) throw new Error(`Для режима «${routingModeTitle(mode)}» выбери хотя бы один узел.`);
+      for (const id of ids) {
+        if (assignedNodeIds.has(id)) throw new Error('Один узел нельзя использовать одновременно в нескольких режимах маршрутизации.');
+        assignedNodeIds.add(id);
+      }
+      modeAssignments[mode] = ids;
+    }
+    const routingEnabled = req.body.routing_enabled === '1';
+    if (routingEnabled && !requestedModes.length) throw new Error('Включи хотя бы один режим маршрутизации и выбери для него узлы.');
+    const routingMode = requestedModes[0] || 'proxy-selected';
+    const proxyNodeId = requestedModes.includes('node-selective') ? Number(req.body.routing_proxy_node_id || 0) : 0;
+    if (requestedModes.includes('node-selective') && !routableNodeIds.has(proxyNodeId)) throw new Error('Выбери доступный отдельный узел для режима выборочной маршрутизации.');
     const errors = [...parsedDomains.errors, ...parsedIps.errors, ...parsedExceptDomains.errors, ...parsedExceptIps.errors, ...parsedAdBlockDomains.errors, ...parsedAdBlockIps.errors];
     if (errors.length) throw new Error(errors.join(' | '));
     const cfg = {
-      enabled: req.body.routing_enabled === '1',
+      enabled: routingEnabled,
       presets,
       customDomains: parsedDomains.values,
       customIps: parsedIps.values,
       mode: routingMode,
+      modeAssignments,
+      assignmentExplicit: true,
       proxyNodeId,
       exceptDomains: parsedExceptDomains.values,
       exceptIps: parsedExceptIps.values,
@@ -13124,8 +13155,8 @@ app.post('/routing', requireAuth, (req, res) => {
       geoipUrl: /^https?:\/\//i.test(effectiveGeoipUrl) ? effectiveGeoipUrl : '',
       dnsPreset,
       dnsCustom,
-      allNodes,
-      excludedNodeIds: allNodes ? [] : excludedNodeIds,
+      allNodes: false,
+      excludedNodeIds: [],
       happRoutingProfileEnabled: req.body.happ_routing_profile_enabled === '1',
       happRoutingExplicit: true,
       happRoutingForceUpdate: req.body.happ_routing_force_update === '1',
@@ -13576,6 +13607,8 @@ app.get('/settings', requireAuth, async (req, res) => {
     subscriptionPolicyNodes: db.prepare(`SELECT * FROM nodes WHERE enabled = 1 ORDER BY ${nodeOrderSql()}`).all().filter(isClientManagedNode).map(enrichNodeFlagFields),
     jsonMuxEnabled: isJsonMuxEnabled(),
     jsonSniffingEnabled: isJsonSniffingEnabled(),
+    jsonMuxNodeIds: getJsonFeatureNodeIds('json_mux_node_ids'),
+    jsonSniffingNodeIds: getJsonFeatureNodeIds('json_sniffing_node_ids'),
     happAppControlsEnabled: isHappAppControlsCheckboxEnabled(),
     happAppControlsEffective: isHappAppControlsEnabled(),
     telegramNotificationsEnabled: getSetting('telegram_notifications_enabled', '0') === '1',
@@ -13785,6 +13818,8 @@ app.post('/settings/happ-control', requireAuth, (req, res) => {
       deviceLimitNodeIds: getSetting('subscription_device_limit_node_ids', '[]'),
       jsonMux: getSetting('json_mux_enabled', '0'),
       jsonSniffing: getSetting('json_sniffing_enabled', '0'),
+      jsonMuxNodeIds: getSetting('json_mux_node_ids', '[]'),
+      jsonSniffingNodeIds: getSetting('json_sniffing_node_ids', '[]'),
       routing: getSetting('routing_config', '')
     });
 
@@ -13823,8 +13858,16 @@ app.post('/settings/happ-control', requireAuth, (req, res) => {
     setSetting('subscription_expired_grace_node_ids', JSON.stringify(expiredGraceNodeIds));
     setSetting('subscription_device_limit_node_ids', JSON.stringify(deviceLimitNodeIds));
 
-    setSetting('json_mux_enabled', req.body.json_mux_enabled === '1' ? '1' : '0');
-    setSetting('json_sniffing_enabled', req.body.json_sniffing_enabled === '1' ? '1' : '0');
+    const jsonMuxEnabled = req.body.json_mux_enabled === '1';
+    const jsonSniffingEnabled = req.body.json_sniffing_enabled === '1';
+    const jsonMuxNodeIds = sanitizeSubscriptionPolicyNodeIdsFromBody(req.body.json_mux_node_ids);
+    const jsonSniffingNodeIds = sanitizeSubscriptionPolicyNodeIdsFromBody(req.body.json_sniffing_node_ids);
+    if (jsonMuxEnabled && !jsonMuxNodeIds.length) throw new Error('Для MUX выбери хотя бы один узел.');
+    if (jsonSniffingEnabled && !jsonSniffingNodeIds.length) throw new Error('Для Sniffing выбери хотя бы один узел.');
+    setSetting('json_mux_enabled', jsonMuxEnabled ? '1' : '0');
+    setSetting('json_sniffing_enabled', jsonSniffingEnabled ? '1' : '0');
+    setSetting('json_mux_node_ids', JSON.stringify(jsonMuxNodeIds));
+    setSetting('json_sniffing_node_ids', JSON.stringify(jsonSniffingNodeIds));
 
     // Paid Happ application controls remain hard-disabled in the free build.
     setSetting('happ_provider_id', '');
@@ -13838,63 +13881,6 @@ app.post('/settings/happ-control', requireAuth, (req, res) => {
     setSetting('happ_ping_on_open_enabled', '0');
     setSetting('happ_force_apply_on_update_enabled', '0');
     setSetting('happ_no_limit_mode', 'off');
-
-    const presetsRaw = req.body.presets;
-    const selectedPresets = Array.isArray(presetsRaw) ? presetsRaw : (presetsRaw ? [presetsRaw] : []);
-    const allowedPresetKeys = new Set(ROUTING_PRESETS.map(preset => preset.key));
-    const presets = uniqueList(selectedPresets.map(v => String(v || '').trim()).filter(v => allowedPresetKeys.has(v)));
-    const parsedDomains = parseRoutingLines(req.body.custom_domains || '', 'domain');
-    const parsedIps = parseRoutingLines(req.body.custom_ips || '', 'ip');
-    const parsedExceptDomains = parseRoutingLines(req.body.except_domains || '', 'domain');
-    const parsedExceptIps = parseRoutingLines(req.body.except_ips || '', 'ip');
-    const parsedAdBlockDomains = parseRoutingLines(req.body.adblock_domains || '', 'domain');
-    const parsedAdBlockIps = parseRoutingLines(req.body.adblock_ips || '', 'ip');
-    const errors = [...parsedDomains.errors, ...parsedIps.errors, ...parsedExceptDomains.errors, ...parsedExceptIps.errors, ...parsedAdBlockDomains.errors, ...parsedAdBlockIps.errors];
-    if (errors.length) throw new Error(errors.join(' | '));
-
-    const geodataSourceRaw = String(req.body.geodata_source || 'loyalsoldier').trim().toLowerCase();
-    const geodataSource = ROUTING_GEODATA_SOURCES.has(geodataSourceRaw) ? geodataSourceRaw : 'loyalsoldier';
-    const geositeUrl = String(req.body.geosite_url || '').trim();
-    const geoipUrl = String(req.body.geoip_url || '').trim();
-    const effectiveGeositeUrl = geodataSource === 'loyalsoldier'
-      ? LOYALSOLDIER_GEOSITE_URL
-      : (geodataSource === 'russia' ? RUNETFREEDOM_GEOSITE_URL : (geodataSource === 'custom' ? geositeUrl : ''));
-    const effectiveGeoipUrl = geodataSource === 'loyalsoldier'
-      ? LOYALSOLDIER_GEOIP_URL
-      : (geodataSource === 'russia' ? RUNETFREEDOM_GEOIP_URL : (geodataSource === 'custom' ? geoipUrl : ''));
-    const geodataUrls = uniqueList([effectiveGeositeUrl, effectiveGeoipUrl, ...parsePlainLines(req.body.geodata_urls || '')].filter(v => /^https?:\/\//i.test(v)));
-
-    const oldRouting = getRoutingConfig();
-    const dnsPreset = String(req.body.dns_preset || 'cloudflare').trim();
-    const routingMode = ['proxy-except', 'node-selective'].includes(req.body.routing_mode) ? req.body.routing_mode : 'proxy-selected';
-    const cfg = {
-      ...oldRouting,
-      enabled: req.body.routing_enabled === '1',
-      presets,
-      customDomains: parsedDomains.values,
-      customIps: parsedIps.values,
-      mode: routingMode,
-      proxyNodeId: routingMode === 'node-selective'
-        ? Number(req.body.routing_proxy_node_id || oldRouting.proxyNodeId || 0)
-        : 0,
-      exceptDomains: parsedExceptDomains.values,
-      exceptIps: parsedExceptIps.values,
-      adBlockEnabled: req.body.adblock_enabled === '1',
-      adBlockDomains: parsedAdBlockDomains.values,
-      adBlockIps: parsedAdBlockIps.values,
-      geodataUrls,
-      geodataSource,
-      geositeUrl: /^https?:\/\//i.test(effectiveGeositeUrl) ? effectiveGeositeUrl : '',
-      geoipUrl: /^https?:\/\//i.test(effectiveGeoipUrl) ? effectiveGeoipUrl : '',
-      dnsPreset,
-      dnsCustom: parsePlainLines(req.body.dns_custom || '').join('\n'),
-      happRoutingProfileEnabled: req.body.happ_routing_profile_enabled === '1',
-      happRoutingExplicit: true,
-      happRoutingForceUpdate: req.body.happ_routing_force_update === '1',
-      happAutoRoutingEnabled: req.body.happ_routing_profile_enabled === '1',
-      defaultsVersion: 6
-    };
-    setSetting('routing_config', JSON.stringify(cfg));
 
     const afterSnapshot = JSON.stringify({
       showHappLinks: getSetting('show_happ_links', '0'),
@@ -13923,6 +13909,8 @@ app.post('/settings/happ-control', requireAuth, (req, res) => {
       deviceLimitNodeIds: getSetting('subscription_device_limit_node_ids', '[]'),
       jsonMux: getSetting('json_mux_enabled', '0'),
       jsonSniffing: getSetting('json_sniffing_enabled', '0'),
+      jsonMuxNodeIds: getSetting('json_mux_node_ids', '[]'),
+      jsonSniffingNodeIds: getSetting('json_sniffing_node_ids', '[]'),
       routing: getSetting('routing_config', '')
     });
     if (beforeSnapshot !== afterSnapshot) bumpSubscriptionRevision();
@@ -16316,6 +16304,31 @@ function isJsonSniffingEnabled() {
   return getSetting('json_sniffing_enabled', '0') === '1';
 }
 
+function getJsonFeatureNodeIds(settingKey) {
+  try {
+    const parsed = JSON.parse(getSetting(settingKey, '[]'));
+    return uniqueList((Array.isArray(parsed) ? parsed : []).map(Number).filter(id => Number.isInteger(id) && id > 0));
+  } catch (_) {
+    return [];
+  }
+}
+
+function isJsonFeatureEnabledForNode(enabledSettingKey, nodeIdsSettingKey, nodeId) {
+  if (getSetting(enabledSettingKey, '0') !== '1') return false;
+  const selectedNodeIds = getJsonFeatureNodeIds(nodeIdsSettingKey);
+  // Empty selections from releases before per-node controls keep their old
+  // global meaning. New saves require at least one explicit node.
+  return !selectedNodeIds.length || selectedNodeIds.includes(Number(nodeId));
+}
+
+function isJsonMuxEnabledForNode(nodeId) {
+  return isJsonFeatureEnabledForNode('json_mux_enabled', 'json_mux_node_ids', nodeId);
+}
+
+function isJsonSniffingEnabledForNode(nodeId) {
+  return isJsonFeatureEnabledForNode('json_sniffing_enabled', 'json_sniffing_node_ids', nodeId);
+}
+
 function getJsonMuxConfig() {
   return {
     enabled: true,
@@ -16360,13 +16373,13 @@ function getHappJsonControls() {
   };
 }
 
-function applyHappOutboundControls(outbound) {
+function applyHappOutboundControls(outbound, nodeId = 0) {
   if (!outbound) return outbound;
 
   // This controls the generated Xray JSON itself and is independent from Happ
   // Keep disabled by default because MUX often breaks
   // VLESS/REALITY and newer transports on some clients.
-  if (isJsonMuxEnabled()) {
+  if (isJsonMuxEnabledForNode(nodeId)) {
     outbound.mux = getJsonMuxConfig();
   } else {
     delete outbound.mux;
@@ -16475,7 +16488,7 @@ function parseVlessLineToOutbound(line, index = 0, options = {}) {
     streamSettings
   };
 
-  applyHappOutboundControls(outbound);
+  applyHappOutboundControls(outbound, options.nodeId);
 
   const remark = getRemarkFromVlessLine(line);
   if (remark) outbound.remarks = remark;
@@ -16885,6 +16898,8 @@ function getDefaultRoutingConfig() {
     dnsCustom: '',
     allNodes: true,
     excludedNodeIds: [],
+    modeAssignments: {},
+    assignmentExplicit: false,
     proxyNodeId: 0,
     enabled: false,
     // Optional free Happ routing profile. Disabled by default so we do not change
@@ -16946,6 +16961,10 @@ function getRoutingConfig() {
       dnsCustom: typeof parsed.dnsCustom === 'string' ? parsed.dnsCustom : fallback.dnsCustom,
       allNodes: parsed.allNodes !== false,
       excludedNodeIds: Array.isArray(parsed.excludedNodeIds) ? parsed.excludedNodeIds.map(Number).filter(Boolean) : fallback.excludedNodeIds,
+      modeAssignments: parsed.modeAssignments && typeof parsed.modeAssignments === 'object'
+        ? Object.fromEntries(['proxy-selected', 'proxy-except', 'node-selective'].map(mode => [mode, uniqueList((Array.isArray(parsed.modeAssignments[mode]) ? parsed.modeAssignments[mode] : []).map(Number).filter(id => Number.isInteger(id) && id > 0))]))
+        : fallback.modeAssignments,
+      assignmentExplicit: parsed.assignmentExplicit === true,
       happRoutingProfileEnabled: parsed.happRoutingProfileEnabled === true && parsed.happRoutingExplicit === true,
       happRoutingExplicit: parsed.happRoutingExplicit === true,
       happRoutingForceUpdate: parsed.happRoutingForceUpdate !== false,
@@ -16960,6 +16979,33 @@ function getRoutingConfig() {
   } catch (_) {
     return getDefaultRoutingConfig();
   }
+}
+
+function routingModeTitle(mode) {
+  return {
+    'proxy-selected': 'Через текущий узел только выбранное',
+    'proxy-except': 'Всё через proxy, кроме исключений',
+    'node-selective': 'Выбранное через отдельный узел'
+  }[mode] || mode;
+}
+
+function getRoutingModeAssignments(cfg = getRoutingConfig(), availableNodeIds = null) {
+  const modes = ['proxy-selected', 'proxy-except', 'node-selective'];
+  if (cfg.assignmentExplicit === true) {
+    return Object.fromEntries(modes.map(mode => [mode, uniqueList((cfg.modeAssignments?.[mode] || []).map(Number).filter(id => Number.isInteger(id) && id > 0))]));
+  }
+  const ids = Array.isArray(availableNodeIds)
+    ? availableNodeIds.map(Number)
+    : db.prepare('SELECT id FROM nodes WHERE enabled = 1 AND node_type != ?').all(NODE_TYPE_H1CLOUD).filter(isClientManagedNode).map(row => Number(row.id));
+  const excluded = new Set((cfg.excludedNodeIds || []).map(Number));
+  const eligible = ids.filter(id => cfg.allNodes !== false || !excluded.has(id));
+  return Object.fromEntries(modes.map(mode => [mode, mode === cfg.mode ? eligible : []]));
+}
+
+function getRoutingModeForNode(nodeId, cfg = getRoutingConfig()) {
+  const id = Number(nodeId);
+  const assignments = getRoutingModeAssignments(cfg);
+  return Object.keys(assignments).find(mode => assignments[mode].includes(id)) || '';
 }
 
 function normalizeRoutingLine(value, kind) {
@@ -17158,8 +17204,8 @@ function isIosSafeIpRule(value) {
   return /^[0-9a-f:]+(\/\d{1,3})?$/i.test(text) && text.includes(':');
 }
 
-function buildIosSafeRoutingRules(routingOutboundTag = '') {
-  const base = buildRoutingRules(routingOutboundTag);
+function buildIosSafeRoutingRules(routingOutboundTag = '', routingMode = '') {
+  const base = buildRoutingRules(routingOutboundTag, routingMode);
   const safeRules = [];
   for (const rule of base) {
     const next = { ...rule };
@@ -17179,16 +17225,16 @@ function buildIosSafeRoutingRules(routingOutboundTag = '') {
   return safeRules.length ? safeRules : [{ type: 'field', network: 'tcp,udp', outboundTag: 'direct' }];
 }
 
-function getEffectiveJsonRoutingRules(routingOutboundTag = '') {
-  return isIosSafeRoutingEnabled() ? buildIosSafeRoutingRules(routingOutboundTag) : buildRoutingRules(routingOutboundTag);
+function getEffectiveJsonRoutingRules(routingOutboundTag = '', routingMode = '') {
+  return isIosSafeRoutingEnabled() ? buildIosSafeRoutingRules(routingOutboundTag, routingMode) : buildRoutingRules(routingOutboundTag, routingMode);
 }
 
 function getSelectiveProxyOutboundTag() {
   const cfg = getRoutingConfig();
-  return cfg.mode === 'node-selective' && Number(cfg.proxyNodeId) > 0 ? `routing-node-${Number(cfg.proxyNodeId)}` : 'proxy';
+  return Number(cfg.proxyNodeId) > 0 ? `routing-node-${Number(cfg.proxyNodeId)}` : 'proxy';
 }
 
-function normalizeXrayJsonForIos(config, routingOutboundTag = '') {
+function normalizeXrayJsonForIos(config, routingOutboundTag = '', routingMode = '') {
   if (!isIosSafeRoutingEnabled() || !config || typeof config !== 'object') return config;
 
   // RAW is a 3x-ui UI name. Xray/iOS JSON expects tcp.
@@ -17212,19 +17258,20 @@ function normalizeXrayJsonForIos(config, routingOutboundTag = '') {
     config.routing.domainStrategy = config.routing.domainStrategy || 'IPIfNonMatch';
     if (config.routing.domainStrategy === 'AsIs') config.routing.domainStrategy = 'IPIfNonMatch';
     config.routing.domainMatcher = 'hybrid';
-    config.routing.rules = getEffectiveJsonRoutingRules(routingOutboundTag);
+    config.routing.rules = getEffectiveJsonRoutingRules(routingOutboundTag, routingMode);
   }
   config.iosSafe = true;
   return config;
 }
 
-function buildRoutingRules(routingOutboundTag = '') {
+function buildRoutingRules(routingOutboundTag = '', routingMode = '') {
   const cfg = getRoutingConfig();
+  const mode = routingMode || cfg.mode;
   if (cfg.enabled === false) {
     return [{ type: 'field', network: 'tcp,udp', outboundTag: 'direct' }];
   }
 
-  if (cfg.mode === 'node-selective') {
+  if (mode === 'node-selective') {
     const outboundTag = routingOutboundTag || getSelectiveProxyOutboundTag();
     const rules = [];
     const blockDomains = getRoutingBlockDomains();
@@ -17239,7 +17286,7 @@ function buildRoutingRules(routingOutboundTag = '') {
     return rules;
   }
 
-  if (cfg.mode === 'proxy-except') {
+  if (mode === 'proxy-except') {
     const rules = [];
     const blockDomains = getRoutingBlockDomains();
     const blockIps = getRoutingBlockIps();
@@ -17279,6 +17326,7 @@ function isRoutingEnabledForNode(nodeId) {
   if (node && [NODE_TYPE_H1CLOUD, NODE_TYPE_REMNAWAVE].includes(getNodeType(node))) return false;
   const cfg = getRoutingConfig();
   if (cfg.enabled === false) return false;
+  if (cfg.assignmentExplicit === true) return !!getRoutingModeForNode(nodeId, cfg);
   if (cfg.allNodes === false && (cfg.excludedNodeIds || []).map(Number).includes(Number(nodeId))) return false;
   return true;
 }
@@ -17336,7 +17384,8 @@ function buildHappJsonConfig(client, lines, subscriptionName, routingEnabledForT
   }
 
   const routingCfg = getRoutingConfig();
-  const selectiveLine = routingEnabledForThisConfig && routingCfg.mode === 'node-selective'
+  const routingMode = String(options.routingMode || getRoutingModeForNode(options.nodeId, routingCfg) || '');
+  const selectiveLine = routingEnabledForThisConfig && routingMode === 'node-selective'
     ? String(options.selectiveProxyLine || '').trim()
     : '';
   let selectiveOutboundTag = 'proxy';
@@ -17351,8 +17400,8 @@ function buildHappJsonConfig(client, lines, subscriptionName, routingEnabledForT
     }
   }
 
-  const routingActive = routingEnabledForThisConfig && routingCfg.enabled !== false;
-  const jsonSniffingEnabled = isJsonSniffingEnabled() || routingActive;
+  const routingActive = routingEnabledForThisConfig && routingCfg.enabled !== false && !!routingMode;
+  const jsonSniffingEnabled = isJsonSniffingEnabledForNode(options.nodeId) || routingActive;
   const extraOutbounds = configUsesFragmentOutbound(proxyOutbounds) ? [buildXrayFragmentOutbound()] : [];
 
   const config = {
@@ -17463,7 +17512,7 @@ function buildHappJsonConfig(client, lines, subscriptionName, routingEnabledForT
       routing: {
         domainStrategy: 'IPIfNonMatch',
         domainMatcher: 'hybrid',
-        rules: getEffectiveJsonRoutingRules(selectiveOutboundTag)
+        rules: getEffectiveJsonRoutingRules(selectiveOutboundTag, routingMode)
       }
     } : {}),
     stats: {},
@@ -17508,7 +17557,7 @@ function buildHappJsonConfig(client, lines, subscriptionName, routingEnabledForT
       }
     } : {})
   };
-  return normalizeXrayJsonForIos(config, selectiveOutboundTag);
+  return normalizeXrayJsonForIos(config, selectiveOutboundTag, routingMode);
 }
 
 app.get('/happ-routing/:slug', async (req, res) => {
@@ -17609,7 +17658,9 @@ app.get('/json/:slug', async (req, res) => {
           // CDN endpoint incompatible with its backend inbound.
           {
             preserveXhttpExtra: [NODE_TYPE_3XUI, NODE_TYPE_H1CLOUD_3XUI, NODE_TYPE_REMNAWAVE].includes(entry.nodeType),
-            selectiveProxyLine
+            selectiveProxyLine,
+            nodeId: Number(entry.nodeId || 0),
+            routingMode: getRoutingModeForNode(entry.nodeId)
           }
         ));
       }
@@ -17627,7 +17678,9 @@ app.get('/json/:slug', async (req, res) => {
     const selectiveProxyLine = String(entries.find(entry => Number(entry.nodeId) === selectiveProxyNodeId && String(entry.line).startsWith('vless://'))?.line || '');
     return res.json(buildHappJsonConfigFromLine(client, selectedEntry.line, subscriptionName, selectedIndex, selectedEntry.nodeType === 'notice' ? false : isRoutingEnabledForNode(selectedEntry.nodeId), {
       preserveXhttpExtra: [NODE_TYPE_3XUI, NODE_TYPE_H1CLOUD_3XUI, NODE_TYPE_REMNAWAVE].includes(selectedEntry.nodeType),
-      selectiveProxyLine
+      selectiveProxyLine,
+      nodeId: Number(selectedEntry.nodeId || 0),
+      routingMode: getRoutingModeForNode(selectedEntry.nodeId)
     }));
   }
 

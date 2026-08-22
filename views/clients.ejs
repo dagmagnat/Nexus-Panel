@@ -1091,14 +1091,14 @@
         <div class="client-summary-device-card"><span>Устройства</span><button type="button" class="client-device-count-link" title="Показать устройства клиента" aria-label="Показать устройства клиента" onclick="openModalById('deviceDetails-<%= client.id %>')"><strong><%= clientDeviceUsage(client) %></strong><small>Посмотреть</small></button></div>
         <div><span>Узлов</span><strong><%= clientAssignedNodes(client).length %></strong></div>
         <div class="client-summary-uuid"><span>UUID</span><code><%= client.uuid %></code></div>
-        <div>
+        <div class="client-summary-action-card client-summary-links-card">
           <span><%= canShowSubInEditor ? 'SUB / JSON' : 'JSON' %></span>
           <div class="client-summary-link-actions">
             <% if (canShowSubInEditor) { %><button type="button" class="btn-secondary compact-copy-btn" onclick="copySubLink('<%= baseUrl %>/sub-plain/<%= client.sub_slug %>', this)">SUB</button><% } %>
             <button type="button" class="btn-secondary compact-copy-btn" onclick="copySubLink('<%= baseUrl %>/json/<%= client.sub_slug %>?raw=1', this)"><%= canShowSubInEditor ? 'JSON' : 'Копировать JSON' %></button>
           </div>
         </div>
-        <div>
+        <div class="client-summary-action-card client-summary-qr-card">
           <span>QR</span>
           <div class="client-summary-link-actions">
             <% if (canShowSubInEditor) { %><button type="button" class="btn-secondary" onclick="showQr('<%= baseUrl %>/sub-plain/<%= client.sub_slug %>', '<%= client.login %> · Общая SUB')">SUB QR</button><% } %>

@@ -271,6 +271,7 @@
               <span>Осталось: <%= termText(client) %></span>
               <span>Истекает: <%= dateText(client.expiry_time) %></span>
             </div>
+            <button type="button" class="dashboard-expiry-devices" data-client-quick="<%= client.id %>" title="Показать устройства клиента"><span>Устройства</span><strong><%= Number(client.device_count || 0) %>/<%= Number(client.device_limit || 0) > 0 ? Number(client.device_limit) : '∞' %></strong></button>
             <form method="post" action="/clients/<%= client.id %>/extend" class="mini-extend-form js-long-action" data-loading-title="Продлеваю клиента" data-loading-text="Применяю новый срок на узлах клиента.">
               <input name="days" type="number" min="1" value="30" />
               <button type="submit" class="btn-secondary">Продлить</button>

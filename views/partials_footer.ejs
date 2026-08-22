@@ -819,11 +819,6 @@
   }
 
   async function openClientQuickCard(id){
-    const localEditor = document.getElementById('clientEditor-' + id);
-    if (localEditor && typeof window.openClientEditor === 'function') {
-      window.openClientEditor(id);
-      return false;
-    }
     const modal = ensureClientQuickModal();
     const bodyEl = modal.querySelector('[data-client-quick-body]');
     const pendingOnlineContext = window.__aggOnlineClientContext;
@@ -879,12 +874,18 @@
       const happLink = c.links && c.links.happ ? String(c.links.happ) : '';
       const openLink = c.links && c.links.open ? String(c.links.open) : '#';
       const editorLink = c.links && c.links.editor ? String(c.links.editor) : (c.links && c.links.search ? String(c.links.search) : '/clients');
-      const clientId = String(c.id || '').trim();
-      const backPath = location.pathname === '/dashboard' ? '/dashboard' : '/clients';
       const avatarLetter = String(c.login || c.title || 'U').trim().slice(0,1).toUpperCase() || 'U';
       const createdText = c.createdText || c.createdAt || '—';
       const connectedText = onlineContext ? 'Да' : (c.connectedNow ? 'Да' : 'Нет');
       const lastOnlineText = c.lastOnlineText || 'Нет данных';
+      const devices = Array.isArray(c.devices) ? c.devices : [];
+      const deviceLimitText = Number(c.deviceLimit || 0) > 0 ? String(c.deviceLimit) : '∞';
+      const devicesHtml = devices.length ? devices.map(function(device){
+        const title = [device.app_name, device.device_model].filter(Boolean).join(' · ') || ('Устройство ' + (device.slot || ''));
+        const system = [device.os_name, device.os_version].filter(Boolean).join(' ') || 'Система не определена';
+        const seen = device.last_seen_at ? new Date(device.last_seen_at).toLocaleString('ru-RU') : 'нет данных';
+        return '<span class="client-quick-device-chip"><b>' + htmlEscapeClientModal(title) + '</b><small>' + htmlEscapeClientModal(system) + ' · ' + htmlEscapeClientModal(seen) + '</small></span>';
+      }).join('') : '<span class="client-quick-device-chip empty">Устройства ещё не зарегистрированы</span>';
       bodyEl.innerHTML =
         '<div class="client-quick-hero">' +
           '<div class="client-quick-avatar">' + htmlEscapeClientModal(avatarLetter) + '</div>' +
@@ -894,12 +895,8 @@
         (c.comment ? '<div class="client-quick-comment">' + htmlEscapeClientModal(c.comment) + '</div>' : '') +
         '<div class="client-quick-note ' + htmlEscapeClientModal(c.statusKey || '') + '">' + htmlEscapeClientModal(c.statusText || '') + '</div>' +
         '<div class="client-quick-primary-actions">' +
-          '<a class="btn-main" href="' + htmlEscapeClientModal(editorLink) + '">Перейти к клиенту</a>' +
-          (clientId ? '<form method="post" action="/clients/' + encodeURIComponent(clientId) + '/extend" class="client-quick-renew-form js-long-action" data-loading-title="Продлеваю клиента" data-loading-text="Срок продлевается на узлах клиента.">' +
-            '<input type="hidden" name="back" value="' + htmlEscapeClientModal(backPath) + '">' +
-            '<input name="days" type="number" min="1" value="30" inputmode="numeric" aria-label="Количество дней продления">' +
-            '<button type="submit" class="btn-secondary">Продлить</button>' +
-          '</form>' : '') +
+          '<a class="btn-main" href="' + htmlEscapeClientModal(editorLink) + '">Редактировать клиента</a>' +
+          '<a class="btn-secondary" href="' + htmlEscapeClientModal(openLink) + '" target="_blank">Открыть подписку</a>' +
         '</div>' +
         '<div class="client-quick-section-title">Общая информация</div>' +
         '<div class="client-quick-info-grid">' +
@@ -914,15 +911,16 @@
           '<div><span>Трафик</span><strong>' + htmlEscapeClientModal(trafficText) + '</strong></div>' +
           '<div><span>Лимит дней</span><strong>' + htmlEscapeClientModal(c.durationDays || '∞') + '</strong></div>' +
           '<div><span>Лимит IP</span><strong>' + htmlEscapeClientModal(limitIpText) + '</strong></div>' +
+          '<div><span>Устройства</span><strong>' + htmlEscapeClientModal(devices.length) + ' / ' + htmlEscapeClientModal(deviceLimitText) + '</strong></div>' +
           '<div><span>' + (onlineContext ? 'Узлов онлайн сейчас' : 'Узлов') + '</span><strong>' + htmlEscapeClientModal(onlineContext ? cleanNodes.length : (c.nodeCount || 0)) + '</strong></div>' +
           '<div><span>Создан</span><strong>' + htmlEscapeClientModal(createdText) + '</strong></div>' +
           '<div><span>UUID</span><strong>' + htmlEscapeClientModal(c.uuid || '—') + '</strong></div>' +
         '</div>' +
         '<div class="client-quick-section-title">' + (onlineContext ? 'Узлы, где клиент онлайн сейчас' : 'Узлы') + '</div>' +
         '<div class="client-quick-nodes-grid">' + nodesHtml + '</div>' +
+        '<div class="client-quick-section-title">Устройства</div>' +
+        '<div class="client-quick-devices-grid">' + devicesHtml + '</div>' +
         '<div class="client-quick-actions modern">' +
-          '<a class="btn-secondary" href="' + htmlEscapeClientModal(openLink) + '" target="_blank">Открыть в панели</a>' +
-          '<form method="post" action="/clients/' + encodeURIComponent(String(c.id || '')) + '/toggle" class="client-quick-toggle-form js-long-action" onsubmit="return confirm(&quot;Изменить статус клиента?&quot;)"><button type="submit" class="btn-secondary danger-lite">' + (c.statusKey === 'offline' ? 'Включить' : 'Отключить') + '</button></form>' +
           (subLink ? '<button type="button" class="btn-main client-quick-copy-sub" data-copy-value="' + htmlEscapeClientModal(subLink) + '" onclick="copyClientText(this.dataset.copyValue, this)">Копировать SUB</button>' : '') +
           (jsonLink ? '<button type="button" class="btn-secondary client-quick-copy-json" data-copy-value="' + htmlEscapeClientModal(jsonLink) + '" onclick="copyClientText(this.dataset.copyValue, this)">Копировать JSON</button>' : '') +
           ((subLink || jsonLink || happLink) ? '<button type="button" class="btn-secondary client-quick-wide-action" data-client-link-title="' + htmlEscapeClientModal(c.login || c.title || '') + '" data-json-link="' + htmlEscapeClientModal(jsonLink) + '" data-sub-link="' + htmlEscapeClientModal(subLink) + '" data-happ-link="' + htmlEscapeClientModal(happLink) + '" onclick="openClientLinkPicker(this, &quot;qr&quot;)">Все ссылки и QR-коды</button>' : '') +
