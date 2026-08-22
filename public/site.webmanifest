@@ -6,19 +6,31 @@
   "scope": "/",
   "display": "standalone",
   "background_color": "#071126",
-  "theme_color": "#07173a",
+  "theme_color": "#071126",
   "icons": [
     {
-      "src": "/img/nexus-logo-192.png",
+      "src": "/img/nexus-icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
     },
     {
-      "src": "/img/nexus-logo-512.png",
+      "src": "/img/nexus-icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "/img/nexus-icon-maskable-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/img/nexus-icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
     }
   ]
 }
