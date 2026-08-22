@@ -23,6 +23,10 @@ test('Nexus Panel brand assets contain the expected web icon sizes', () => {
   assert.deepEqual(pngDimensions(readProjectFile('public/img/nexus-logo.png')), { width: 512, height: 512 });
   assert.deepEqual(pngDimensions(readProjectFile('public/img/nexus-logo-192.png')), { width: 192, height: 192 });
   assert.deepEqual(pngDimensions(readProjectFile('public/img/nexus-logo-512.png')), { width: 512, height: 512 });
+  assert.deepEqual(pngDimensions(readProjectFile('public/img/nexus-icon-192.png')), { width: 192, height: 192 });
+  assert.deepEqual(pngDimensions(readProjectFile('public/img/nexus-icon-512.png')), { width: 512, height: 512 });
+  assert.deepEqual(pngDimensions(readProjectFile('public/img/nexus-icon-maskable-192.png')), { width: 192, height: 192 });
+  assert.deepEqual(pngDimensions(readProjectFile('public/img/nexus-icon-maskable-512.png')), { width: 512, height: 512 });
   assert.deepEqual(pngDimensions(readProjectFile('public/apple-touch-icon.png')), { width: 180, height: 180 });
 
   const favicon = readProjectFile('public/favicon.ico');
@@ -35,7 +39,12 @@ test('manifest and every standalone page use the Nexus Panel logo', () => {
   const manifest = JSON.parse(readProjectFile('public/site.webmanifest').toString('utf8'));
   assert.equal(manifest.name, 'Nexus Panel');
   assert.equal(manifest.start_url, '/mobile-login');
-  assert.deepEqual(manifest.icons.map(icon => icon.sizes), ['192x192', '512x512']);
+  assert.deepEqual(manifest.icons.map(icon => [icon.sizes, icon.purpose]), [
+    ['192x192', 'any'],
+    ['512x512', 'any'],
+    ['192x192', 'maskable'],
+    ['512x512', 'maskable']
+  ]);
 
   for (const view of ['views/partials_header.ejs', 'views/login.ejs', 'views/open_sub.ejs']) {
     const source = readProjectFile(view).toString('utf8');

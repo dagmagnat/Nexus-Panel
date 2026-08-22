@@ -292,7 +292,7 @@
           <% } %>
 
           <% if (currentNet === 'xhttp') { %>
-          <div id="xhttpSettingsBox" class="xhttp-settings-box">
+          <div id="xhttpSettingsBox" class="xhttp-settings-box form-grid xhttp-settings-grid">
             <div class="field half"><label>XHTTP mode</label><input name="inbound_xhttp_mode" value="<%= inboundPreview.xhttpMode || 'stream-one' %>" placeholder="stream-one" /></div>
             <div class="field half"><label>XHTTP legacy posts / bytes / interval (необязательно)</label><input name="inbound_xhttp_sc" value="<%= [inboundPreview.scMaxConcurrentPosts ?? '', inboundPreview.scMaxEachPostBytes ?? '', inboundPreview.scMinPostsIntervalMs ?? ''].join(', ') %>" placeholder="пусто; либо 0, 500000-1000000, 10-50" /></div>
             <div class="field">

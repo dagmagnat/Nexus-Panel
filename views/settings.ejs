@@ -238,7 +238,7 @@
 
             <div class="field happ-help-source" data-help-title="Шаблон инфо-блока" data-help-text="Можно использовать {login}, {display_name}, {device_usage}, {device_count}, {device_limit}, {limit_ip}, {traffic_usage}, {days_left}, {expiry_date}, {support_note}. Старый {ip_usage} сохранён как синоним {device_usage}.">
               <label>Шаблон инфо-блока</label>
-              <textarea name="subscription_happ_info_template" rows="4" placeholder="👤 Логин: {login}&#10;📱 Устройства: {device_usage}&#10;{support_note}"><%= subscriptionHappInfoTemplate || '' %></textarea>
+              <textarea name="subscription_happ_info_template" rows="4" placeholder="👤 Логин: {login}&#10;📱 Устройства: {device_usage}&#10;📊 Трафик: {traffic_usage}&#10;{support_note}"><%= subscriptionHappInfoTemplate || '' %></textarea>
             </div>
 
             <div class="field half happ-help-source" data-help-title="Цвет инфо-блока" data-help-text="Цвет карточки sub-info в Happ, если версия приложения поддерживает расширенный инфо-блок.">

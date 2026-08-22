@@ -227,40 +227,17 @@
     <div class="section-title-row traffic-report-title">
       <div>
         <h2>Кто больше всего потратил трафика</h2>
-        <p class="muted">Помогает найти подозрительного или слишком активного клиента. Это общий накопленный расход по данным 3x-ui/Xray, сгруппированный по клиенту и узлам.</p>
+        <p class="muted">Расход всех клиентов за выбранный период. Нажмите на клиента, чтобы увидеть разбивку по узлам.</p>
       </div>
-      <span class="count-chip"><%= topClientUsageRows ? topClientUsageRows.length : 0 %></span>
+      <span class="count-chip" id="topUsageCount"><%= topClientUsageRows ? topClientUsageRows.length : 0 %></span>
     </div>
-    <% if (!topClientUsageRows || !topClientUsageRows.length) { %>
-      <p class="muted">Пока нет данных по расходу клиентов.</p>
-    <% } else { %>
-      <div class="top-usage-list paged-list" data-page-size="6">
-        <% topClientUsageRows.forEach(item => { %>
-          <div class="top-usage-item <%= Number(item.enabled) === 1 ? '' : 'muted-row' %>">
-            <div class="top-usage-head">
-              <div>
-                <strong><button type="button" class="client-inline-link" data-client-quick="<%= item.clientId %>"><%= item.displayName || item.login %></button></strong>
-                <small><%= item.comment && item.comment !== item.displayName ? item.comment : item.login %></small>
-              </div>
-              <span class="count-chip"><%= item.totalText %></span>
-            </div>
-            <div class="top-usage-grid">
-              <div><span>Скачано</span><strong><%= item.downloadText %></strong></div>
-              <div><span>Загружено</span><strong><%= item.uploadText %></strong></div>
-              <div><span>Всего</span><strong><%= item.totalText %></strong></div>
-              <div><span>Узлов</span><strong><%= item.nodeCount %></strong></div>
-            </div>
-            <% if (item.nodes && item.nodes.length) { %>
-              <div class="live-node-tags">
-                <% item.nodes.forEach(n => { %>
-                  <span><%- flagImg(n.country_code, n.country_flag, n.country_name_ru || n.name, n.node_type) %><%= n.title %> · <%= n.totalText %></span>
-                <% }) %>
-              </div>
-            <% } %>
-          </div>
-        <% }) %>
-      </div>
-    <% } %>
+    <div class="top-usage-toolbar">
+      <label><span>Период</span><select id="topUsagePeriod"><option value="day">За день</option><option value="three_days">За 3 дня</option><option value="week" selected>За 7 дней</option><option value="month">За месяц</option></select></label>
+      <label class="dashboard-inline-search"><span aria-hidden="true">⌕</span><input id="topUsageSearch" type="search" placeholder="Клиент, логин или ID" autocomplete="off" /></label>
+      <button type="button" class="btn-secondary" id="topUsageRefresh">Обновить</button>
+    </div>
+    <div id="topUsageStatus" class="hint"></div>
+    <div class="top-usage-list" id="topUsageList"></div>
   </section>
 
   <section class="card span-12 tab-panel is-active" data-tab-panel="expiry">
@@ -329,6 +306,13 @@
   <div class="modal-card editor-modal online-client-detail-card" onclick="event.stopPropagation()">
     <button type="button" class="modal-close" onclick="hideDashboardModal('onlineClientDetailModal')">×</button>
     <div id="onlineClientDetailBody"></div>
+  </div>
+</div>
+
+<div id="topUsageDetailModal" class="modal hidden" onclick="closeDashboardModal(event, 'topUsageDetailModal')">
+  <div class="modal-card editor-modal top-usage-detail-modal" onclick="event.stopPropagation()">
+    <button type="button" class="modal-close" onclick="hideDashboardModal('topUsageDetailModal')">×</button>
+    <div id="topUsageDetailBody"></div>
   </div>
 </div>
 
@@ -446,6 +430,74 @@ function renderNodeTitle(row) {
   const base = row.country_name_ru || row.nodeName || row.node_name || 'Узел';
   if (!suffixRaw) return base;
   return /^\d+$/.test(suffixRaw) ? `${base}-${suffixRaw}` : `${base} / ${suffixRaw}`;
+}
+
+let topUsageReport = <%- JSON.stringify(topClientUsageReport || { period: 'week', periodLabel: 'за 7 дней', rows: [] }).replace(/</g, '\\u003c') %>;
+const topUsageRowsById = new Map();
+function renderTopUsageReport(report) {
+  topUsageReport = report || { period: 'week', periodLabel: 'за 7 дней', rows: [] };
+  const rows = Array.isArray(topUsageReport.rows) ? topUsageReport.rows : [];
+  const list = document.getElementById('topUsageList');
+  const count = document.getElementById('topUsageCount');
+  const status = document.getElementById('topUsageStatus');
+  const query = String(document.getElementById('topUsageSearch')?.value || '').toLocaleLowerCase('ru-RU').trim();
+  topUsageRowsById.clear();
+  rows.forEach(row => topUsageRowsById.set(String(row.clientId), row));
+  const visible = rows.filter(row => !query || [row.clientId, row.login, row.displayName, row.comment].join(' ').toLocaleLowerCase('ru-RU').includes(query));
+  if (count) count.textContent = String(visible.length);
+  if (status) {
+    const historyNote = topUsageReport.hasCompleteHistory === false ? ' · история за весь период ещё накапливается' : '';
+    const errors = Array.isArray(topUsageReport.errors) && topUsageReport.errors.length ? ` · ошибок узлов: ${topUsageReport.errors.length}` : '';
+    status.textContent = `${topUsageReport.periodLabel || ''}: клиентов ${rows.length}${historyNote}${errors}`;
+  }
+  if (!list) return;
+  if (!visible.length) {
+    list.innerHTML = '<div class="empty-state">Клиенты или данные трафика не найдены.</div>';
+    return;
+  }
+  list.innerHTML = visible.map((item, index) => `
+    <button type="button" class="top-usage-item top-usage-item-button ${Number(item.enabled) === 1 ? '' : 'muted-row'}" data-top-usage-client="${escapeHtml(item.clientId)}">
+      <span class="top-usage-rank">${index + 1}</span>
+      <span class="top-usage-identity"><strong>${escapeHtml(item.displayName || item.login || '-')}</strong><small>${escapeHtml(item.comment && item.comment !== item.displayName ? item.comment : item.login || `ID ${item.clientId}`)}</small></span>
+      <span class="top-usage-total"><strong>${escapeHtml(item.totalText || '0 Б')}</strong><small>${escapeHtml(item.nodeCount || 0)} узл.</small></span>
+      <span class="top-usage-chevron" aria-hidden="true">›</span>
+    </button>`).join('');
+  list.querySelectorAll('[data-top-usage-client]').forEach(button => button.addEventListener('click', () => openTopUsageDetail(button.dataset.topUsageClient)));
+}
+function openTopUsageDetail(clientId) {
+  const item = topUsageRowsById.get(String(clientId));
+  const body = document.getElementById('topUsageDetailBody');
+  if (!item || !body) return;
+  const nodes = Array.isArray(item.nodes) ? item.nodes : [];
+  const nodesHtml = nodes.length ? nodes.map(node => `
+    <div class="top-usage-node-row">
+      <div class="top-usage-node-title">${renderFlag(node.countryCode, node.countryFlag, node.nodeType)}<span><strong>${escapeHtml(node.title || 'Узел')}</strong><small>↓ ${escapeHtml(node.downloadText || '0 Б')} · ↑ ${escapeHtml(node.uploadText || '0 Б')}</small></span></div>
+      <strong>${escapeHtml(node.totalText || '0 Б')}</strong>
+    </div>`).join('') : '<div class="empty-state">У клиента нет назначенных узлов.</div>';
+  body.innerHTML = `
+    <div class="top-usage-detail-head"><span class="top-usage-rank">#${escapeHtml(item.clientId)}</span><div><h2>${escapeHtml(item.displayName || item.login || 'Клиент')}</h2><p>${escapeHtml(item.comment || item.login || '')}</p></div></div>
+    <p class="muted">Расход ${escapeHtml(topUsageReport.periodLabel || 'за выбранный период')}</p>
+    <div class="top-usage-grid top-usage-detail-totals"><div><span>Скачано</span><strong>${escapeHtml(item.downloadText || '0 Б')}</strong></div><div><span>Загружено</span><strong>${escapeHtml(item.uploadText || '0 Б')}</strong></div><div><span>Всего</span><strong>${escapeHtml(item.totalText || '0 Б')}</strong></div><div><span>Узлов</span><strong>${escapeHtml(item.nodeCount || 0)}</strong></div></div>
+    ${item.complete === false ? '<div class="alert ok">Полная история за этот период ещё накапливается; показан расход с первого доступного снимка.</div>' : ''}
+    <h3>Расход по узлам</h3><div class="top-usage-node-list">${nodesHtml}</div>`;
+  openDashboardModal('topUsageDetailModal');
+}
+async function refreshTopUsageReport(forceRefresh = true) {
+  const period = document.getElementById('topUsagePeriod')?.value || 'week';
+  const button = document.getElementById('topUsageRefresh');
+  const status = document.getElementById('topUsageStatus');
+  try {
+    if (button) button.disabled = true;
+    if (status) status.textContent = 'Обновляю счётчики клиентов на узлах…';
+    const response = await fetch(`/dashboard/top-client-usage.json?period=${encodeURIComponent(period)}&refresh=${forceRefresh ? '1' : '0'}`, { headers: { Accept: 'application/json' }, cache: 'no-store' });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || 'Не удалось получить расход клиентов');
+    renderTopUsageReport(data);
+  } catch (err) {
+    if (status) status.textContent = 'Ошибка: ' + String(err.message || err);
+  } finally {
+    if (button) button.disabled = false;
+  }
 }
 function renderLiveTraffic(data) {
   const list = document.getElementById('liveTrafficList');
@@ -572,8 +624,7 @@ function renderOnlineClients(data) {
     return `
       <div class="dashboard-client-card online-client-card online-client-row online-client-card-v2">
         <span class="online-client-live-dot" title="Сейчас в сети" aria-label="Сейчас в сети"></span>
-        <div class="online-client-main-v4"><strong class="online-client-login-v4">${escapeHtml(client.login || client.display_name || '-')}</strong><small class="online-client-comment-v4">${escapeHtml(comment || 'Без комментария')}</small></div>
-        <span class="online-client-expiry-v4">до ${escapeHtml(until)}</span>
+        <div class="online-client-main-v4"><strong class="online-client-login-v4">${escapeHtml(client.login || client.display_name || '-')}</strong><small class="online-client-comment-v4">${escapeHtml(comment || 'Без комментария')}</small><span class="online-client-expiry-v4">до ${escapeHtml(until)}</span></div>
         <div class="online-node-preview-list" aria-label="Узлы клиента">${onlineNodePreviewHtml(client)}</div>
         <button type="button" class="online-details-toggle online-details-toggle-v4" data-online-client-index="${index}" ${clientId ? `data-open-online-client="${escapeHtml(clientId)}" data-online-client-id="${escapeHtml(clientId)}"` : `data-open-online-client-fallback="1" data-online-client-detail="${escapeAttrJson(client)}"`}>Подробнее</button>
       </div>`;
@@ -960,6 +1011,14 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('openOnlineClientsFromStat')?.addEventListener('click', openOnlineClientsWorkspace);
   document.getElementById('openExpiryFromStat')?.addEventListener('click', openExpiryWorkspace);
   document.getElementById('onlineRefreshBtn')?.addEventListener('click', refreshOnlineClients);
+  const topUsagePeriod = document.getElementById('topUsagePeriod');
+  if (topUsagePeriod) topUsagePeriod.value = topUsageReport.period || 'week';
+  document.getElementById('topUsageRefresh')?.addEventListener('click', () => refreshTopUsageReport(true));
+  // Switching a stored period must be instant even when one of the nodes is
+  // offline. A remote poll is reserved for the explicit Refresh button.
+  topUsagePeriod?.addEventListener('change', () => refreshTopUsageReport(false));
+  document.getElementById('topUsageSearch')?.addEventListener('input', () => renderTopUsageReport(topUsageReport));
+  renderTopUsageReport(topUsageReport);
   const onlineAuto = document.getElementById('onlineAutoRefresh');
   const onlineInterval = document.getElementById('onlineRefreshInterval');
   onlineAuto?.addEventListener('change', configureOnlineClientsAutoRefresh);
@@ -1002,7 +1061,7 @@ function normalizeDashboardSearchText(value) {
     const rows = Array.from(list.children).filter(el => el.classList && el.classList.contains('dashboard-client-card'));
     rows.forEach(row => {
       const dayValue = exactDays(row);
-      const searchMatches = (!query || normalizeDashboardSearchText(row.dataset.searchText || '').includes(query)) && dayValue <= rangeDays;
+      const searchMatches = (!query || normalizeDashboardSearchText(row.dataset.searchText || '').includes(query)) && dayValue >= 0 && dayValue <= rangeDays;
       // У старых слоёв CSS у карточки есть display с !important, поэтому одного
       // inline-style недостаточно: используем отдельный класс и hidden.
       row.classList.toggle('is-expiry-search-hidden', !searchMatches);

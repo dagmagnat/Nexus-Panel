@@ -1469,7 +1469,7 @@ function initDb() {
     ['subscription_show_empty_limits', '0'],
     ['subscription_revision', '1'],
     ['subscription_happ_info_enabled', '1'],
-    ['subscription_happ_info_template', '👤 Логин: {login}\n📱 Устройства: {device_usage}\n\n{support_note}'],
+    ['subscription_happ_info_template', '👤 Логин: {login}\n📱 Устройства: {device_usage}\n📊 Трафик: {traffic_usage}\n\n{support_note}'],
     ['subscription_happ_info_announce_fallback_enabled', '1'],
     ['subscription_happ_info_color', 'blue'],
     ['subscription_happ_info_button_text', 'Поддержка'],
@@ -1581,6 +1581,7 @@ const vpnManager = createVpnManager({ db, appSecret: APP_SECRET, encrypt, decryp
 ensureMissingAppSettings();
 migrateOfficialRepositorySetting();
 repairStage103HappMetadataRegression();
+repairHappTrafficInfoTemplate();
 applyHappSafeDefaultMigration();
 syncDeploymentPublicUrlSettings();
 initializePanelAccessKeyEnvironmentState();
@@ -2296,7 +2297,7 @@ function isHappInfoAnnounceFallbackEnabled() {
 function getHappInfoTemplate() {
   return String(getSetting(
     'subscription_happ_info_template',
-    '👤 Логин: {login}\n📱 Устройства: {device_usage}\n\n{support_note}'
+    '👤 Логин: {login}\n📱 Устройства: {device_usage}\n📊 Трафик: {traffic_usage}\n\n{support_note}'
   ) || '').trim();
 }
 
@@ -2971,6 +2972,23 @@ function repairStage103HappMetadataRegression() {
   return true;
 }
 
+function repairHappTrafficInfoTemplate() {
+  const current = String(getSetting('subscription_happ_info_template', '') || '').trim();
+  if (!current || current.includes('{traffic_usage}')) return false;
+
+  const builtInTemplates = new Set([
+    '👤 Логин: {login}\n📱 Устройства: {device_usage}\n\n{support_note}',
+    '👤Логин: {login}\n📱Количество устройств: {ip_usage}\n{support_note}'
+  ]);
+  if (!builtInTemplates.has(current)) return false;
+
+  const supportLine = current.includes('\n\n{support_note}') ? '\n\n{support_note}' : '\n{support_note}';
+  const next = current.replace(supportLine, `\n📊 Трафик: {traffic_usage}${supportLine}`);
+  setSetting('subscription_happ_info_template', next);
+  bumpSubscriptionRevision();
+  return true;
+}
+
 function parseGbThreshold(value, fallback = 100) {
   const n = Number(value);
   return Number.isFinite(n) && n >= 0 ? n : fallback;
@@ -2992,7 +3010,7 @@ function ensureMissingAppSettings() {
     ['subscription_show_empty_limits', '0'],
     ['subscription_revision', '1'],
     ['subscription_happ_info_enabled', '1'],
-    ['subscription_happ_info_template', '👤 Логин: {login}\n📱 Устройства: {device_usage}\n\n{support_note}'],
+    ['subscription_happ_info_template', '👤 Логин: {login}\n📱 Устройства: {device_usage}\n📊 Трафик: {traffic_usage}\n\n{support_note}'],
     ['subscription_happ_info_announce_fallback_enabled', '1'],
     ['subscription_happ_info_color', 'blue'],
     ['subscription_happ_info_button_text', 'Поддержка'],
@@ -10663,6 +10681,186 @@ function getTopClientUsageReport(limit = 20) {
   });
 }
 
+const TOP_CLIENT_USAGE_PERIODS = Object.freeze({
+  day: { days: 1, label: 'за 24 часа' },
+  three_days: { days: 3, label: 'за 3 дня' },
+  week: { days: 7, label: 'за 7 дней' },
+  month: { days: 30, label: 'за 30 дней' }
+});
+
+function getTopClientUsagePeriod(value) {
+  const key = String(value || 'week').trim();
+  return Object.prototype.hasOwnProperty.call(TOP_CLIENT_USAGE_PERIODS, key) ? key : 'week';
+}
+
+function summarizeClientCounterSeries(rows) {
+  let uploadBytes = 0;
+  let downloadBytes = 0;
+  let usedBytes = 0;
+  let previous = null;
+
+  for (const row of rows || []) {
+    if (!previous) {
+      previous = row;
+      continue;
+    }
+
+    const previousUpload = clampByteNumber(previous.upload_bytes || 0);
+    const previousDownload = clampByteNumber(previous.download_bytes || 0);
+    const previousUsed = clampByteNumber(previous.used_bytes || previousUpload + previousDownload);
+    const currentUpload = clampByteNumber(row.upload_bytes || 0);
+    const currentDownload = clampByteNumber(row.download_bytes || 0);
+    const currentUsed = clampByteNumber(row.used_bytes || currentUpload + currentDownload);
+
+    // Xray/3x-ui can reset counters after a restart or quota reset. In that
+    // case the new counter value is traffic accumulated after the reset.
+    const uploadDelta = currentUpload >= previousUpload ? currentUpload - previousUpload : currentUpload;
+    const downloadDelta = currentDownload >= previousDownload ? currentDownload - previousDownload : currentDownload;
+    const usedDelta = currentUsed >= previousUsed ? currentUsed - previousUsed : currentUsed;
+
+    uploadBytes += uploadDelta;
+    downloadBytes += downloadDelta;
+    usedBytes += usedDelta || uploadDelta + downloadDelta;
+    previous = row;
+  }
+
+  return {
+    uploadBytes: clampByteNumber(uploadBytes),
+    downloadBytes: clampByteNumber(downloadBytes),
+    usedBytes: clampByteNumber(usedBytes || uploadBytes + downloadBytes)
+  };
+}
+
+function buildTopClientPeriodUsageReport(period = 'week', limit = 500) {
+  const safePeriod = getTopClientUsagePeriod(period);
+  const meta = TOP_CLIENT_USAGE_PERIODS[safePeriod];
+  const nowMs = Date.now();
+  const startMs = nowMs - meta.days * 24 * 60 * 60 * 1000;
+  const maxRows = Math.min(Math.max(Number(limit || 500), 1), 1000);
+  const clients = db.prepare(`
+    SELECT id, login, display_name, comment, enabled
+    FROM clients
+    ORDER BY id ASC
+  `).all();
+  const mappings = db.prepare(`
+    SELECT
+      cn.client_id,
+      cn.node_id,
+      cn.upload_bytes,
+      cn.download_bytes,
+      cn.used_bytes,
+      n.name,
+      n.node_type,
+      n.country_code,
+      n.country_name_ru,
+      n.country_flag,
+      n.label_suffix
+    FROM client_nodes cn
+    JOIN nodes n ON n.id = cn.node_id
+    ORDER BY cn.client_id ASC, ${nodeOrderSql('n')}
+  `).all();
+  const mappingsByClient = new Map();
+  for (const mapping of mappings) {
+    const key = Number(mapping.client_id);
+    const list = mappingsByClient.get(key) || [];
+    list.push(mapping);
+    mappingsByClient.set(key, list);
+  }
+
+  const getBaseline = db.prepare(`
+    SELECT upload_bytes, download_bytes, used_bytes, created_at_ms
+    FROM client_traffic_snapshots
+    WHERE client_id = ? AND node_id = ? AND created_at_ms <= ?
+    ORDER BY created_at_ms DESC
+    LIMIT 1
+  `);
+  const getPeriodSnapshots = db.prepare(`
+    SELECT upload_bytes, download_bytes, used_bytes, created_at_ms
+    FROM client_traffic_snapshots
+    WHERE client_id = ? AND node_id = ? AND created_at_ms > ? AND created_at_ms <= ?
+    ORDER BY created_at_ms ASC
+  `);
+
+  const resultRows = clients.map(client => {
+    let complete = true;
+    let observedFromMs = 0;
+    const nodes = (mappingsByClient.get(Number(client.id)) || []).map(mapping => {
+      const baseline = getBaseline.get(client.id, mapping.node_id, startMs) || null;
+      const snapshots = getPeriodSnapshots.all(client.id, mapping.node_id, startMs, nowMs);
+      const series = baseline ? [baseline, ...snapshots] : [...snapshots];
+      if (!baseline) complete = false;
+      if (series.length) {
+        const firstMs = Number(series[0].created_at_ms || 0);
+        if (firstMs > 0 && (!observedFromMs || firstMs < observedFromMs)) observedFromMs = firstMs;
+      }
+
+      const current = {
+        upload_bytes: clampByteNumber(mapping.upload_bytes || 0),
+        download_bytes: clampByteNumber(mapping.download_bytes || 0),
+        used_bytes: clampByteNumber(mapping.used_bytes || 0),
+        created_at_ms: nowMs
+      };
+      const latest = series[series.length - 1];
+      if (!latest ||
+          clampByteNumber(latest.upload_bytes) !== current.upload_bytes ||
+          clampByteNumber(latest.download_bytes) !== current.download_bytes ||
+          clampByteNumber(latest.used_bytes) !== current.used_bytes) {
+        series.push(current);
+      }
+
+      const summary = summarizeClientCounterSeries(series);
+      return {
+        id: Number(mapping.node_id),
+        title: getNodeDisplayName(mapping),
+        nodeType: String(mapping.node_type || ''),
+        countryCode: String(mapping.country_code || ''),
+        countryName: String(mapping.country_name_ru || ''),
+        countryFlag: getNodeFlag(mapping),
+        uploadBytes: summary.uploadBytes,
+        downloadBytes: summary.downloadBytes,
+        usedBytes: summary.usedBytes,
+        uploadText: formatTrafficBytes(summary.uploadBytes),
+        downloadText: formatTrafficBytes(summary.downloadBytes),
+        totalText: formatTrafficBytes(summary.usedBytes),
+        hasBaseline: Boolean(baseline)
+      };
+    });
+
+    const uploadBytes = nodes.reduce((sum, node) => sum + node.uploadBytes, 0);
+    const downloadBytes = nodes.reduce((sum, node) => sum + node.downloadBytes, 0);
+    const usedBytes = nodes.reduce((sum, node) => sum + node.usedBytes, 0);
+    return {
+      clientId: Number(client.id),
+      login: String(client.login || ''),
+      displayName: String(client.display_name || client.login || ''),
+      comment: String(client.comment || ''),
+      enabled: Number(client.enabled || 0),
+      uploadBytes,
+      downloadBytes,
+      usedBytes,
+      uploadText: formatTrafficBytes(uploadBytes),
+      downloadText: formatTrafficBytes(downloadBytes),
+      totalText: formatTrafficBytes(usedBytes),
+      nodeCount: nodes.length,
+      nodes: nodes.sort((a, b) => b.usedBytes - a.usedBytes || a.id - b.id),
+      complete,
+      observedFromMs
+    };
+  }).sort((a, b) => b.usedBytes - a.usedBytes || b.downloadBytes - a.downloadBytes || a.clientId - b.clientId)
+    .slice(0, maxRows);
+
+  return {
+    period: safePeriod,
+    periodLabel: meta.label,
+    days: meta.days,
+    startMs,
+    generatedAt: new Date(nowMs).toISOString(),
+    rows: resultRows,
+    totalClients: resultRows.length,
+    hasCompleteHistory: resultRows.every(row => row.complete)
+  };
+}
+
 async function ensureAggregatorClientOnNode(node, client, opts = {}) {
   if (isRemnawaveNode(node)) return ensureRemnawaveUserOnNode(node, client, opts);
   if (isH1CloudNode(node)) return ensureH1CloudClientOnNode(node, client, opts);
@@ -12711,6 +12909,19 @@ app.get('/dashboard/online-clients.json', requireAuth, async (req, res) => {
   }
 });
 
+app.get('/dashboard/top-client-usage.json', requireAuth, async (req, res) => {
+  try {
+    const refresh = String(req.query.refresh || '1') !== '0';
+    let refreshResult = { errors: [] };
+    if (refresh) refreshResult = await refreshAllClientUsageFromNodes();
+    const report = buildTopClientPeriodUsageReport(req.query.period, 500);
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ ok: true, ...report, errors: refreshResult.errors || [] });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: String(err.message || err), rows: [] });
+  }
+});
+
 
 app.get('/diagnostics', requireAuth, async (req, res) => {
   try {
@@ -12772,7 +12983,8 @@ app.get('/dashboard', requireAuth, async (req, res) => {
   const trafficReport = buildTrafficReport(req.query.traffic_period, req.query.traffic_metric);
   const nodeTrafficReport = buildNodeTrafficReport(req.query.traffic_period, req.query.traffic_metric);
   const liveClientTrafficReport = buildLiveClientTrafficReport(10, 0.1);
-  const topClientUsageRows = getTopClientUsageReport(20);
+  const topClientUsageReport = buildTopClientPeriodUsageReport(req.query.top_period, 500);
+  const topClientUsageRows = topClientUsageReport.rows;
   const dashboardHealth = buildHealthOverview();
   const redirectStatus = (() => {
     try { return getRedirectStatus(); } catch (err) { return { ok: false, message: String(err.message || err) }; }
@@ -12784,6 +12996,7 @@ app.get('/dashboard', requireAuth, async (req, res) => {
     trafficReport,
     nodeTrafficReport,
     liveClientTrafficReport,
+    topClientUsageReport,
     topClientUsageRows,
     dashboardHealth,
     redirectStatus,
@@ -14061,6 +14274,7 @@ function restoreBackupPayload(payload) {
   ensureMissingAppSettings();
   migrateSubscriptionDeviceLimitsOnce();
   repairStage103HappMetadataRegression();
+  repairHappTrafficInfoTemplate();
   backfillSchemaDefaults();
   seedDefaultSniProfiles();
 }

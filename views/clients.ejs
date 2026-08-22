@@ -1078,9 +1078,10 @@
 %>
   <div id="clientEditor-<%= client.id %>" class="modal hidden client-editor-shell" onclick="closeClientEditor(event, <%= client.id %>)">
     <div class="modal-card editor-modal client-editor-modal existing-client-editor-modal" onclick="event.stopPropagation()">
-      <button type="button" class="modal-close" onclick="event.preventDefault(); event.stopPropagation(); hideClientEditor(<%= client.id %>); return false;">×</button>
-      <h2>Клиент: <%= compactTitle(client) %></h2>
-      <p class="muted">Подробная информация и редактор клиента в одном окне.</p>
+      <div class="client-editor-header">
+        <div><h2>Клиент: <%= compactTitle(client) %></h2><p class="muted">Подробная информация и редактор клиента в одном окне.</p></div>
+        <button type="button" class="modal-close" onclick="event.preventDefault(); event.stopPropagation(); hideClientEditor(<%= client.id %>); return false;">×</button>
+      </div>
       <div class="client-detail-summary client-editor-summary">
         <div class="client-summary-id"><span>ID</span><strong><%= client.id %></strong></div>
         <div><span>Статус</span><strong class="badge <%= clientStatusMeta(client).key %>"><%= clientStatusMeta(client).label %></strong></div>
@@ -1131,7 +1132,14 @@
           </div>
           <div class="field half">
             <label>Метки</label>
-            <div class="client-label-picker"><% if (!clientTags.length) { %><small class="hint">Метки ещё не созданы.</small><% } %><% clientTags.forEach(tag => { const selected = (client.tags || []).some(item => Number(item.id) === Number(tag.id)); %><label><input type="checkbox" name="tag_ids" value="<%= tag.id %>" <%= selected ? 'checked' : '' %>><span class="client-tag-chip" style="--chip-color:<%= tag.color %>"><%= tag.name %></span></label><% }) %></div>
+            <% const selectedTagCount = (client.tags || []).length; %>
+            <details class="client-tag-multiselect" data-tag-multiselect>
+              <summary><span data-tag-multiselect-summary><%= selectedTagCount ? 'Выбрано: ' + selectedTagCount : 'Без меток' %></span><span aria-hidden="true">⌄</span></summary>
+              <div class="client-tag-options">
+                <% if (!clientTags.length) { %><small class="hint">Метки ещё не созданы.</small><% } %>
+                <% clientTags.forEach(tag => { const selected = (client.tags || []).some(item => Number(item.id) === Number(tag.id)); %><label><input type="checkbox" name="tag_ids" value="<%= tag.id %>" <%= selected ? 'checked' : '' %>><span class="client-tag-chip" style="--chip-color:<%= tag.color %>"><%= tag.name %></span></label><% }) %>
+              </div>
+            </details>
           </div>
           <div class="field half">
             <label>Лимит IP / устройств</label>
@@ -1944,6 +1952,19 @@ function openLimitDetails(id) { document.getElementById('limitDetails-' + id)?.c
 function hideLimitDetails(id) { document.getElementById('limitDetails-' + id)?.classList.add('hidden'); }
 function closeLimitDetails(e, id) { if (e.target.id === 'limitDetails-' + id) hideLimitDetails(id); }
 
+function setupClientTagMultiselects() {
+  document.querySelectorAll('[data-tag-multiselect]').forEach(details => {
+    const summary = details.querySelector('[data-tag-multiselect-summary]');
+    const boxes = Array.from(details.querySelectorAll('input[type="checkbox"][name="tag_ids"]'));
+    const update = () => {
+      const selected = boxes.filter(box => box.checked);
+      if (summary) summary.textContent = selected.length ? `Выбрано: ${selected.length}` : 'Без меток';
+    };
+    boxes.forEach(box => box.addEventListener('change', update));
+    update();
+  });
+}
+
 function setClientNodeSelection(button, checked) {
   const form = button && button.closest ? button.closest('form') : null;
   if (!form) return false;
@@ -2139,6 +2160,7 @@ function setupClientOnlineAutoRefresh() {
 
 document.addEventListener('DOMContentLoaded', () => {
   setupMobileClientFilters();
+  setupClientTagMultiselects();
   setupClientOverviewShortcuts();
   setupClientOnlineAutoRefresh();
   refreshClientOnlineSummary();

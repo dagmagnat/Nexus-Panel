@@ -378,6 +378,11 @@
                   <span class="node-row-chevron" aria-hidden="true">›</span>
                   <span class="node-mobile-edit-hint" aria-hidden="true">Изменить</span>
                 </button>
+                <div class="node-mobile-quick-actions" aria-label="Действия с узлом" onclick="event.stopPropagation()">
+                  <form method="post" action="/nodes/<%= node.id %>/check" class="inline-form js-long-action" data-loading-title="Проверяю узел" data-loading-text="Проверяю доступность узла."><button type="submit" class="secondary">Проверить</button></form>
+                  <form method="post" action="/nodes/<%= node.id %>/toggle" class="inline-form" onsubmit="return confirm('<%= isEnabled ? 'Отключить узел из подписок?' : 'Включить узел обратно в подписки?' %>')"><button type="submit" class="secondary <%= isEnabled ? 'danger-lite' : '' %>"><%= isEnabled ? 'Отключить' : 'Включить' %></button></form>
+                  <a href="/nodes/<%= node.id %>/edit" class="link-btn secondary">Изменить</a>
+                </div>
                 <div class="node-mobile-order-controls" aria-label="Изменить порядок узла">
                   <button type="button" class="secondary mobile-order-btn" data-mobile-move="up" title="Поднять выше">↑</button>
                   <button type="button" class="secondary mobile-order-btn" data-mobile-move="down" title="Опустить ниже">↓</button>
