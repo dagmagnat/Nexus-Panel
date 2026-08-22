@@ -286,7 +286,7 @@
                   </div>
                   <div class="json-node-picker-list">
                     <% subscriptionPolicyNodes.forEach(node => { %>
-                      <label><input type="checkbox" name="json_<%= key %>_node_ids" value="<%= node.id %>" <%= selectedIds.map(Number).includes(Number(node.id)) ? 'checked' : '' %> /><span><%- flagHtml(node.country_code, node.country_flag, node.country_name_ru || node.name) %><%= node.country_name_ru || node.name %></span></label>
+                      <label><input type="checkbox" name="json_<%= key %>_node_ids" value="<%= node.id %>" <%= selectedIds.map(Number).includes(Number(node.id)) ? 'checked' : '' %> /><span><span class="json-node-flag" aria-hidden="true"><%= countryFlagText(node.country_code, node.country_flag, node.country_name_ru || node.name) || '🌐' %></span><%= node.country_name_ru || node.name %></span></label>
                     <% }) %>
                   </div>
                 </div>

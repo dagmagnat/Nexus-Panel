@@ -50,6 +50,8 @@ test('2.7.1 applies JSON controls and routing modes to explicit non-overlapping 
   assert.match(app, /json_mux_node_ids/);
   assert.match(app, /json_sniffing_node_ids/);
   assert.match(settings, /data-json-node-picker/);
+  assert.doesNotMatch(settings, /flagHtml\(/);
+  assert.match(settings, /countryFlagText\(/);
   assert.match(app, /modeAssignments/);
   assert.match(app, /getRoutingModeForNode/);
   assert.match(app, /Один узел нельзя использовать одновременно в нескольких режимах/);
