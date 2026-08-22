@@ -4,6 +4,7 @@ services:
       context: .
       network: host
       args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:22-bookworm-slim}
         NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org/}
         NPM_FALLBACK_REGISTRY: ${NPM_FALLBACK_REGISTRY:-https://registry.yarnpkg.com/}
         NPM_INSTALL_TIMEOUT: ${NPM_INSTALL_TIMEOUT:-420}

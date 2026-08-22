@@ -119,6 +119,8 @@ ui_error_hint() {
     printf '  │  Пояснение: сервер не может разрешить DNS-имя. Проверь DNS и доступ в интернет.\n' >&2
   elif grep -Eqi 'connection refused|connection timed out|operation timed out|network is unreachable' "$source" 2>/dev/null; then
     printf '  │  Пояснение: сетевое соединение недоступно. Проверь firewall, маршрут и доступ VPS в интернет.\n' >&2
+  elif grep -Eqi 'registry-1\.docker\.io.*(429|too many requests)|429 Too Many Requests' "$source" 2>/dev/null; then
+    printf '  │  Пояснение: Docker Hub ограничил IP сервера. Установщик попробовал резервный cache mirror; проверь доступ к mirror.gcr.io.\n' >&2
   elif grep -Eqi 'address already in use|port .*already|bind.*failed' "$source" 2>/dev/null; then
     printf '  │  Пояснение: требуемый порт уже занят. Посмотри владельца порта командой ss -ltnp.\n' >&2
   elif grep -Eqi 'permission denied|must be run as root|run as root' "$source" 2>/dev/null; then
@@ -704,6 +706,8 @@ INSTANCE_NAME=${INSTANCE_NAME}
 AGG_CONTAINER_NAME=${AGG_CONTAINER_NAME}
 CADDY_CONTAINER_NAME=${CADDY_CONTAINER_NAME}
 NODE_ENV=production
+NODE_IMAGE=${NODE_IMAGE:-node:22-bookworm-slim}
+DOCKER_REGISTRY_MIRROR=${DOCKER_REGISTRY_MIRROR:-https://mirror.gcr.io}
 NPM_REGISTRY=${NPM_REGISTRY:-https://registry.npmjs.org/}
 NPM_INSTALL_TIMEOUT=${NPM_INSTALL_TIMEOUT:-420}
 NPM_FALLBACK_REGISTRY=${NPM_FALLBACK_REGISTRY:-https://registry.yarnpkg.com/}
@@ -905,8 +909,8 @@ clone_or_update_repo() {
 
 write_dockerfile_patch_note() {
   if [ -f "$APP_DIR/Dockerfile" ]; then
-    info "Dockerfile проверен: npm ci по package-lock, официальный registry, fallback registry и timeout включены."
-    grep -E "NODE_OPTIONS=--dns-result-order=ipv4first|NPM_REGISTRY|NPM_INSTALL_TIMEOUT|npm ci|timeout" "$APP_DIR/Dockerfile" >/dev/null 2>&1 || true
+    info "Dockerfile проверен: базовый Node-образ настраивается, Docker Hub 429 имеет mirror-fallback, npm ci и timeout включены."
+    grep -E "NODE_IMAGE|NODE_OPTIONS=--dns-result-order=ipv4first|NPM_REGISTRY|NPM_INSTALL_TIMEOUT|npm ci|timeout" "$APP_DIR/Dockerfile" >/dev/null 2>&1 || true
   fi
 }
 
@@ -935,6 +939,7 @@ services:
       context: .
       network: host
       args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:22-bookworm-slim}
         NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org/}
         NPM_FALLBACK_REGISTRY: ${NPM_FALLBACK_REGISTRY:-https://registry.yarnpkg.com/}
         NPM_INSTALL_TIMEOUT: ${NPM_INSTALL_TIMEOUT:-420}
@@ -1094,6 +1099,7 @@ services:
       context: .
       network: host
       args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:22-bookworm-slim}
         NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org/}
         NPM_FALLBACK_REGISTRY: ${NPM_FALLBACK_REGISTRY:-https://registry.yarnpkg.com/}
         NPM_INSTALL_TIMEOUT: ${NPM_INSTALL_TIMEOUT:-420}
@@ -1139,6 +1145,7 @@ services:
       context: .
       network: host
       args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:22-bookworm-slim}
         NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org/}
         NPM_FALLBACK_REGISTRY: ${NPM_FALLBACK_REGISTRY:-https://registry.yarnpkg.com/}
         NPM_INSTALL_TIMEOUT: ${NPM_INSTALL_TIMEOUT:-420}
@@ -1183,6 +1190,7 @@ services:
       context: .
       network: host
       args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:22-bookworm-slim}
         NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org/}
         NPM_FALLBACK_REGISTRY: ${NPM_FALLBACK_REGISTRY:-https://registry.yarnpkg.com/}
         NPM_INSTALL_TIMEOUT: ${NPM_INSTALL_TIMEOUT:-420}
@@ -1229,6 +1237,7 @@ services:
       context: .
       network: host
       args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:22-bookworm-slim}
         NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org/}
         NPM_FALLBACK_REGISTRY: ${NPM_FALLBACK_REGISTRY:-https://registry.yarnpkg.com/}
         NPM_INSTALL_TIMEOUT: ${NPM_INSTALL_TIMEOUT:-420}
@@ -1411,17 +1420,124 @@ EOF
   fi
 }
 
+configure_docker_registry_mirror() {
+  local mirror="${DOCKER_REGISTRY_MIRROR:-https://mirror.gcr.io}"
+  local daemon_file="/etc/docker/daemon.json"
+  local backup_file=""
+  local created_file=0
+
+  case "${mirror,,}" in
+    ''|0|off|none|disabled)
+      warn "Автоматический Docker mirror отключён переменной DOCKER_REGISTRY_MIRROR."
+      return 1
+      ;;
+  esac
+  mirror="${mirror%/}"
+
+  if docker info --format '{{json .RegistryConfig.Mirrors}}' 2>/dev/null | grep -Fq "$mirror"; then
+    info "Docker mirror уже настроен: $mirror"
+    return 0
+  fi
+
+  if [ -s "$daemon_file" ]; then
+    backup_file="${daemon_file}.nexus-backup-$(date -u +%Y%m%d-%H%M%S)"
+    cp -a "$daemon_file" "$backup_file"
+  else
+    created_file=1
+  fi
+
+  if ! python3 - "$daemon_file" "$mirror" <<'PY'
+import json
+import os
+import sys
+import tempfile
+
+path, mirror = sys.argv[1], sys.argv[2]
+data = {}
+if os.path.exists(path) and os.path.getsize(path):
+    with open(path, 'r', encoding='utf-8') as handle:
+        data = json.load(handle)
+if not isinstance(data, dict):
+    raise SystemExit('docker daemon.json must contain a JSON object')
+mirrors = data.get('registry-mirrors', [])
+if not isinstance(mirrors, list):
+    raise SystemExit('docker daemon.json registry-mirrors must be an array')
+normalized = [str(item).rstrip('/') for item in mirrors if str(item).strip()]
+if mirror not in normalized:
+    mirrors.append(mirror)
+data['registry-mirrors'] = mirrors
+directory = os.path.dirname(path)
+os.makedirs(directory, exist_ok=True)
+fd, temporary = tempfile.mkstemp(prefix='.daemon.json.', dir=directory, text=True)
+try:
+    with os.fdopen(fd, 'w', encoding='utf-8') as handle:
+        json.dump(data, handle, ensure_ascii=False, indent=2)
+        handle.write('\n')
+    os.chmod(temporary, 0o644)
+    os.replace(temporary, path)
+finally:
+    if os.path.exists(temporary):
+        os.unlink(temporary)
+PY
+  then
+    warn "Не удалось безопасно добавить Docker mirror в $daemon_file."
+    return 1
+  fi
+
+  if systemctl restart docker && docker info >/dev/null 2>&1; then
+    warn "Docker Hub вернул 429. Подключён резервный cache mirror: $mirror"
+    [ -n "$backup_file" ] && info "Предыдущая конфигурация Docker сохранена: $backup_file"
+    return 0
+  fi
+
+  warn "Docker не запустился с mirror-конфигурацией; возвращаю предыдущий daemon.json."
+  if [ -n "$backup_file" ] && [ -f "$backup_file" ]; then
+    cp -a "$backup_file" "$daemon_file"
+  elif [ "$created_file" -eq 1 ]; then
+    rm -f "$daemon_file"
+  fi
+  systemctl restart docker >/dev/null 2>&1 || true
+  return 1
+}
+
+docker_compose_build_once() {
+  if docker compose --help 2>&1 | grep -q -- '--progress'; then
+    docker compose --progress plain up -d --build
+  else
+    docker compose up -d --build
+  fi
+}
+
 compose_up_build() {
   cd "$APP_DIR"
   export DOCKER_BUILDKIT=1
   export COMPOSE_DOCKER_CLI_BUILD=1
   export COMPOSE_PROGRESS=plain
 
-  if docker compose --help 2>&1 | grep -q -- '--progress'; then
-    docker compose --progress plain up -d --build
+  local build_log status
+  build_log="$(mktemp)"
+  if docker_compose_build_once 2>&1 | tee "$build_log"; then
+    rm -f "$build_log"
+    return 0
   else
-    docker compose up -d --build
+    status="${PIPESTATUS[0]}"
   fi
+
+  if grep -Eqi 'registry-1\.docker\.io.*(429|too many requests)|429 Too Many Requests' "$build_log"; then
+    warn "Docker Hub ограничил загрузку базового образа. Настраиваю резервный mirror и повторяю сборку..."
+    if configure_docker_registry_mirror; then
+      : > "$build_log"
+      if docker_compose_build_once 2>&1 | tee "$build_log"; then
+        rm -f "$build_log"
+        return 0
+      else
+        status="${PIPESTATUS[0]}"
+      fi
+    fi
+  fi
+
+  rm -f "$build_log"
+  return "$status"
 }
 
 start_stack() {
