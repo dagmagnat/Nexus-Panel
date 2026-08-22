@@ -30,3 +30,13 @@ test('installer retries Docker Hub 429 through a safely merged registry mirror',
   assert.match(installer, /\$\{daemon_file\}\.nexus-backup-/);
   assert.ok((installer.match(/docker_compose_build_once 2>&1 \| tee/g) || []).length >= 2);
 });
+
+test('installer preserves tracked local changes before forcing an update checkout', () => {
+  const installer = read('install.sh');
+
+  assert.match(installer, /backup_tracked_source_changes\(\)/);
+  assert.match(installer, /git -C "\$APP_DIR" diff --binary > "\$backup_dir\/worktree\.patch"/);
+  assert.match(installer, /git -C "\$APP_DIR" diff --cached --binary > "\$backup_dir\/index\.patch"/);
+  assert.match(installer, /backup_tracked_source_changes\s+stop_existing_aggregator_stack/);
+  assert.match(installer, /git -C "\$APP_DIR" checkout -f -B "\$branch" "\$target_commit"/);
+});

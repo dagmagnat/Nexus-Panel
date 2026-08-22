@@ -844,6 +844,25 @@ app_dir_has_runtime_data() {
   [ -f "$APP_DIR/.env" ] || [ -f "$APP_DIR/.install.conf" ] || [ -f "$APP_DIR/data/app.db" ] || [ -f "$APP_DIR/data/sessions.sqlite" ]
 }
 
+backup_tracked_source_changes() {
+  if git -C "$APP_DIR" diff --quiet && git -C "$APP_DIR" diff --cached --quiet; then
+    return
+  fi
+
+  local stamp backup_dir
+  stamp="$(date +%Y%m%d-%H%M%S)"
+  backup_dir="$BACKUP_DIR/source-changes-${INSTANCE_NAME}-${stamp}"
+  mkdir -p "$backup_dir"
+
+  git -C "$APP_DIR" status --short > "$backup_dir/status.txt"
+  git -C "$APP_DIR" diff --binary > "$backup_dir/worktree.patch"
+  git -C "$APP_DIR" diff --cached --binary > "$backup_dir/index.patch"
+  [ -s "$backup_dir/worktree.patch" ] || rm -f "$backup_dir/worktree.patch"
+  [ -s "$backup_dir/index.patch" ] || rm -f "$backup_dir/index.patch"
+
+  warn "Найдены локальные изменения отслеживаемых файлов. Их копия сохранена в $backup_dir; обновление продолжится файлами из ветки $BRANCH."
+}
+
 clone_or_update_repo() {
   local repo_url="$1"
   local branch="$2"
@@ -870,8 +889,13 @@ clone_or_update_repo() {
     fi
     target_commit="$(git -C "$APP_DIR" rev-parse FETCH_HEAD)"
 
+    # Установщик сам меняет отслеживаемый docker-compose.yml под окружение.
+    # Сначала сохраняем любые локальные правки в применимый git patch, затем
+    # принудительно переключаемся на загруженный коммит. Runtime-файлы и data,
+    # не отслеживаемые git, это переключение не затрагивает.
+    backup_tracked_source_changes
     stop_existing_aggregator_stack
-    git -C "$APP_DIR" checkout -B "$branch" "$target_commit"
+    git -C "$APP_DIR" checkout -f -B "$branch" "$target_commit"
     git -C "$APP_DIR" reset --hard "$target_commit"
     if git -C "$APP_DIR" remote get-url origin >/dev/null 2>&1; then
       git -C "$APP_DIR" remote set-url origin "$repo_url"
