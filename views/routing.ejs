@@ -47,6 +47,8 @@
   .routing-form .form-grid > .field.half { grid-column:span 1 !important; }
   .routing-form .mode-grid { display:grid !important; grid-template-columns:repeat(2,minmax(0,1fr)) !important; }
   .routing-form .dns-preset-grid { display:grid !important; grid-template-columns:repeat(3,minmax(0,1fr)) !important; }
+  .routing-node-picker-head span { display:grid !important; grid-template-columns:repeat(2,minmax(112px,1fr)); }
+  .routing-node-picker-head button { width:100%; min-height:34px; display:inline-flex; align-items:center; justify-content:center; }
   .geodata-catalog-card { position: static; top: auto; align-self: stretch; width: 100%; }
   .geodata-toolbar { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:10px 0 12px; }
   .geodata-toolbar input { flex:1 1 220px; min-width:0; }
@@ -128,8 +130,8 @@
 
 <div class="grid routing-page-grid" data-mobile-view="editor">
   <section class="card span-6 routing-editor-card">
-    <h2>Параметры для JSON</h2>
-    <p class="muted">Эти настройки применяются к JSON-подпискам узлов 3x-ui: <code>/json/:slug</code>. Здесь задаются только собственные правила domain/geosite и IP/geoip, исключения, DNS и блокировка.</p>
+    <h2>Маршрутизация JSON и Happ</h2>
+    <p class="muted">Правила применяются внутри JSON-конфигов и автоматически передаются в Happ SUB через routing-профиль. Отдельно включать профиль Happ больше не нужно.</p>
 
     <form method="post" action="/routing" class="routing-form">
       <label class="switch-row">
@@ -228,15 +230,8 @@
         <textarea name="geodata_urls" rows="3" placeholder="Необязательно. Можно вставить дополнительные ссылки или заметки."><%= geodataUrlsText %></textarea>
         <small class="hint">Здесь можно хранить дополнительные ссылки/заметки. Для клиентской маршрутизации через провайдера важно, чтобы сам клиент понимал выбранные GeoData. Для серверной маршрутизации Xray эти же URL нужно добавлять в оригинальную 3x-ui отдельно.</small>
       </div>
-      <div class="form-grid" style="margin-top:12px;">
-        <label class="switch-row compact field half">
-          <input type="checkbox" name="happ_routing_profile_enabled" value="1" <%= happRoutingProfileEnabled ? 'checked' : '' %> />
-          <span><strong>Передавать Happ routing-профиль</strong><small>Опционально: header <code>routing</code> / ссылка <code>happ://routing/onadd/...</code> с выбранными GeoData URL и правилами. По умолчанию выключено, чтобы не создавать профиль в Happ автоматически.</small></span>
-        </label>
-        <label class="switch-row compact field half">
-          <input type="checkbox" name="happ_routing_force_update" value="1" <%= happRoutingForceUpdate ? 'checked' : '' %> />
-          <span><strong>Обновлять GeoIP/GeoSite при ревизии</strong><small><code>LastUpdated</code> берётся из ревизии подписки. Работает только если включена передача Happ routing-профиля.</small></span>
-        </label>
+      <div class="alert ok" style="margin-top:12px;">
+        <strong>Happ routing-профиль включается автоматически.</strong> При сохранении Nexus передаёт <code>routing</code>, прямые исключения, GeoData URL и новую ревизию в Happ SUB. После изменения достаточно обновить подписку в приложении.
       </div>
 
       <div class="preset-grid dns-preset-grid">
@@ -288,7 +283,7 @@
       </div>
       <div class="kv-item">
         <strong>Happ routing-профиль</strong>
-        <div class="muted"><%= happRoutingProfileEnabled ? 'Передаётся через header routing + body link' : 'Отключён' %></div>
+        <div class="muted"><%= routingEnabled ? 'Включён автоматически · header routing + body link' : 'Отключён вместе с маршрутизацией' %></div>
         <div class="muted"><code><%= happRoutingJsonExample %></code></div>
       </div>
       <div class="kv-item">

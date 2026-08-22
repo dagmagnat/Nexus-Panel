@@ -13158,15 +13158,15 @@ app.post('/routing', requireAuth, (req, res) => {
       dnsCustom,
       allNodes: false,
       excludedNodeIds: [],
-      happRoutingProfileEnabled: req.body.happ_routing_profile_enabled === '1',
+      happRoutingProfileEnabled: routingEnabled,
       happRoutingExplicit: true,
-      happRoutingForceUpdate: req.body.happ_routing_force_update === '1',
-      happAutoRoutingEnabled: req.body.happ_routing_profile_enabled === '1',
+      happRoutingForceUpdate: routingEnabled,
+      happAutoRoutingEnabled: routingEnabled,
       defaultsVersion: 6
     };
     setSetting('routing_config', JSON.stringify(cfg));
     bumpSubscriptionRevision();
-    res.redirect('/routing?message=' + encodeURIComponent('Маршрутизация сохранена. Старые JSON-ссылки применят новые правила при следующем обновлении клиента.'));
+    res.redirect('/routing?message=' + encodeURIComponent('Маршрутизация сохранена. JSON-конфиги и Happ SUB получили обновлённые правила; обнови подписку в приложении.'));
   } catch (err) {
     res.redirect('/routing?error=' + encodeURIComponent(String(err.message || err)));
   }
@@ -16593,7 +16593,10 @@ function getRoutingGeoipUrl() {
 
 function isHappAutoRoutingEnabled() {
   const cfg = getRoutingConfig();
-  return cfg.happRoutingProfileEnabled !== false;
+  // Routing selected in Nexus must also reach ordinary /happ subscriptions.
+  // The former separate opt-in left the rules visible in the panel and in
+  // /json while Happ continued sending every site through the VPN.
+  return cfg.enabled !== false;
 }
 
 function getHappRoutingLastUpdated() {
@@ -16974,10 +16977,10 @@ function getRoutingConfig() {
           }
         : fallback.modeAssignments,
       assignmentExplicit: parsed.assignmentExplicit === true,
-      happRoutingProfileEnabled: parsed.happRoutingProfileEnabled === true && parsed.happRoutingExplicit === true,
-      happRoutingExplicit: parsed.happRoutingExplicit === true,
+      happRoutingProfileEnabled: parsed.enabled === true,
+      happRoutingExplicit: true,
       happRoutingForceUpdate: parsed.happRoutingForceUpdate !== false,
-      happAutoRoutingEnabled: parsed.happRoutingProfileEnabled === true && parsed.happRoutingExplicit === true,
+      happAutoRoutingEnabled: parsed.enabled === true,
       defaultsVersion: 6
     };
     if (parsedDefaultsVersion < 6 || legacyDefaultAdBlock) {
