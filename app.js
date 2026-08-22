@@ -13113,7 +13113,7 @@ app.post('/routing', requireAuth, (req, res) => {
     const dnsPreset = String(req.body.dns_preset || 'cloudflare').trim();
     const dnsCustom = parsePlainLines(req.body.dns_custom || '').join('\n');
     const routableNodeIds = new Set(db.prepare('SELECT id FROM nodes WHERE enabled = 1 AND node_type != ?').all(NODE_TYPE_H1CLOUD).filter(isClientManagedNode).map(row => Number(row.id)));
-    const allowedModes = ['proxy-selected', 'proxy-except', 'node-selective'];
+    const allowedModes = ['proxy-except', 'node-selective'];
     const requestedModesRaw = req.body.routing_modes;
     const requestedModes = uniqueList((Array.isArray(requestedModesRaw) ? requestedModesRaw : (requestedModesRaw ? [requestedModesRaw] : [])).map(String).filter(mode => allowedModes.includes(mode)));
     const modeAssignments = {};
@@ -13130,9 +13130,8 @@ app.post('/routing', requireAuth, (req, res) => {
     }
     const routingEnabled = req.body.routing_enabled === '1';
     if (routingEnabled && !requestedModes.length) throw new Error('Включи хотя бы один режим маршрутизации и выбери для него узлы.');
-    const routingMode = requestedModes[0] || 'proxy-selected';
-    const proxyNodeId = requestedModes.includes('node-selective') ? Number(req.body.routing_proxy_node_id || 0) : 0;
-    if (requestedModes.includes('node-selective') && !routableNodeIds.has(proxyNodeId)) throw new Error('Выбери доступный отдельный узел для режима выборочной маршрутизации.');
+    const routingMode = requestedModes[0] || 'proxy-except';
+    const proxyNodeId = 0;
     const errors = [...parsedDomains.errors, ...parsedIps.errors, ...parsedExceptDomains.errors, ...parsedExceptIps.errors, ...parsedAdBlockDomains.errors, ...parsedAdBlockIps.errors];
     if (errors.length) throw new Error(errors.join(' | '));
     const cfg = {
@@ -16946,7 +16945,9 @@ function getRoutingConfig() {
       presets: Array.isArray(parsed.presets) ? parsed.presets : fallback.presets,
       customDomains: Array.isArray(parsed.customDomains) ? parsed.customDomains : fallback.customDomains,
       customIps: Array.isArray(parsed.customIps) ? parsed.customIps : fallback.customIps,
-      mode: ['proxy-selected', 'proxy-except', 'node-selective'].includes(parsed.mode) ? parsed.mode : (parsed.proxyExcept ? 'proxy-except' : fallback.mode),
+      mode: parsed.mode === 'proxy-selected'
+        ? 'node-selective'
+        : (['proxy-except', 'node-selective'].includes(parsed.mode) ? parsed.mode : (parsed.proxyExcept ? 'proxy-except' : fallback.mode)),
       proxyNodeId: Math.max(0, Number(parsed.proxyNodeId || 0) || 0),
       exceptDomains: Array.isArray(parsed.exceptDomains) ? parsed.exceptDomains : fallback.exceptDomains,
       exceptIps: Array.isArray(parsed.exceptIps) ? parsed.exceptIps : fallback.exceptIps,
@@ -16962,7 +16963,13 @@ function getRoutingConfig() {
       allNodes: parsed.allNodes !== false,
       excludedNodeIds: Array.isArray(parsed.excludedNodeIds) ? parsed.excludedNodeIds.map(Number).filter(Boolean) : fallback.excludedNodeIds,
       modeAssignments: parsed.modeAssignments && typeof parsed.modeAssignments === 'object'
-        ? Object.fromEntries(['proxy-selected', 'proxy-except', 'node-selective'].map(mode => [mode, uniqueList((Array.isArray(parsed.modeAssignments[mode]) ? parsed.modeAssignments[mode] : []).map(Number).filter(id => Number.isInteger(id) && id > 0))]))
+        ? {
+            'proxy-except': uniqueList((Array.isArray(parsed.modeAssignments['proxy-except']) ? parsed.modeAssignments['proxy-except'] : []).map(Number).filter(id => Number.isInteger(id) && id > 0)),
+            'node-selective': uniqueList([
+              ...(Array.isArray(parsed.modeAssignments['node-selective']) ? parsed.modeAssignments['node-selective'] : []),
+              ...(Array.isArray(parsed.modeAssignments['proxy-selected']) ? parsed.modeAssignments['proxy-selected'] : [])
+            ].map(Number).filter(id => Number.isInteger(id) && id > 0))
+          }
         : fallback.modeAssignments,
       assignmentExplicit: parsed.assignmentExplicit === true,
       happRoutingProfileEnabled: parsed.happRoutingProfileEnabled === true && parsed.happRoutingExplicit === true,
@@ -16983,23 +16990,27 @@ function getRoutingConfig() {
 
 function routingModeTitle(mode) {
   return {
-    'proxy-selected': 'Через текущий узел только выбранное',
     'proxy-except': 'Всё через proxy, кроме исключений',
-    'node-selective': 'Выбранное через отдельный узел'
+    'node-selective': 'Только выбранное через узел'
   }[mode] || mode;
 }
 
 function getRoutingModeAssignments(cfg = getRoutingConfig(), availableNodeIds = null) {
-  const modes = ['proxy-selected', 'proxy-except', 'node-selective'];
+  const modes = ['proxy-except', 'node-selective'];
   if (cfg.assignmentExplicit === true) {
-    return Object.fromEntries(modes.map(mode => [mode, uniqueList((cfg.modeAssignments?.[mode] || []).map(Number).filter(id => Number.isInteger(id) && id > 0))]));
+    const legacySelected = cfg.modeAssignments?.['proxy-selected'] || [];
+    return {
+      'proxy-except': uniqueList((cfg.modeAssignments?.['proxy-except'] || []).map(Number).filter(id => Number.isInteger(id) && id > 0)),
+      'node-selective': uniqueList([...(cfg.modeAssignments?.['node-selective'] || []), ...legacySelected].map(Number).filter(id => Number.isInteger(id) && id > 0))
+    };
   }
   const ids = Array.isArray(availableNodeIds)
     ? availableNodeIds.map(Number)
     : db.prepare('SELECT id FROM nodes WHERE enabled = 1 AND node_type != ?').all(NODE_TYPE_H1CLOUD).filter(isClientManagedNode).map(row => Number(row.id));
   const excluded = new Set((cfg.excludedNodeIds || []).map(Number));
   const eligible = ids.filter(id => cfg.allNodes !== false || !excluded.has(id));
-  return Object.fromEntries(modes.map(mode => [mode, mode === cfg.mode ? eligible : []]));
+  const effectiveMode = cfg.mode === 'proxy-selected' ? 'node-selective' : cfg.mode;
+  return Object.fromEntries(modes.map(mode => [mode, mode === effectiveMode ? eligible : []]));
 }
 
 function getRoutingModeForNode(nodeId, cfg = getRoutingConfig()) {
@@ -17057,13 +17068,13 @@ function parseRoutingLines(text, kind) {
 
 function getRoutingDirectDomains() {
   const cfg = getRoutingConfig();
-  if (cfg.enabled === false || cfg.mode !== 'proxy-except') return [];
+  if (cfg.enabled === false) return [];
   return uniqueList(cfg.exceptDomains || []);
 }
 
 function getRoutingDirectIps() {
   const cfg = getRoutingConfig();
-  if (cfg.enabled === false || cfg.mode !== 'proxy-except') return [];
+  if (cfg.enabled === false) return [];
   return uniqueList(cfg.exceptIps || []);
 }
 
@@ -17230,8 +17241,7 @@ function getEffectiveJsonRoutingRules(routingOutboundTag = '', routingMode = '')
 }
 
 function getSelectiveProxyOutboundTag() {
-  const cfg = getRoutingConfig();
-  return Number(cfg.proxyNodeId) > 0 ? `routing-node-${Number(cfg.proxyNodeId)}` : 'proxy';
+  return 'proxy';
 }
 
 function normalizeXrayJsonForIos(config, routingOutboundTag = '', routingMode = '') {
@@ -17272,7 +17282,9 @@ function buildRoutingRules(routingOutboundTag = '', routingMode = '') {
   }
 
   if (mode === 'node-selective') {
-    const outboundTag = routingOutboundTag || getSelectiveProxyOutboundTag();
+    // Rules are applied to the JSON config of every checked node. Therefore
+    // `proxy` is that node itself; no second outbound selector is required.
+    const outboundTag = 'proxy';
     const rules = [];
     const blockDomains = getRoutingBlockDomains();
     const blockIps = getRoutingBlockIps();
@@ -17385,20 +17397,7 @@ function buildHappJsonConfig(client, lines, subscriptionName, routingEnabledForT
 
   const routingCfg = getRoutingConfig();
   const routingMode = String(options.routingMode || getRoutingModeForNode(options.nodeId, routingCfg) || '');
-  const selectiveLine = routingEnabledForThisConfig && routingMode === 'node-selective'
-    ? String(options.selectiveProxyLine || '').trim()
-    : '';
   let selectiveOutboundTag = 'proxy';
-  if (selectiveLine && selectiveLine.startsWith('vless://')) {
-    try {
-      const selectedOutbound = parseVlessLineToOutbound(selectiveLine, 0, options);
-      selectedOutbound.tag = getSelectiveProxyOutboundTag();
-      selectiveOutboundTag = selectedOutbound.tag;
-      if (!proxyOutbounds.some(outbound => outbound.tag === selectedOutbound.tag)) proxyOutbounds.push(selectedOutbound);
-    } catch (err) {
-      console.warn('Selective routing node link is invalid:', err.message || err);
-    }
-  }
 
   const routingActive = routingEnabledForThisConfig && routingCfg.enabled !== false && !!routingMode;
   const jsonSniffingEnabled = isJsonSniffingEnabledForNode(options.nodeId) || routingActive;
@@ -17621,8 +17620,6 @@ app.get('/json/:slug', async (req, res) => {
     // visible server. This was the reason only the last/random region appeared.
     if (!singleMode) {
       const vlessEntries = entries.filter(e => String(e.line).startsWith('vless://'));
-      const selectiveProxyNodeId = Number(getRoutingConfig().proxyNodeId || 0);
-      const selectiveProxyLine = String(vlessEntries.find(entry => Number(entry.nodeId) === selectiveProxyNodeId)?.line || '');
       const resultConfigs = [];
       const nativeJsonCache = new Map();
       for (let index = 0; index < vlessEntries.length; index += 1) {
@@ -17658,7 +17655,6 @@ app.get('/json/:slug', async (req, res) => {
           // CDN endpoint incompatible with its backend inbound.
           {
             preserveXhttpExtra: [NODE_TYPE_3XUI, NODE_TYPE_H1CLOUD_3XUI, NODE_TYPE_REMNAWAVE].includes(entry.nodeType),
-            selectiveProxyLine,
             nodeId: Number(entry.nodeId || 0),
             routingMode: getRoutingModeForNode(entry.nodeId)
           }
@@ -17674,11 +17670,8 @@ app.get('/json/:slug', async (req, res) => {
       ? Math.min(Math.max(requestedNode - 1, 0), vlessLines.length - 1)
       : 0;
     const selectedEntry = entries.filter(e => String(e.line).startsWith('vless://'))[selectedIndex];
-    const selectiveProxyNodeId = Number(getRoutingConfig().proxyNodeId || 0);
-    const selectiveProxyLine = String(entries.find(entry => Number(entry.nodeId) === selectiveProxyNodeId && String(entry.line).startsWith('vless://'))?.line || '');
     return res.json(buildHappJsonConfigFromLine(client, selectedEntry.line, subscriptionName, selectedIndex, selectedEntry.nodeType === 'notice' ? false : isRoutingEnabledForNode(selectedEntry.nodeId), {
       preserveXhttpExtra: [NODE_TYPE_3XUI, NODE_TYPE_H1CLOUD_3XUI, NODE_TYPE_REMNAWAVE].includes(selectedEntry.nodeType),
-      selectiveProxyLine,
       nodeId: Number(selectedEntry.nodeId || 0),
       routingMode: getRoutingModeForNode(selectedEntry.nodeId)
     }));

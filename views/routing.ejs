@@ -141,9 +141,8 @@
       <p class="hint">Можно включить несколько режимов. Каждый узел назначается только одному режиму; панель автоматически блокирует его в остальных списках.</p>
       <div class="routing-mode-assignments">
         <% [
-          ['proxy-selected', 'Через текущий узел только выбранное', 'Через подключённый узел идут только правила из списков ниже.'],
-          ['proxy-except', 'Всё через proxy, кроме...', 'Исключения идут напрямую, остальной TCP/UDP трафик — в proxy.'],
-          ['node-selective', 'Выбранное через отдельный узел', 'GeoSite/GeoIP идут через указанный узел, остальной трафик — напрямую.']
+          ['proxy-except', 'Всё через proxy, кроме...', 'На отмеченных узлах исключения идут напрямую, весь остальной TCP/UDP-трафик — через этот узел.'],
+          ['node-selective', 'Только выбранное через узел', 'На отмеченных узлах выбранные GeoSite/GeoIP идут через этот узел, остальной трафик — напрямую.']
         ].forEach(([mode, title, description]) => { const assigned = (routingModeAssignments[mode] || []).map(Number); %>
           <section class="routing-mode-assignment <%= assigned.length ? 'is-enabled' : '' %>" data-routing-mode-card="<%= mode %>">
             <label class="switch-row compact">
@@ -160,39 +159,26 @@
                   </label>
                 <% }) %>
               </div>
-              <% if (mode === 'node-selective') { %>
-                <div class="field routing-proxy-node-field">
-                  <label for="routing-proxy-node-id">Отдельный outbound для выбранных GeoSite / GeoIP</label>
-                  <select id="routing-proxy-node-id" name="routing_proxy_node_id">
-                    <option value="">Выбери узел</option>
-                    <% nodes.forEach(n => { %><option value="<%= n.id %>" <%= Number(routingProxyNodeId) === Number(n.id) ? 'selected' : '' %>><%= n.country_name_ru || n.name %> · <%= n.label_suffix || nodeEndpointLabel(n) %></option><% }) %>
-                  </select>
-                  <small class="hint">Этот узел станет отдельным outbound для правил из списков VPN ниже.</small>
+              <% if (mode === 'proxy-except') { %>
+                <div class="routing-mode-rules routing-mode-rules-direct">
+                  <div class="routing-mode-rules-head"><strong>Исключения этого режима → напрямую</strong><small>Обходят VPN только в JSON отмеченных выше узлов.</small></div>
+                  <div class="form-grid">
+                    <div class="field half"><label>Domain / GeoSite → direct</label><textarea name="except_domains" rows="6" placeholder="geosite:category-ru&#10;domain:bank.ru"><%= exceptDomainsText %></textarea><small class="hint"><code>geosite:category-ru</code>: российские сайты увидят прямой IP, иностранные — IP выбранного узла.</small></div>
+                    <div class="field half"><label>IP / GeoIP → direct</label><textarea name="except_ips" rows="6" placeholder="geoip:ru&#10;10.0.0.0/8"><%= exceptIpsText %></textarea><small class="hint">Для российских IP укажи <code>geoip:ru</code>.</small></div>
+                  </div>
+                </div>
+              <% } else { %>
+                <div class="routing-mode-rules routing-mode-rules-proxy">
+                  <div class="routing-mode-rules-head"><strong>Выбранное этого режима → через узел</strong><small>Применяется только к JSON отмеченных выше узлов. Всё остальное идёт напрямую.</small></div>
+                  <div class="form-grid">
+                    <div class="field half"><label>Domain / GeoSite → proxy</label><textarea name="custom_domains" rows="6" placeholder="geosite:youtube&#10;domain:example.com&#10;regexp:.*\\.example\\.com$"><%= customDomainsText %></textarea><small class="hint">Поддерживаются <code>geosite:</code>, <code>domain:</code>, <code>regexp:</code>, <code>keyword:</code> и <code>full:</code>.</small></div>
+                    <div class="field half"><label>IP / GeoIP → proxy</label><textarea name="custom_ips" rows="6" placeholder="geoip:telegram&#10;1.2.3.0/24&#10;2001:db8::/32"><%= customIpsText %></textarea><small class="hint">Поддерживаются <code>geoip:</code>, IPv4/IPv6 и CIDR.</small></div>
+                  </div>
                 </div>
               <% } %>
             </div>
           </section>
         <% }) %>
-      </div>
-
-      <div class="form-grid" style="margin-top:16px;">
-        <div class="field half">
-          <label>Всегда через VPN: domain / geosite</label>
-          <textarea name="custom_domains" rows="10" placeholder="geosite:youtube&#10;domain:example.com&#10;regexp:.*\\.example\\.com$"><%= customDomainsText %></textarea>
-          <small class="hint">Можно писать через новую строку, запятую или точку с запятой. Поддерживается: <code>geosite:tag</code>, <code>domain:site.com</code>, <code>regexp:...</code>, <code>keyword:...</code>, <code>full:...</code>. Для кастомных .dat Xray также можно хранить <code>ext:geosite_alias.dat:tag</code>, но мобильный клиент должен иметь этот .dat локально.</small>
-        </div>
-
-        <div class="field half">
-          <label>Всегда через VPN: ip / geoip</label>
-          <textarea name="custom_ips" rows="10" placeholder="geoip:telegram&#10;1.2.3.0/24&#10;2001:db8::/32"><%= customIpsText %></textarea>
-          <small class="hint">Поддерживается: <code>geoip:tag</code>, IPv4, IPv4 CIDR, IPv6 и IPv6 CIDR. Префикс <code>ip:</code> можно вводить — панель уберёт его автоматически. Для кастомных .dat Xray: <code>ext:geoip_alias.dat:tag</code>.</small>
-        </div>
-      </div>
-
-      <h3>Исключения для режима «всё кроме»</h3>
-      <div class="form-grid">
-        <div class="field half"><label>Кроме domain / geosite → direct</label><textarea name="except_domains" rows="7" placeholder="geosite:category-ru&#10;domain:bank.ru"><%= exceptDomainsText %></textarea><small class="hint">Для RU обычно добавляют <code>geosite:category-ru</code>. Можно написать просто <code>ru</code> — агрегатор сохранит как <code>geosite:category-ru</code>.</small></div>
-        <div class="field half"><label>Кроме ip / geoip → direct</label><textarea name="except_ips" rows="7" placeholder="geoip:ru&#10;10.0.0.0/8"><%= exceptIpsText %></textarea><small class="hint">Для российских IP добавь <code>geoip:ru</code>. Можно написать <code>ip-ru</code> — агрегатор сохранит как <code>geoip:ru</code>.</small></div>
       </div>
 
       <h3>Блокировка рекламы</h3>
@@ -296,16 +282,10 @@
       </div>
       <div class="kv-item">
         <strong>Назначение режимов</strong>
-        <% [['proxy-selected', 'Только выбранное'], ['proxy-except', 'Всё, кроме исключений'], ['node-selective', 'Через отдельный узел']].forEach(([mode, title]) => { const ids = (routingModeAssignments[mode] || []).map(Number); if (!ids.length) return; %>
+        <% [['proxy-except', 'Всё через узел, кроме исключений'], ['node-selective', 'Только выбранное через узел']].forEach(([mode, title]) => { const ids = (routingModeAssignments[mode] || []).map(Number); if (!ids.length) return; %>
           <div class="muted"><b><%= title %>:</b> <%= nodes.filter(node => ids.includes(Number(node.id))).map(node => node.country_name_ru || node.name).join(', ') %></div>
         <% }) %>
       </div>
-      <% if ((routingModeAssignments['node-selective'] || []).length) { const selectedRoutingNode = nodes.find(n => Number(n.id) === Number(routingProxyNodeId)); %>
-        <div class="kv-item">
-          <strong>Отдельный узел для правил</strong>
-          <div class="muted"><%= selectedRoutingNode ? (selectedRoutingNode.country_name_ru || selectedRoutingNode.name) : 'Узел не выбран' %></div>
-        </div>
-      <% } %>
       <div class="kv-item">
         <strong>Happ routing-профиль</strong>
         <div class="muted"><%= happRoutingProfileEnabled ? 'Передаётся через header routing + body link' : 'Отключён' %></div>
@@ -401,9 +381,6 @@ function syncRoutingModeAssignments() {
       option.title = unavailable ? 'Узел уже выбран в другом режиме' : '';
     });
   });
-  const selectiveEnabled = document.querySelector('[data-routing-mode-card="node-selective"] [data-routing-mode-toggle]')?.checked;
-  const proxySelect = document.getElementById('routing-proxy-node-id');
-  if (proxySelect) proxySelect.required = !!selectiveEnabled;
 }
 
 function initRoutingModeAssignments() {

@@ -3042,6 +3042,14 @@ body.client-modal-open { overflow: hidden; overscroll-behavior: none; }
 .routing-mode-assignments { display: grid; gap: 10px; }
 .routing-mode-assignment.is-enabled { border-color: color-mix(in srgb, var(--accent) 65%, var(--border)); box-shadow: inset 3px 0 0 var(--accent); }
 .routing-proxy-node-field { margin-top: 12px; }
+.routing-mode-rules { margin-top: 12px; padding: 13px; border: 1px solid var(--border); border-radius: 13px; }
+.routing-mode-rules-direct { background: color-mix(in srgb, var(--green) 6%, var(--input)); border-color: color-mix(in srgb, var(--green) 30%, var(--border)); }
+.routing-mode-rules-proxy { background: color-mix(in srgb, var(--cyan) 6%, var(--input)); border-color: color-mix(in srgb, var(--cyan) 30%, var(--border)); }
+.routing-mode-rules-head { display: grid; gap: 3px; margin-bottom: 10px; }
+.routing-mode-rules-head strong { font-size: 12px; }
+.routing-mode-rules-head small { color: var(--muted); font-size: 10px; }
+.routing-mode-rules .form-grid { margin: 0 !important; }
+.routing-mode-rules textarea { min-height: 116px; }
 
 .inline-select-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
