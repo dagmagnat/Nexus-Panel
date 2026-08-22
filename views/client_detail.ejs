@@ -103,7 +103,13 @@
       </div>
       <div class="field half">
         <label>Лимит IP</label>
-        <input name="limit_ip" type="number" min="0" value="<%= client.limit_ip ?? 1 %>" />
+        <input name="limit_ip" type="number" min="0" value="<%= client.limit_ip ?? 0 %>" />
+        <small class="hint">0 = без лимита.</small>
+      </div>
+      <div class="field half">
+        <label>Лимит устройств</label>
+        <input name="device_limit" type="number" min="0" value="<%= client.device_limit ?? 1 %>" />
+        <small class="hint">HWID-устройства подписки. 0 = без лимита.</small>
       </div>
       <div class="field half">
         <label>Новый срок в днях</label>

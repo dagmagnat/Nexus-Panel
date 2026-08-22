@@ -239,11 +239,9 @@ test('Nexus tracks HWID devices, reuses known slots, blocks the extra device and
   db = new Database(path.join(dataDir, 'app.db'));
   assert.equal(db.prepare("SELECT COUNT(*) AS c FROM subscription_devices WHERE client_id = (SELECT id FROM clients WHERE sub_slug='device-user')").get().c, 2);
 
-  // Legacy-client regression: if an operator lowers a previously populated
-  // client from 2 -> 1, the second already-known HWID must no longer be
-  // grandfathered. limit_ip is the unified source of truth; device_limit may
-  // still contain a stale value from a 2.6 backup without changing behavior.
-  db.prepare("UPDATE clients SET limit_ip = 1, device_limit = 99 WHERE sub_slug = 'device-user'").run();
+  // The subscription HWID registry is governed only by device_limit. A very
+  // different IP limit must not change how many devices may use the link.
+  db.prepare("UPDATE clients SET limit_ip = 99, device_limit = 1 WHERE sub_slug = 'device-user'").run();
   db.prepare("UPDATE app_settings SET value = '[]' WHERE key = 'subscription_device_limit_node_ids'").run();
   db.close();
 
@@ -275,5 +273,34 @@ test('Nexus tracks HWID devices, reuses known slots, blocks the extra device and
 
   db = new Database(path.join(dataDir, 'app.db'));
   assert.equal(db.prepare("SELECT COUNT(*) AS c FROM subscription_devices WHERE client_id = (SELECT id FROM clients WHERE sub_slug='expired-user')").get().c, 0, 'expired refresh must not consume a new device slot');
+  db.close();
+});
+
+test('legacy unified limit migrates once to device limit and removes the accidental IP restriction', { timeout: 60000 }, async t => {
+  const dataDir = fs.mkdtempSync(path.join(projectRoot, '.tmp-device-limit-migration-'));
+  let app = null;
+  t.after(async () => {
+    await stopApp(app);
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  app = await startApp(dataDir);
+  await stopApp(app);
+  app = null;
+
+  let db = new Database(path.join(dataDir, 'app.db'));
+  db.prepare("DELETE FROM app_settings WHERE key = 'subscription_device_limits_separated_v3'").run();
+  db.prepare("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('subscription_device_limit_unified_v2', '1')").run();
+  db.prepare(`
+    INSERT INTO clients (login, display_name, uuid, sub_slug, limit_ip, device_limit)
+    VALUES ('legacy-limit-user', 'Legacy Limit User', '99999999-8888-4777-8666-555555555555', 'legacy-limit-user', 3, 1)
+  `).run();
+  db.close();
+
+  app = await startApp(dataDir);
+  db = new Database(path.join(dataDir, 'app.db'), { readonly: true });
+  const client = db.prepare("SELECT limit_ip, device_limit FROM clients WHERE sub_slug = 'legacy-limit-user'").get();
+  assert.deepEqual(client, { limit_ip: 0, device_limit: 3 });
+  assert.equal(db.prepare("SELECT value FROM app_settings WHERE key = 'subscription_device_limits_separated_v3'").get().value, '1');
   db.close();
 });

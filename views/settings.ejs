@@ -140,7 +140,7 @@
 
           <div class="happ-section-title">2. Устройства и блокировки</div>
           <div class="alert ok subscription-limit-unified-note">
-            Один лимит клиента используется сразу в двух местах: как <strong>IP limit</strong> на удалённых узлах и как <strong>HWID-лимит устройств</strong> в Nexus. Поэтому значение 5 означает одновременно «до 5 IP» на поддерживаемом узле и «до 5 активаций подписки» в Nexus.
+            Лимиты разделены: <strong>IP limit</strong> применяется на удалённых узлах, а <strong>лимит устройств</strong> — только к HWID-активациям подписки Nexus. Значение 0 в любом из полей означает безлимит.
           </div>
           <div class="happ-control-grid">
             <label class="switch-row compact happ-help-source" data-help-title="Учитывать HWID-устройства" data-help-text="При обновлении подписки Nexus сохраняет X-HWID и доступные данные устройства. Happ, INCY и v2RayTun поддерживают этот формат. HWID хранится только в виде одностороннего SHA-256 хеша и короткой подсказки.">
@@ -148,7 +148,7 @@
               <span><strong>Учитывать устройства по HWID</strong><small>Показывает 2/5, ОС, модель, приложение и последнее обновление.</small></span>
             </label>
 
-            <label class="switch-row compact happ-help-source" data-help-title="Ограничивать устройства" data-help-text="Nexus использует тот же числовой лимит, что и поле «Лимит IP / устройств» у клиента. Если лимит уже уменьшили ниже числа старых HWID, лишние ранее зарегистрированные устройства тоже будут блокироваться при следующем обновлении.">
+            <label class="switch-row compact happ-help-source" data-help-title="Ограничивать устройства" data-help-text="Nexus использует отдельное поле «Лимит устройств» у клиента. Лимит IP на узлах на HWID-регистрацию больше не влияет. Если лимит уменьшить ниже числа старых HWID, лишние устройства блокируются при следующем обновлении.">
               <input type="checkbox" name="subscription_device_limit_enforced" value="1" <%= subscriptionDeviceLimitEnforced ? 'checked' : '' %> />
               <span><strong>Блокировать устройства сверх лимита</strong><small>Например, шестое устройство при лимите 5.</small></span>
             </label>

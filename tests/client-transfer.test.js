@@ -50,8 +50,8 @@ function createSchema(db) {
       sub_slug TEXT UNIQUE NOT NULL,
       duration_days INTEGER NOT NULL DEFAULT 0,
       traffic_gb INTEGER NOT NULL DEFAULT 0,
-      limit_ip INTEGER NOT NULL DEFAULT 1,
-      device_limit INTEGER NOT NULL DEFAULT 0,
+      limit_ip INTEGER NOT NULL DEFAULT 0,
+      device_limit INTEGER NOT NULL DEFAULT 1,
       expiry_time INTEGER NOT NULL DEFAULT 0,
       enabled INTEGER NOT NULL DEFAULT 1,
       comment TEXT NOT NULL DEFAULT '',
@@ -140,6 +140,7 @@ test('direct SQLite export preserves credentials and excludes node secrets', () 
     assert.equal(document.format, 'nexus-panel-client-transfer');
     assert.equal(document.clients[0].uuid, '11111111-1111-4111-8111-111111111111');
     assert.equal(document.clients[0].subSlug, 'alice-old-link');
+    assert.equal(document.clients[0].limitIp, 2);
     assert.equal(document.clients[0].deviceLimit, 5);
     assert.equal(document.clients[0].nodeAssignments[0].nodeRef.inboundId, 1);
     assert.deepEqual(document.clients[0].group, { name: 'Яблоко', color: '#64748b' });
@@ -195,6 +196,7 @@ test('dry-run rolls back, then import keeps UUID/sub_slug and matches a changed 
     assert.equal(alice.uuid, '11111111-1111-4111-8111-111111111111');
     assert.equal(alice.sub_slug, 'alice-old-link');
     assert.equal(alice.display_name, 'Телефон Alice');
+    assert.equal(alice.limit_ip, 2);
     assert.equal(alice.device_limit, 5);
     const assignment = db.prepare('SELECT * FROM client_nodes WHERE client_id=?').get(alice.id);
     assert.equal(assignment.node_id, 42);

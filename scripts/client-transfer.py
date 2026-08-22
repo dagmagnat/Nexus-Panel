@@ -271,8 +271,8 @@ def export_clients(db_path: Path) -> dict[str, Any]:
                 "subSlug": clean_text(row_value(row, "sub_slug"), "", 500),
                 "durationDays": clamp_int(row_value(row, "duration_days"), 0),
                 "trafficGb": clamp_int(row_value(row, "traffic_gb"), 0),
-                "limitIp": clamp_int(row_value(row, "limit_ip"), 1),
-                "deviceLimit": clamp_int(row_value(row, "limit_ip"), 1),
+                "limitIp": clamp_int(row_value(row, "limit_ip"), 0),
+                "deviceLimit": clamp_int(row_value(row, "device_limit"), 1),
                 "expiryTime": clamp_int(row_value(row, "expiry_time"), 0),
                 "enabled": bool_int(row_value(row, "enabled"), 1),
                 "comment": clean_text(row_value(row, "comment"), "", 16_384),
@@ -468,8 +468,10 @@ def validate_document(document: dict[str, Any]) -> tuple[list[dict[str, Any]], d
             "subSlug": sub_slug,
             "durationDays": clamp_int(get_first(raw, "durationDays", "duration_days"), 0),
             "trafficGb": clamp_int(get_first(raw, "trafficGb", "traffic_gb"), 0),
-            "limitIp": clamp_int(get_first(raw, "limitIp", "limit_ip"), 1),
-            "deviceLimit": clamp_int(get_first(raw, "limitIp", "limit_ip", "deviceLimit", "device_limit"), 1),
+            "limitIp": clamp_int(get_first(raw, "limitIp", "limit_ip"), 0),
+            # New packages carry an independent deviceLimit. Falling back to
+            # limitIp keeps imports from the former unified format compatible.
+            "deviceLimit": clamp_int(get_first(raw, "deviceLimit", "device_limit", "limitIp", "limit_ip"), 1),
             "expiryTime": clamp_int(get_first(raw, "expiryTime", "expiry_time"), 0),
             "enabled": bool_int(get_first(raw, "enabled"), 1),
             "comment": clean_text(get_first(raw, "comment"), "", 16_384),

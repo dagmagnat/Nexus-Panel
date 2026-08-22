@@ -1151,8 +1151,8 @@ function initDb() {
       sub_slug TEXT UNIQUE NOT NULL,
       duration_days INTEGER NOT NULL DEFAULT 0,
       traffic_gb INTEGER NOT NULL DEFAULT 0,
-      limit_ip INTEGER NOT NULL DEFAULT 1,
-      device_limit INTEGER NOT NULL DEFAULT 0,
+      limit_ip INTEGER NOT NULL DEFAULT 0,
+      device_limit INTEGER NOT NULL DEFAULT 1,
       expiry_time INTEGER NOT NULL DEFAULT 0,
       enabled INTEGER NOT NULL DEFAULT 1,
       comment TEXT NOT NULL DEFAULT '',
@@ -1390,8 +1390,8 @@ function initDb() {
   addColumnIfMissing('clients', 'sub_slug', "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing('clients', 'duration_days', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing('clients', 'traffic_gb', 'INTEGER NOT NULL DEFAULT 0');
-  addColumnIfMissing('clients', 'limit_ip', 'INTEGER NOT NULL DEFAULT 1');
-  addColumnIfMissing('clients', 'device_limit', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing('clients', 'limit_ip', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing('clients', 'device_limit', 'INTEGER NOT NULL DEFAULT 1');
   addColumnIfMissing('clients', 'expiry_time', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing('clients', 'enabled', 'INTEGER NOT NULL DEFAULT 1');
   addColumnIfMissing('clients', 'comment', "TEXT NOT NULL DEFAULT ''");
@@ -1565,16 +1565,20 @@ function initDb() {
 }
 
 function migrateSubscriptionDeviceLimitsOnce() {
-  // 2.7 uses a single operator-facing limit: limit_ip is mirrored into the
-  // legacy device_limit column for backup/import compatibility. A new marker is
-  // required because installations that already ran the 2.6 migration have the
-  // v1 marker but may contain different values.
-  const marker = db.prepare('SELECT value FROM app_settings WHERE key = ?').get('subscription_device_limit_unified_v2');
+  // 2.7.1 separates server-side IP limiting from subscription HWID slots.
+  // Installations that used the former unified field keep that number as the
+  // device limit and have the accidental IP limit removed (0 = unlimited).
+  const marker = db.prepare('SELECT value FROM app_settings WHERE key = ?').get('subscription_device_limits_separated_v3');
   if (marker) return false;
+  const wasUnified = Boolean(db.prepare('SELECT value FROM app_settings WHERE key = ?').get('subscription_device_limit_unified_v2'));
   const tx = db.transaction(() => {
-    db.prepare('UPDATE clients SET device_limit = CASE WHEN limit_ip > 0 THEN limit_ip ELSE 0 END').run();
+    if (wasUnified) {
+      db.prepare('UPDATE clients SET device_limit = CASE WHEN limit_ip > 0 THEN limit_ip WHEN device_limit > 0 THEN device_limit ELSE 1 END, limit_ip = 0').run();
+    } else {
+      db.prepare('UPDATE clients SET device_limit = CASE WHEN device_limit >= 0 THEN device_limit ELSE 1 END').run();
+    }
     db.prepare('INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)').run('subscription_device_limit_migrated_v1', '1');
-    db.prepare('INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)').run('subscription_device_limit_unified_v2', '1');
+    db.prepare('INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)').run('subscription_device_limits_separated_v3', '1');
   });
   tx();
   return true;
@@ -2363,12 +2367,8 @@ function isSubscriptionDeviceHwidRequired() {
 }
 
 function getClientDeviceLimit(clientRow) {
-  // Nexus uses one operator-facing limit for both remote IP limiting and
-  // subscription HWID activations. device_limit stays in the schema for
-  // backwards-compatible backups/imports, but limit_ip is the source of truth.
-  const limitIp = Math.max(0, Number(clientRow?.limit_ip ?? 0));
-  if (Number.isFinite(limitIp)) return limitIp;
-  return Math.max(0, Number(clientRow?.device_limit ?? 0));
+  const value = Number(clientRow?.device_limit ?? 1);
+  return Number.isFinite(value) ? Math.max(0, value) : 1;
 }
 
 function countSubscriptionDevices(clientId) {
@@ -4393,9 +4393,11 @@ async function h1CloudGetClientInfo(node, name, timeoutMs = FETCH_TIMEOUT_MS) {
 function h1CloudClientLimitPayload(opts = {}, client = {}) {
   const payload = {};
   const trafficGb = Math.max(0, Number(opts.traffic_gb ?? opts.trafficGb ?? client.traffic_gb ?? 0));
-  const deviceLimit = Math.max(0, Number(opts.limit_ip ?? opts.limitIp ?? client.limit_ip ?? 0));
+  // H1Cloud names its remote IP/device concurrency field `device_limit`, but
+  // locally it remains the independent server-side limit_ip value.
+  const remoteIpLimit = Math.max(0, Number(opts.limit_ip ?? opts.limitIp ?? client.limit_ip ?? 0));
   if (trafficGb > 0) payload.traffic_limit_gb = trafficGb;
-  if (deviceLimit > 0) payload.device_limit = deviceLimit;
+  if (remoteIpLimit > 0) payload.device_limit = remoteIpLimit;
   return payload;
 }
 
@@ -9254,7 +9256,7 @@ function remoteClientFromAggregatorState(rc, clientRow) {
     uuid: rc.uuid || clientRow.uuid,
     email: rc.email || clientRow.login,
     flow: clientRow.flow || rc.flow || '',
-    limitIp: Math.max(0, Number(clientRow.limit_ip ?? rc.limitIp ?? 1)),
+    limitIp: Math.max(0, Number(clientRow.limit_ip ?? rc.limitIp ?? 0)),
     totalGB: toTotalGbBytes(Number(clientRow.traffic_gb || 0)),
     expiryTime: Math.max(0, Number(clientRow.expiry_time || 0)),
     enable: isClientEffectivelyEnabled(clientRow),
@@ -9449,8 +9451,8 @@ function upsertLocalClientFromRemote(rc, sourceNode = null) {
       subSlug,
       remoteDurationDays,
       remoteTrafficGb,
-      Math.max(0, Number(rc.limitIp ?? 1)),
-      Math.max(0, Number(rc.limitIp ?? 1)),
+      Math.max(0, Number(rc.limitIp ?? 0)),
+      1,
       normalizeRemoteEpochMillis(rc.expiryTime || 0),
       rc.enable !== false ? 1 : 0,
       remoteComment,
@@ -9476,7 +9478,7 @@ function upsertLocalClientFromRemote(rc, sourceNode = null) {
     subSlug,
     Math.max(0, Number(clientRow.duration_days || 0)),
     Math.max(0, Number(clientRow.traffic_gb || 0)),
-    Math.max(0, Number(clientRow.limit_ip ?? 1)),
+    Math.max(0, Number(clientRow.limit_ip ?? 0)),
     Math.max(0, Number(clientRow.expiry_time || 0)),
     Number(clientRow.enabled) !== 0 ? 1 : 0,
     clientRow.comment || remoteComment || '',
@@ -10114,7 +10116,7 @@ async function ensureH1Cloud3xuiClientOnNode(node, client, opts = {}) {
   }
 
   const trafficGb = Math.max(0, Number(opts.traffic_gb ?? getClientNodeEffectiveTrafficGb(map, client, 0)));
-  const limitIp = Math.max(0, Number(opts.limit_ip ?? getClientNodeEffectiveLimitIp(map, client, state.globalClient?.limitIp ?? 1)));
+  const limitIp = Math.max(0, Number(opts.limit_ip ?? getClientNodeEffectiveLimitIp(map, client, state.globalClient?.limitIp ?? 0)));
   const expiryTime = Math.max(0, Number(opts.expiry_time ?? client.expiry_time ?? 0));
   const durationDays = Math.max(0, Number(opts.duration_days ?? client.duration_days ?? 0));
   const nodeEnabled = opts.node_enabled !== undefined ? Boolean(opts.node_enabled) : (map ? map.enabled !== 0 : true);
@@ -10268,7 +10270,7 @@ async function updateClientOnNode(node, map, client, opts = {}) {
   const remoteUuid = String(current.id || fallbackRemoteUuid || client.uuid || '').trim();
   if (!remoteUuid) throw new Error('Не найден UUID клиента на узле');
 
-  const limitIp = Math.max(0, Number(opts.limit_ip ?? map.limit_ip ?? client.limit_ip ?? current.limitIp ?? 1));
+  const limitIp = Math.max(0, Number(opts.limit_ip ?? map.limit_ip ?? client.limit_ip ?? current.limitIp ?? 0));
   const expiryTime = Math.max(0, Number(opts.expiry_time ?? client.expiry_time ?? current.expiryTime ?? 0));
   const subId = opts.subId || current.subId || fallbackSubId;
   const comment = String(opts.comment ?? client.comment ?? current.comment ?? '').trim();
@@ -10324,7 +10326,7 @@ function getClientNodeEffectiveLimitIp(map, client, fallback = 1) {
   if (map && map.limit_ip !== null && map.limit_ip !== undefined && map.limit_ip !== '') {
     return Math.max(0, Number(map.limit_ip || 0));
   }
-  return Math.max(0, Number(client?.limit_ip ?? fallback ?? 1));
+  return Math.max(0, Number(client?.limit_ip ?? fallback ?? 0));
 }
 
 function getClientNodeEffectiveTrafficGb(map, client, fallback = 0) {
@@ -10907,7 +10909,7 @@ async function ensureAggregatorClientOnNode(node, client, opts = {}) {
       uuid: expectedUuid,
       email,
       trafficGb: opts.traffic_gb ?? getClientNodeEffectiveTrafficGb(map, client, 0),
-      limitIp: opts.limit_ip ?? getClientNodeEffectiveLimitIp(map, client, current?.limitIp ?? 1),
+      limitIp: opts.limit_ip ?? getClientNodeEffectiveLimitIp(map, client, current?.limitIp ?? 0),
       expiryTime: opts.expiry_time ?? client.expiry_time
     });
   }
@@ -10915,7 +10917,7 @@ async function ensureAggregatorClientOnNode(node, client, opts = {}) {
   const remoteUuid = String(current?.id || map?.remote_uuid || client.uuid || opts.uuid || randomUUID()).trim();
   const subId = String(opts.subId || current?.subId || client.sub_slug || randomUUID().replace(/-/g, '').slice(0, 16)).trim();
   const trafficGb = Math.max(0, Number(opts.traffic_gb ?? getClientNodeEffectiveTrafficGb(map, client, 0)));
-  const limitIp = Math.max(0, Number(opts.limit_ip ?? getClientNodeEffectiveLimitIp(map, client, current?.limitIp ?? 1)));
+  const limitIp = Math.max(0, Number(opts.limit_ip ?? getClientNodeEffectiveLimitIp(map, client, current?.limitIp ?? 0)));
   const expiryTime = Math.max(0, Number(opts.expiry_time ?? client.expiry_time ?? current?.expiryTime ?? 0));
   const durationDays = Math.max(0, Number(opts.duration_days ?? client.duration_days ?? current?.reset ?? 0));
   const nodeEnabled = opts.node_enabled !== undefined ? Boolean(opts.node_enabled) : (map ? map.enabled !== 0 : true);
@@ -15371,7 +15373,7 @@ app.post('/client-tags/:id/delete', requireAuth, (req, res) => {
 
 app.post('/clients', requireAuth, async (req, res) => {
   try {
-    const { login, limit_ip, duration_days, traffic_gb, comment } = req.body;
+    const { login, limit_ip, device_limit, duration_days, traffic_gb, comment } = req.body;
     let nodeIds = req.body.node_ids || [];
 
     if (!Array.isArray(nodeIds)) nodeIds = [nodeIds];
@@ -15401,8 +15403,8 @@ app.post('/clients', requireAuth, async (req, res) => {
       throw makeRemoteClientConflictError(first.node, cleanLogin, first.remote, { email: cleanLogin });
     }
 
-    const cleanLimitIp = Math.max(0, Number(limit_ip ?? 1));
-    const cleanDeviceLimit = cleanLimitIp;
+    const cleanLimitIp = Math.max(0, Number(limit_ip ?? 0));
+    const cleanDeviceLimit = Math.max(0, Number(device_limit ?? 1));
     const cleanDurationDays = Math.max(0, Number(duration_days || 0));
     const cleanTrafficGb = Math.max(0, Number(traffic_gb || 0));
     const totalGbBytes = toTotalGbBytes(cleanTrafficGb);
@@ -15943,8 +15945,8 @@ app.post('/clients/:id/edit', requireAuth, async (req, res) => {
 
     const login = String(req.body.login || '').trim() || client.login;
     const displayName = String(req.body.display_name || login).trim() || login;
-    const limitIp = Math.max(0, Number(req.body.limit_ip ?? client.limit_ip ?? 1));
-    const deviceLimit = limitIp;
+    const limitIp = Math.max(0, Number(req.body.limit_ip ?? client.limit_ip ?? 0));
+    const deviceLimit = Math.max(0, Number(req.body.device_limit ?? client.device_limit ?? 1));
     const rawDurationDays = String(req.body.duration_days ?? '').trim();
     const durationWasChanged = rawDurationDays !== '';
     const durationDays = durationWasChanged
@@ -15959,7 +15961,7 @@ app.post('/clients/:id/edit', requireAuth, async (req, res) => {
 
     const h1BaseChangedFields = [];
     if (!sameText(login, client.login)) h1BaseChangedFields.push('email');
-    if (Number(limitIp) !== Number(client.limit_ip ?? 1)) h1BaseChangedFields.push('limit_ip');
+    if (Number(limitIp) !== Number(client.limit_ip ?? 0)) h1BaseChangedFields.push('limit_ip');
     if (durationWasChanged && (Number(durationDays) !== Number(client.duration_days || 0) || Number(expiryTime) !== Number(client.expiry_time || 0))) {
       h1BaseChangedFields.push('expiry_time');
     }
@@ -18840,7 +18842,7 @@ async function telegramCheckExpiryNotices() {
         '',
         `Ваш VPN-доступ заканчивается через ${leftDays} ${ruPlural(leftDays, 'день', 'дня', 'дней')}.`,
         `Логин: ${row.login}`,
-        `Количество устройств: ${formatDeviceLimit(row.limit_ip || 0)}`,
+        `Количество устройств: ${formatDeviceLimit(row.device_limit ?? 1)}`,
         '',
         'Чтобы продлить доступ, напишите в поддержку или оставьте новую заявку через «🌐 Подключить VPN».',
         'Для постоянной связи используйте «📡 Прокси для Telegram».'

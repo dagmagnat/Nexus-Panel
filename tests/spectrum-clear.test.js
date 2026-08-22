@@ -158,7 +158,8 @@ test('2.6.0 HWID device registry and subscription notices are wired into the UI'
   const openSub = read('views/open_sub.ejs');
   const css = read('public/css/spectrum-clear.css');
   assert.match(app, /CREATE TABLE IF NOT EXISTS subscription_devices/);
-  assert.match(app, /device_limit INTEGER NOT NULL DEFAULT 0/);
+  assert.match(app, /limit_ip INTEGER NOT NULL DEFAULT 0/);
+  assert.match(app, /device_limit INTEGER NOT NULL DEFAULT 1/);
   assert.match(app, /buildSubscriptionEntriesForRequest/);
   assert.match(app, /x-hwid-max-devices-reached/);
   assert.match(clients, /Устройства клиента/);
@@ -171,15 +172,15 @@ test('2.6.0 HWID device registry and subscription notices are wired into the UI'
   assert.match(css, /subscription HWID device registry/);
 });
 
-test('2.7.0 unifies client limits, exposes devices and wires grace/support nodes', () => {
+test('2.7.1 separates IP and device limits, exposes devices and wires grace/support nodes', () => {
   const app = read('app.js');
   const clients = read('views/clients.ejs');
   const settings = read('views/settings.ejs');
   const css = read('public/css/spectrum-clear.css');
   const transfer = read('scripts/client-transfer.py');
 
-  assert.match(app, /subscription_device_limit_unified_v2/);
-  assert.match(app, /limit_ip is the source of truth/);
+  assert.match(app, /subscription_device_limits_separated_v3/);
+  assert.match(app, /IP limiting from subscription HWID slots/);
   assert.match(app, /subscription_expired_grace_days/);
   assert.match(app, /subscription_expired_grace_node_ids/);
   assert.match(app, /subscription_device_limit_node_ids/);
@@ -194,8 +195,9 @@ test('2.7.0 unifies client limits, exposes devices and wires grace/support nodes
   assert.match(app, /subscription_policy_only INTEGER NOT NULL DEFAULT 0/);
   assert.match(app, /excludePolicyOnly: true/);
 
-  assert.match(clients, /Лимит IP \/ устройств/);
-  assert.doesNotMatch(clients, /name="device_limit"/);
+  assert.match(clients, /<label>Лимит IP<\/label>/);
+  assert.match(clients, /<label>Лимит устройств<\/label>/);
+  assert.match(clients, /name="device_limit"/);
   assert.match(clients, /Ссылка подписки/);
   assert.match(clients, /↗ Открыть/);
   assert.match(clients, /device-slot-badge/);
@@ -216,5 +218,6 @@ test('2.7.0 unifies client limits, exposes devices and wires grace/support nodes
   assert.match(css, /grid-template-columns: repeat\(8, minmax\(0, 1fr\)\)/);
   assert.match(css, /device-details-row\.is-over-limit/);
   assert.match(css, /\.page-clients \.mobile-client-tabs/);
-  assert.match(transfer, /"deviceLimit": clamp_int\(row_value\(row, "limit_ip"\), 1\)/);
+  assert.match(transfer, /"limitIp": clamp_int\(row_value\(row, "limit_ip"\), 0\)/);
+  assert.match(transfer, /"deviceLimit": clamp_int\(row_value\(row, "device_limit"\), 1\)/);
 });
