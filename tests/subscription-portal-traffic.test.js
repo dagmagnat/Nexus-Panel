@@ -284,7 +284,7 @@ test('subscription sums unlimited-node traffic once and exposes a branded browse
   const rules = jsonConfigs[0].routing.rules;
   assert.equal(jsonConfigs[0].routing.domainStrategy, 'IPOnDemand');
   assert.deepEqual(rules.slice(-3), [
-    { type: 'field', domain: ['geosite:category-ru', 'regexp:\\.(ru|su|xn--p1ai)$'], outboundTag: 'direct' },
+    { type: 'field', domain: ['geosite:category-ru', 'regexp:\\.(ru|su|xn--p1ai)$', 'domain:2ip.ru', 'domain:2ip.io', 'domain:2ip.me'], outboundTag: 'direct' },
     { type: 'field', ip: ['geoip:ru'], outboundTag: 'direct' },
     { type: 'field', network: 'tcp,udp', outboundTag: 'proxy' }
   ]);

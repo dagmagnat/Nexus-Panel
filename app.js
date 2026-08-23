@@ -17251,9 +17251,14 @@ function getRoutingDirectDomains() {
   const domains = uniqueList(cfg.exceptDomains || []);
   // Some mobile clients ship a delayed or reduced geosite.dat. Keep the
   // explicit category rule, but add a dependency-free suffix fallback for the
-  // common RU zones so they still go direct.
+  // common RU zones and popular RU IP-check services so they still go direct.
   if (domains.includes('geosite:category-ru')) {
-    domains.push('regexp:\\.(ru|su|xn--p1ai)$');
+    domains.push(
+      'regexp:\\.(ru|su|xn--p1ai)$',
+      'domain:2ip.ru',
+      'domain:2ip.io',
+      'domain:2ip.me'
+    );
   }
   return uniqueList(domains);
 }

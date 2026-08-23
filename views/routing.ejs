@@ -165,7 +165,7 @@
                 <div class="routing-mode-rules routing-mode-rules-direct">
                   <div class="routing-mode-rules-head"><strong>Исключения этого режима → напрямую</strong><small>Обходят VPN только в JSON отмеченных выше узлов.</small></div>
                   <div class="form-grid">
-                    <div class="field half"><label>Domain / GeoSite → direct</label><textarea name="except_domains" rows="6" placeholder="geosite:category-ru&#10;domain:bank.ru"><%= exceptDomainsText %></textarea><small class="hint"><code>geosite:category-ru</code>: российские сайты увидят прямой IP, иностранные — IP выбранного узла.</small></div>
+                    <div class="field half"><label>Domain / GeoSite → direct</label><textarea name="except_domains" rows="6" placeholder="geosite:category-ru&#10;domain:bank.ru"><%= exceptDomainsText %></textarea><small class="hint"><code>geosite:category-ru</code>: российские сайты увидят прямой IP, иностранные — IP выбранного узла. Для надёжной проверки автоматически добавляются 2ip.ru, 2ip.io и 2ip.me.</small></div>
                     <div class="field half"><label>IP / GeoIP → direct</label><textarea name="except_ips" rows="6" placeholder="geoip:ru&#10;10.0.0.0/8"><%= exceptIpsText %></textarea><small class="hint">Для российских IP укажи <code>geoip:ru</code>.</small></div>
                   </div>
                 </div>

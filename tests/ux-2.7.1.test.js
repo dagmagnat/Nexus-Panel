@@ -44,6 +44,7 @@ test('2.7.1 applies JSON controls and routing modes to explicit non-overlapping 
   const app = read('app.js');
   const settings = read('views/settings.ejs');
   const routing = read('views/routing.ejs');
+  const css = read('public/css/spectrum-clear.css');
 
   assert.match(app, /isJsonMuxEnabledForNode/);
   assert.match(app, /isJsonSniffingEnabledForNode/);
@@ -52,6 +53,8 @@ test('2.7.1 applies JSON controls and routing modes to explicit non-overlapping 
   assert.match(settings, /data-json-node-picker/);
   assert.doesNotMatch(settings, /flagHtml\(/);
   assert.match(settings, /countryFlagText\(/);
+  assert.match(css, /\.happ-json-toggle-grid > \.json-node-policy \{ grid-column: span 6;/);
+  assert.match(css, /\.happ-json-toggle-grid > \.switch-row \{ grid-column: 1 \/ -1;/);
   assert.match(app, /modeAssignments/);
   assert.match(app, /getRoutingModeForNode/);
   assert.match(app, /Один узел нельзя использовать одновременно в нескольких режимах/);

@@ -2787,8 +2787,13 @@ body.client-modal-open { overflow: hidden; overscroll-behavior: none; }
 .subscription-policy-node-option strong,
 .subscription-policy-node-option small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .subscription-policy-node-option small { color: var(--muted); }
-.happ-json-toggle-grid > .switch-row { min-height: 76px; align-items: center; }
+.happ-json-toggle-grid > .json-node-policy { grid-column: span 6; min-width: 0; }
+.happ-json-toggle-grid > .switch-row { grid-column: 1 / -1; width: 100%; min-width: 0; min-height: 76px; align-items: center; }
 .happ-json-toggle-grid code { font-size: .9em; white-space: normal; overflow-wrap: anywhere; }
+
+@media (max-width: 720px) {
+  .happ-json-toggle-grid > .json-node-policy { grid-column: 1 / -1; }
+}
 
 .client-editor-summary .client-summary-uuid { grid-column: span 2; }
 .client-summary-open-btn { width: 100%; min-height: 38px; justify-content: center; }

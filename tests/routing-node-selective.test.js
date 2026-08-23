@@ -22,7 +22,7 @@ function loadRoutingRuleBuilder() {
     () => ({ enabled: true, mode: 'proxy-except' }),
     () => [], () => [],
     () => ['domain:foreign.example'], () => ['8.8.8.8'],
-    () => ['geosite:category-ru', 'regexp:\\.(ru|su|xn--p1ai)$'], () => ['geoip:ru']
+    () => ['geosite:category-ru', 'regexp:\\.(ru|su|xn--p1ai)$', 'domain:2ip.ru', 'domain:2ip.io', 'domain:2ip.me'], () => ['geoip:ru']
   );
 }
 
@@ -65,7 +65,7 @@ test('proxy-except sends RU rules direct and all remaining traffic through the c
   const buildRoutingRules = loadRoutingRuleBuilder();
   const rules = buildRoutingRules('', 'proxy-except');
   assert.deepEqual(rules.slice(-3), [
-    { type: 'field', domain: ['geosite:category-ru', 'regexp:\\.(ru|su|xn--p1ai)$'], outboundTag: 'direct' },
+    { type: 'field', domain: ['geosite:category-ru', 'regexp:\\.(ru|su|xn--p1ai)$', 'domain:2ip.ru', 'domain:2ip.io', 'domain:2ip.me'], outboundTag: 'direct' },
     { type: 'field', ip: ['geoip:ru'], outboundTag: 'direct' },
     { type: 'field', network: 'tcp,udp', outboundTag: 'proxy' }
   ]);
