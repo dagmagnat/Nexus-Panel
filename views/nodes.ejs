@@ -221,6 +221,17 @@
           <small class="hint">Перед сохранением Aggregator проверит этот ID, загрузит полный inbound и перенесёт его Protocol, Transport, Security, порт, путь и режим. Если ID не найден, узел не будет добавлен.</small>
         </div>
 
+        <div class="field full js-node-3xui-only source-subscription-controls">
+          <div class="source-subscription-controls-head">
+            <div><strong>Наследовать настройки JSON-подписки из этой 3x-ui</strong><small>При добавлении Nexus прочитает реальные <code>subJsonMux</code> и <code>subJsonFinalMask</code>. По умолчанию всё выключено: включай параметры по одному для проверки совместимости клиентов.</small></div>
+          </div>
+          <div class="source-subscription-option-grid">
+            <label class="switch-row compact"><input type="checkbox" name="inherit_3xui_mux" value="1" /><span><strong>Mux</strong><small>Точная конфигурация Mux исходной панели.</small></span></label>
+            <label class="switch-row compact"><input type="checkbox" name="inherit_3xui_fragment" value="1" /><span><strong>Fragment</strong><small>TCP fragment из FinalMask исходной панели.</small></span></label>
+            <label class="switch-row compact"><input type="checkbox" name="inherit_3xui_noises" value="1" /><span><strong>Noises</strong><small>UDP noise из FinalMask исходной панели.</small></span></label>
+          </div>
+        </div>
+
         <div class="field half js-node-3xui-only js-node-3xui-editable-only">
           <label>SNI в подписках</label>
           <select name="sni_mode" data-sni-source>
@@ -431,6 +442,23 @@
                 </div>
               </div>
 
+              <div class="node-detail-actions node-detail-actions-top">
+                <form method="post" action="/nodes/<%= node.id %>/check" class="inline-form node-detail-action-form js-long-action" data-loading-title="Проверяю узел" data-loading-text="Ожидание ответа ограничено коротким тайм-аутом. Недоступный узел не будет удерживать страницу 30 секунд." onclick="event.stopPropagation()">
+                  <button type="submit" class="btn-main">Проверить</button>
+                </form>
+                <a href="/nodes/<%= node.id %>/edit" class="link-btn secondary node-detail-action-link" onclick="event.stopPropagation()">Изменить</a>
+                <form method="post" action="/nodes/<%= node.id %>/create-missing-clients" class="inline-form node-detail-action-form js-long-action" data-loading-title="Добавляю отсутствующих клиентов" data-loading-text="На этот узел будут созданы только отсутствующие клиенты. Уже существующие записи не обновляются." onclick="event.stopPropagation()" onsubmit="return confirm('<%= isRemnawave ? 'Создать в Remnawave только отсутствующих пользователей Aggregator и назначить им настроенный Internal Squad?' : 'Создать на выбранном узле только отсутствующих клиентов агрегатора? Уже существующие клиенты будут пропущены.' %>')">
+                  <button type="submit" class="secondary">Создать отсутствующих</button>
+                </form>
+                <form method="post" action="/nodes/<%= node.id %>/toggle" class="inline-form node-detail-action-form" onclick="event.stopPropagation()" onsubmit="return confirm('<%= isRemnawave ? (isEnabled ? 'Отключить подключение Remnawave?' : 'Включить подключение Remnawave?') : (isEnabled ? 'Отключить узел из подписок?' : 'Включить узел обратно в подписки?') %>')">
+                  <% if (isEnabled) { %>
+                    <button type="submit" class="danger">Отключить</button>
+                  <% } else { %>
+                    <button type="submit" class="secondary">Включить</button>
+                  <% } %>
+                </form>
+              </div>
+
               <div class="node-detail-kv">
                 <div class="node-detail-kv-row">
                   <span>API / Panel URL</span>
@@ -560,22 +588,6 @@
                 </div>
               </div>
 
-              <div class="node-detail-actions">
-                <form method="post" action="/nodes/<%= node.id %>/check" class="inline-form node-detail-action-form js-long-action" data-loading-title="Проверяю узел" data-loading-text="Ожидание ответа ограничено коротким тайм-аутом. Недоступный узел не будет удерживать страницу 30 секунд." onclick="event.stopPropagation()">
-                  <button type="submit" class="btn-main">Проверить</button>
-                </form>
-                <a href="/nodes/<%= node.id %>/edit" class="link-btn secondary node-detail-action-link" onclick="event.stopPropagation()">Изменить</a>
-                <form method="post" action="/nodes/<%= node.id %>/create-missing-clients" class="inline-form node-detail-action-form js-long-action" data-loading-title="Добавляю отсутствующих клиентов" data-loading-text="На этот узел будут созданы только отсутствующие клиенты. Уже существующие записи не обновляются." onclick="event.stopPropagation()" onsubmit="return confirm('<%= isRemnawave ? 'Создать в Remnawave только отсутствующих пользователей Aggregator и назначить им настроенный Internal Squad?' : 'Создать на выбранном узле только отсутствующих клиентов агрегатора? Уже существующие клиенты будут пропущены.' %>')">
-                  <button type="submit" class="secondary">Создать отсутствующих</button>
-                </form>
-                <form method="post" action="/nodes/<%= node.id %>/toggle" class="inline-form node-detail-action-form" onclick="event.stopPropagation()" onsubmit="return confirm('<%= isRemnawave ? (isEnabled ? 'Отключить подключение Remnawave?' : 'Включить подключение Remnawave?') : (isEnabled ? 'Отключить узел из подписок?' : 'Включить узел обратно в подписки?') %>')">
-                  <% if (isEnabled) { %>
-                    <button type="submit" class="danger">Отключить</button>
-                  <% } else { %>
-                    <button type="submit" class="secondary">Включить</button>
-                  <% } %>
-                </form>
-              </div>
             </article>
           <% }) %>
         </aside>

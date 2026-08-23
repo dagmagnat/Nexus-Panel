@@ -374,6 +374,12 @@ function backfillSchemaDefaults() {
   try { db.prepare("UPDATE nodes SET h1cloud_3xui_json_url_template = '' WHERE h1cloud_3xui_json_url_template IS NULL").run(); } catch (_) {}
   try { db.prepare("UPDATE nodes SET h1cloud_3xui_local_expiry = 1 WHERE h1cloud_3xui_local_expiry IS NULL").run(); } catch (_) {}
   try { db.prepare("UPDATE nodes SET h1cloud_3xui_sub_port = 25555 WHERE h1cloud_3xui_sub_port IS NULL OR h1cloud_3xui_sub_port < 1").run(); } catch (_) {}
+  try { db.prepare("UPDATE nodes SET inherit_3xui_mux = 0 WHERE inherit_3xui_mux IS NULL").run(); } catch (_) {}
+  try { db.prepare("UPDATE nodes SET inherit_3xui_fragment = 0 WHERE inherit_3xui_fragment IS NULL").run(); } catch (_) {}
+  try { db.prepare("UPDATE nodes SET inherit_3xui_noises = 0 WHERE inherit_3xui_noises IS NULL").run(); } catch (_) {}
+  try { db.prepare("UPDATE nodes SET source_sub_json_mux = '' WHERE source_sub_json_mux IS NULL").run(); } catch (_) {}
+  try { db.prepare("UPDATE nodes SET source_sub_json_finalmask = '' WHERE source_sub_json_finalmask IS NULL").run(); } catch (_) {}
+  try { db.prepare("UPDATE nodes SET source_sub_settings_error = '' WHERE source_sub_settings_error IS NULL").run(); } catch (_) {}
   try {
     const rows = db.prepare('SELECT id, name, country_code, country_name_ru, country_flag FROM nodes').all();
     const update = db.prepare('UPDATE nodes SET country_code = ?, country_flag = ? WHERE id = ?');
@@ -1131,6 +1137,12 @@ function initDb() {
       remnawave_link_mode TEXT NOT NULL DEFAULT 'first',
       remnawave_link_filter TEXT DEFAULT '',
       remnawave_remark_mode TEXT NOT NULL DEFAULT 'aggregator',
+      inherit_3xui_mux INTEGER NOT NULL DEFAULT 0,
+      inherit_3xui_fragment INTEGER NOT NULL DEFAULT 0,
+      inherit_3xui_noises INTEGER NOT NULL DEFAULT 0,
+      source_sub_json_mux TEXT DEFAULT '',
+      source_sub_json_finalmask TEXT DEFAULT '',
+      source_sub_settings_error TEXT DEFAULT '',
       inbound_id INTEGER NOT NULL,
       enabled INTEGER NOT NULL DEFAULT 1,
       last_status TEXT DEFAULT 'unknown',
@@ -1371,6 +1383,12 @@ function initDb() {
   addColumnIfMissing('nodes', 'remnawave_link_mode', "TEXT NOT NULL DEFAULT 'first'");
   addColumnIfMissing('nodes', 'remnawave_link_filter', "TEXT DEFAULT ''");
   addColumnIfMissing('nodes', 'remnawave_remark_mode', "TEXT NOT NULL DEFAULT 'aggregator'");
+  addColumnIfMissing('nodes', 'inherit_3xui_mux', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing('nodes', 'inherit_3xui_fragment', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing('nodes', 'inherit_3xui_noises', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing('nodes', 'source_sub_json_mux', "TEXT DEFAULT ''");
+  addColumnIfMissing('nodes', 'source_sub_json_finalmask', "TEXT DEFAULT ''");
+  addColumnIfMissing('nodes', 'source_sub_settings_error', "TEXT DEFAULT ''");
   addColumnIfMissing('nodes', 'country_code', "TEXT DEFAULT ''");
   addColumnIfMissing('nodes', 'country_name_ru', "TEXT DEFAULT ''");
   addColumnIfMissing('nodes', 'country_flag', "TEXT DEFAULT ''");
@@ -4930,6 +4948,53 @@ async function apiPost(node, path, body, asForm = false, timeoutMs = NODE_API_TI
   }
 
   return data;
+}
+
+function parse3xuiSubscriptionJsonSetting(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function has3xuiFinalMaskType(rawValue, section, type) {
+  const parsed = parse3xuiSubscriptionJsonSetting(rawValue);
+  const entries = parsed && Array.isArray(parsed[section]) ? parsed[section] : [];
+  return entries.some(entry => String(entry?.type || '').trim().toLowerCase() === String(type || '').toLowerCase());
+}
+
+function summarize3xuiSubscriptionSource(source = {}) {
+  return {
+    muxAvailable: !!parse3xuiSubscriptionJsonSetting(source.mux),
+    fragmentAvailable: has3xuiFinalMaskType(source.finalmask, 'tcp', 'fragment'),
+    noisesAvailable: has3xuiFinalMaskType(source.finalmask, 'udp', 'noise')
+  };
+}
+
+async function fetch3xuiSubscriptionSource(node, timeoutMs = NODE_API_TIMEOUT_MS) {
+  try {
+    const data = await apiPost(node, '/panel/api/setting/all', {}, false, timeoutMs);
+    const settings = data?.obj && typeof data.obj === 'object'
+      ? data.obj
+      : (data?.data && typeof data.data === 'object' ? data.data : data);
+    const mux = String(settings?.subJsonMux || '').trim();
+    const finalmask = String(settings?.subJsonFinalMask || '').trim();
+    const summary = summarize3xuiSubscriptionSource({ mux, finalmask });
+    return { mux, finalmask, error: '', ...summary };
+  } catch (err) {
+    return {
+      mux: '',
+      finalmask: '',
+      error: `Настройки JSON исходной 3x-ui недоступны: ${String(err?.message || err)}`,
+      muxAvailable: false,
+      fragmentAvailable: false,
+      noisesAvailable: false
+    };
+  }
 }
 
 async function apiDelete(node, path, body = null, timeoutMs = NODE_API_TIMEOUT_MS) {
@@ -14550,6 +14615,7 @@ app.post('/nodes', requireAuth, async (req, res) => {
     const storedApiTokenEnc = apiMode === 'token' ? encrypt(String(api_token || '').trim(), APP_SECRET) : '';
     let importedInbound = null;
     let importedPanelVersion = '';
+    let importedSubSource = { mux: '', finalmask: '', error: '' };
     if (normalizedNodeType === NODE_TYPE_3XUI) {
       // Проверяем подключение и читаем полный выбранный inbound до записи узла
       // в БД. Неверный ID/токен больше не оставляет полупустой offline-узел.
@@ -14568,6 +14634,7 @@ app.post('/nodes', requireAuth, async (req, res) => {
       const statusData = await apiGet(pendingNode, '/panel/api/server/status', NODE_API_TIMEOUT_MS);
       importedPanelVersion = extract3xuiPanelVersion(statusData);
       importedInbound = await fetchSelectedInboundExact(pendingNode, NODE_API_TIMEOUT_MS);
+      importedSubSource = await fetch3xuiSubscriptionSource(pendingNode, NODE_API_TIMEOUT_MS);
       if (!['tls', 'reality'].includes(getInboundTransportInfo(importedInbound).security)) {
         normalizedSniMode = 'inbound';
         normalizedSniProfileId = null;
@@ -14596,6 +14663,12 @@ app.post('/nodes', requireAuth, async (req, res) => {
         remnawave_link_mode,
         remnawave_link_filter,
         remnawave_remark_mode,
+        inherit_3xui_mux,
+        inherit_3xui_fragment,
+        inherit_3xui_noises,
+        source_sub_json_mux,
+        source_sub_json_finalmask,
+        source_sub_settings_error,
         inbound_id,
         country_code,
         country_name_ru,
@@ -14610,7 +14683,7 @@ app.post('/nodes', requireAuth, async (req, res) => {
         h1cloud_3xui_json_url_template,
         sort_order
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       country.name_ru,
       normalizedNodeType,
@@ -14631,6 +14704,12 @@ app.post('/nodes', requireAuth, async (req, res) => {
       normalizedRemnawaveLinkMode,
       normalizedRemnawaveLinkFilter,
       normalizedRemnawaveRemarkMode,
+      normalizedNodeType === NODE_TYPE_3XUI && req.body.inherit_3xui_mux === '1' ? 1 : 0,
+      normalizedNodeType === NODE_TYPE_3XUI && req.body.inherit_3xui_fragment === '1' ? 1 : 0,
+      normalizedNodeType === NODE_TYPE_3XUI && req.body.inherit_3xui_noises === '1' ? 1 : 0,
+      normalizedNodeType === NODE_TYPE_3XUI ? importedSubSource.mux : '',
+      normalizedNodeType === NODE_TYPE_3XUI ? importedSubSource.finalmask : '',
+      normalizedNodeType === NODE_TYPE_3XUI ? importedSubSource.error : '',
       (isH1ApiType || isRemnawaveType) ? 0 : Number(inbound_id),
       country.code,
       country.name_ru,
@@ -14812,6 +14891,10 @@ app.get('/nodes/:id/edit', requireAuth, async (req, res) => {
   render(res, 'node_edit', {
     node,
     inboundPreview,
+    sourceSubscriptionSummary: summarize3xuiSubscriptionSource({
+      mux: node.source_sub_json_mux,
+      finalmask: node.source_sub_json_finalmask
+    }),
     countries: getSortedCountriesRu(),
     nodePageSize: getNodesPageSize(),
     sniProfiles: getSniProfiles(),
@@ -14955,6 +15038,11 @@ app.post('/nodes/:id/edit', requireAuth, async (req, res) => {
               : ''));
 
     let preflightInbound = null;
+    let refreshedSubSource = {
+      mux: String(existingNode.source_sub_json_mux || ''),
+      finalmask: String(existingNode.source_sub_json_finalmask || ''),
+      error: String(existingNode.source_sub_settings_error || '')
+    };
     if (normalizedNodeType === NODE_TYPE_3XUI) {
       const pendingNode = {
         ...existingNode,
@@ -14971,6 +15059,10 @@ app.post('/nodes/:id/edit', requireAuth, async (req, res) => {
       };
       await apiGet(pendingNode, '/panel/api/server/status', NODE_API_TIMEOUT_MS);
       preflightInbound = await fetchSelectedInboundExact(pendingNode, NODE_API_TIMEOUT_MS);
+      const fetchedSubSource = await fetch3xuiSubscriptionSource(pendingNode, NODE_API_TIMEOUT_MS);
+      refreshedSubSource = fetchedSubSource.error && !credentialsContextChanged
+        ? { ...refreshedSubSource, error: fetchedSubSource.error }
+        : fetchedSubSource;
       if (!['tls', 'reality'].includes(getInboundTransportInfo(preflightInbound).security)) {
         normalizedSniMode = 'inbound';
         normalizedSniProfileId = null;
@@ -15000,6 +15092,12 @@ app.post('/nodes/:id/edit', requireAuth, async (req, res) => {
         remnawave_link_mode = ?,
         remnawave_link_filter = ?,
         remnawave_remark_mode = ?,
+        inherit_3xui_mux = ?,
+        inherit_3xui_fragment = ?,
+        inherit_3xui_noises = ?,
+        source_sub_json_mux = ?,
+        source_sub_json_finalmask = ?,
+        source_sub_settings_error = ?,
         inbound_id = ?,
         country_code = ?,
         country_name_ru = ?,
@@ -15033,6 +15131,12 @@ app.post('/nodes/:id/edit', requireAuth, async (req, res) => {
       normalizedRemnawaveLinkMode,
       normalizedRemnawaveLinkFilter,
       normalizedRemnawaveRemarkMode,
+      normalizedNodeType === NODE_TYPE_3XUI && req.body.inherit_3xui_mux === '1' ? 1 : 0,
+      normalizedNodeType === NODE_TYPE_3XUI && req.body.inherit_3xui_fragment === '1' ? 1 : 0,
+      normalizedNodeType === NODE_TYPE_3XUI && req.body.inherit_3xui_noises === '1' ? 1 : 0,
+      normalizedNodeType === NODE_TYPE_3XUI ? refreshedSubSource.mux : '',
+      normalizedNodeType === NODE_TYPE_3XUI ? refreshedSubSource.finalmask : '',
+      normalizedNodeType === NODE_TYPE_3XUI ? refreshedSubSource.error : '',
       (isH1ApiType || isRemnawaveType) ? 0 : Number(inbound_id),
       country.code,
       country.name_ru,
@@ -16374,18 +16478,71 @@ function getHappJsonControls() {
   };
 }
 
+function getInherited3xuiSubscriptionControls(nodeId) {
+  const node = db.prepare(`
+    SELECT inherit_3xui_mux, inherit_3xui_fragment, inherit_3xui_noises,
+           source_sub_json_mux, source_sub_json_finalmask
+    FROM nodes WHERE id = ?
+  `).get(Number(nodeId));
+  if (!node) return { mux: null, finalmask: null };
+
+  const sourceMux = Number(node.inherit_3xui_mux) === 1
+    ? parse3xuiSubscriptionJsonSetting(node.source_sub_json_mux)
+    : null;
+  const sourceFinalmask = parse3xuiSubscriptionJsonSetting(node.source_sub_json_finalmask);
+  const finalmask = {};
+
+  if (sourceFinalmask && Number(node.inherit_3xui_fragment) === 1) {
+    const tcp = (Array.isArray(sourceFinalmask.tcp) ? sourceFinalmask.tcp : [])
+      .filter(entry => String(entry?.type || '').trim().toLowerCase() === 'fragment');
+    if (tcp.length) finalmask.tcp = JSON.parse(JSON.stringify(tcp));
+  }
+  if (sourceFinalmask && Number(node.inherit_3xui_noises) === 1) {
+    const udp = (Array.isArray(sourceFinalmask.udp) ? sourceFinalmask.udp : [])
+      .filter(entry => String(entry?.type || '').trim().toLowerCase() === 'noise');
+    if (udp.length) finalmask.udp = JSON.parse(JSON.stringify(udp));
+  }
+
+  return {
+    mux: sourceMux ? JSON.parse(JSON.stringify(sourceMux)) : null,
+    finalmask: Object.keys(finalmask).length ? finalmask : null
+  };
+}
+
+function mergeInherited3xuiFinalmask(existing, inherited) {
+  const base = existing && typeof existing === 'object' && !Array.isArray(existing)
+    ? JSON.parse(JSON.stringify(existing))
+    : {};
+  if (!inherited || typeof inherited !== 'object') return base;
+  for (const section of ['tcp', 'udp']) {
+    const entries = Array.isArray(inherited[section]) ? inherited[section] : [];
+    if (entries.length) base[section] = [...(Array.isArray(base[section]) ? base[section] : []), ...entries];
+  }
+  if (inherited.quicParams && typeof inherited.quicParams === 'object') {
+    base.quicParams = { ...(base.quicParams || {}), ...inherited.quicParams };
+  }
+  return base;
+}
+
 function applyHappOutboundControls(outbound, nodeId = 0) {
   if (!outbound) return outbound;
+
+  const inherited = getInherited3xuiSubscriptionControls(nodeId);
 
   // This controls the generated Xray JSON itself and is independent from Happ
   // Keep disabled by default because MUX often breaks
   // VLESS/REALITY and newer transports on some clients.
-  if (isJsonMuxEnabledForNode(nodeId)) {
+  if (inherited.mux) {
+    outbound.mux = inherited.mux;
+  } else if (isJsonMuxEnabledForNode(nodeId)) {
     outbound.mux = getJsonMuxConfig();
   } else {
     delete outbound.mux;
   }
   outbound.streamSettings = outbound.streamSettings || {};
+  if (inherited.finalmask) {
+    outbound.streamSettings.finalmask = mergeInherited3xuiFinalmask(outbound.streamSettings.finalmask, inherited.finalmask);
+  }
 
   return outbound;
 }

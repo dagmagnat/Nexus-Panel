@@ -20,7 +20,7 @@ test('2.7.1 mobile traffic, compact nodes and desktop density are wired', () => 
   assert.match(nodes, /data-node-live-indicator/);
   assert.match(nodes, /initMobileNodeLongPressOrder/);
   assert.match(css, /\.node-list-row\.is-expanded \.node-mobile-quick-actions/);
-  assert.match(css, /100dvh - 84px/);
+  assert.match(css, /100dvh - 108px/);
   assert.match(nodeEdit, /class="field full xhttp-settings-box"/);
   assert.match(css, /\.inline-select-grid/);
 });

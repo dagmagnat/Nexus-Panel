@@ -178,6 +178,26 @@
           <small class="hint">При сохранении панель проверит этот ID и заново загрузит только его полный набор параметров.</small>
         </div>
 
+        <div class="field full js-node-3xui-only source-subscription-controls <%= is3xuiFamily ? '' : 'hidden' %>" <%= is3xuiFamily ? '' : 'hidden style="display:none!important"' %>>
+          <div class="source-subscription-controls-head">
+            <div>
+              <strong>Параметры JSON-подписки исходной 3x-ui</strong>
+              <small>Nexus обновляет кэш <code>subJsonMux</code> и <code>subJsonFinalMask</code> при сохранении узла. Галочки применяют найденные параметры только к этому узлу.</small>
+            </div>
+            <div class="source-subscription-statuses" aria-label="Найденные параметры исходной панели">
+              <span class="badge <%= sourceSubscriptionSummary && sourceSubscriptionSummary.muxAvailable ? 'online' : 'offline' %>">Mux: <%= sourceSubscriptionSummary && sourceSubscriptionSummary.muxAvailable ? 'найден' : 'нет' %></span>
+              <span class="badge <%= sourceSubscriptionSummary && sourceSubscriptionSummary.fragmentAvailable ? 'online' : 'offline' %>">Fragment: <%= sourceSubscriptionSummary && sourceSubscriptionSummary.fragmentAvailable ? 'найден' : 'нет' %></span>
+              <span class="badge <%= sourceSubscriptionSummary && sourceSubscriptionSummary.noisesAvailable ? 'online' : 'offline' %>">Noises: <%= sourceSubscriptionSummary && sourceSubscriptionSummary.noisesAvailable ? 'найдены' : 'нет' %></span>
+            </div>
+          </div>
+          <% if (node.source_sub_settings_error) { %><div class="alert warning source-subscription-warning"><%= node.source_sub_settings_error %></div><% } %>
+          <div class="source-subscription-option-grid">
+            <label class="switch-row compact"><input type="checkbox" name="inherit_3xui_mux" value="1" <%= Number(node.inherit_3xui_mux) === 1 ? 'checked' : '' %> /><span><strong>Использовать Mux</strong><small>Без подстановки шаблона Nexus.</small></span></label>
+            <label class="switch-row compact"><input type="checkbox" name="inherit_3xui_fragment" value="1" <%= Number(node.inherit_3xui_fragment) === 1 ? 'checked' : '' %> /><span><strong>Использовать Fragment</strong><small>TCP fragment из FinalMask.</small></span></label>
+            <label class="switch-row compact"><input type="checkbox" name="inherit_3xui_noises" value="1" <%= Number(node.inherit_3xui_noises) === 1 ? 'checked' : '' %> /><span><strong>Использовать Noises</strong><small>UDP noise из FinalMask.</small></span></label>
+          </div>
+        </div>
+
         <% if (!inboundPreview || inboundUsesSni) { %>
         <div class="field js-node-3xui-only js-node-3xui-editable-only <%= nodeType === '3xui' ? '' : 'hidden' %>" <%= nodeType === '3xui' ? '' : 'hidden style="display:none!important"' %>>
           <h3 style="margin:10px 0 0;">SNI в подписках</h3>
@@ -296,12 +316,10 @@
             <div class="xhttp-settings-grid">
               <div class="field"><label>XHTTP mode</label><input name="inbound_xhttp_mode" value="<%= inboundPreview.xhttpMode || 'stream-one' %>" placeholder="stream-one" /></div>
               <div class="field"><label>XHTTP legacy posts / bytes / interval (необязательно)</label><input name="inbound_xhttp_sc" value="<%= [inboundPreview.scMaxConcurrentPosts ?? '', inboundPreview.scMaxEachPostBytes ?? '', inboundPreview.scMinPostsIntervalMs ?? ''].join(', ') %>" placeholder="пусто; либо 0, 500000-1000000, 10-50" /></div>
-              <div class="field full">
-                <label class="switch-row compact">
-                  <input type="checkbox" name="inbound_xhttp_fragment" value="1" <%= inboundPreview.dialerProxy === 'fragment' ? 'checked' : '' %> />
-                  <span><strong>XHTTP через fragment outbound</strong><small>Сохраняет/убирает sockopt.dialerProxy=fragment в inbound. Сам fragment outbound добавляется в JSON-подписку автоматически, если он нужен.</small></span>
-                </label>
-              </div>
+              <label class="switch-row compact xhttp-fragment-toggle">
+                <input type="checkbox" name="inbound_xhttp_fragment" value="1" <%= inboundPreview.dialerProxy === 'fragment' ? 'checked' : '' %> />
+                <span><strong>XHTTP через fragment outbound</strong><small>Сохраняет или убирает <code>sockopt.dialerProxy=fragment</code> в inbound. Fragment outbound добавляется в JSON-подписку автоматически, только когда он действительно нужен.</small></span>
+              </label>
             </div>
           </div>
           <% } %>

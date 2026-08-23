@@ -186,6 +186,30 @@ function seedSubscription(dataDir, mockPort) {
       INSERT INTO app_settings (key, value) VALUES ('subscription_brand_tagline', 'Кавказ на связи')
       ON CONFLICT(key) DO UPDATE SET value = excluded.value
     `).run();
+    db.prepare(`
+      INSERT INTO app_settings (key, value) VALUES ('routing_config', ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `).run(JSON.stringify({
+      enabled: true,
+      mode: 'proxy-except',
+      modeAssignments: { 'proxy-except': [Number(nodeResult.lastInsertRowid)], 'node-selective': [] },
+      assignmentExplicit: true,
+      exceptDomains: ['geosite:category-ru'],
+      exceptIps: ['geoip:ru'],
+      customDomains: [],
+      customIps: [],
+      presets: [],
+      adBlockEnabled: false,
+      adBlockDomains: [],
+      adBlockIps: [],
+      geodataSource: 'loyalsoldier',
+      dnsPreset: 'cloudflare',
+      // Regression input: the old separate checkbox was off even though
+      // routing itself was enabled. Happ must still receive the profile.
+      happRoutingProfileEnabled: false,
+      happRoutingExplicit: true,
+      defaultsVersion: 6
+    }));
   } finally {
     db.close();
   }
@@ -255,6 +279,26 @@ test('subscription sums unlimited-node traffic once and exposes a branded browse
   });
   assert.equal(response.status, 200);
   assert.match(response.headers.get('content-type') || '', /application\/json/);
+  const jsonConfigs = await response.json();
+  assert.ok(Array.isArray(jsonConfigs) && jsonConfigs.length >= 1);
+  const rules = jsonConfigs[0].routing.rules;
+  assert.deepEqual(rules.slice(-3), [
+    { type: 'field', domain: ['geosite:category-ru'], outboundTag: 'direct' },
+    { type: 'field', ip: ['geoip:ru'], outboundTag: 'direct' },
+    { type: 'field', network: 'tcp,udp', outboundTag: 'proxy' }
+  ]);
+
+  response = await fetch(`http://127.0.0.1:${app.port}/happ/portal-user`, {
+    headers: { Accept: '*/*' }
+  });
+  assert.equal(response.status, 200);
+  const routingHeader = String(response.headers.get('routing') || '');
+  assert.match(routingHeader, /^happ:\/\/routing\/onadd\//);
+  const routingProfile = JSON.parse(Buffer.from(routingHeader.split('/').pop(), 'base64').toString('utf8'));
+  assert.equal(routingProfile.GlobalProxy, 'true');
+  assert.ok(routingProfile.DirectSites.includes('geosite:category-ru'));
+  assert.ok(routingProfile.DirectIp.includes('geoip:ru'));
+  assert.match(await response.text(), /happ:\/\/routing\/onadd\//);
 
   response = await fetch(`http://127.0.0.1:${app.port}/json/portal-user?download=1`, {
     headers: { Accept: 'text/html,application/xhtml+xml' }

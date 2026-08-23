@@ -52,6 +52,9 @@ test('routing form exposes two visual rule scopes without a redundant node selec
   assert.match(view, /name="except_domains"/);
   assert.match(view, /name="custom_domains"/);
   assert.match(view, /Все доступные/);
+  assert.match(view, /Happ routing-профиль включается автоматически/);
+  assert.doesNotMatch(view, /name="happ_routing_profile_enabled"/);
+  assert.match(app, /function isHappAutoRoutingEnabled\(\)[\s\S]{0,520}return cfg\.enabled !== false/);
 });
 
 test('proxy-except sends RU rules direct and all remaining traffic through the checked node', () => {
