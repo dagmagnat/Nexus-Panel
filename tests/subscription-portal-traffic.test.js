@@ -282,11 +282,44 @@ test('subscription sums unlimited-node traffic once and exposes a branded browse
   const jsonConfigs = await response.json();
   assert.ok(Array.isArray(jsonConfigs) && jsonConfigs.length >= 1);
   const rules = jsonConfigs[0].routing.rules;
+  assert.equal(jsonConfigs[0].routing.domainStrategy, 'IPOnDemand');
   assert.deepEqual(rules.slice(-3), [
-    { type: 'field', domain: ['geosite:category-ru'], outboundTag: 'direct' },
+    { type: 'field', domain: ['geosite:category-ru', 'regexp:\\.(ru|su|xn--p1ai)$'], outboundTag: 'direct' },
     { type: 'field', ip: ['geoip:ru'], outboundTag: 'direct' },
     { type: 'field', network: 'tcp,udp', outboundTag: 'proxy' }
   ]);
+
+  const selectiveDb = new Database(path.join(dataDir, 'app.db'));
+  const selectiveRow = selectiveDb.prepare("SELECT value FROM app_settings WHERE key = 'routing_config'").get();
+  const selectiveConfig = JSON.parse(selectiveRow.value);
+  selectiveConfig.mode = 'node-selective';
+  selectiveConfig.modeAssignments = {
+    'proxy-except': [],
+    'node-selective': [Number(selectiveConfig.modeAssignments['proxy-except'][0])]
+  };
+  selectiveConfig.customDomains = ['geosite:telegram'];
+  selectiveDb.prepare("UPDATE app_settings SET value = ? WHERE key = 'routing_config'").run(JSON.stringify(selectiveConfig));
+  selectiveDb.close();
+
+  response = await fetch(`http://127.0.0.1:${app.port}/json/portal-user`, {
+    headers: { Accept: 'application/json' }
+  });
+  assert.equal(response.status, 200);
+  const selectiveJson = await response.json();
+  assert.deepEqual(selectiveJson[0].routing.rules.slice(-2), [
+    { type: 'field', domain: ['geosite:telegram'], outboundTag: 'proxy' },
+    { type: 'field', network: 'tcp,udp', outboundTag: 'direct' }
+  ]);
+
+  const restoreDb = new Database(path.join(dataDir, 'app.db'));
+  selectiveConfig.mode = 'proxy-except';
+  selectiveConfig.modeAssignments = {
+    'proxy-except': [Number(selectiveConfig.modeAssignments['node-selective'][0])],
+    'node-selective': []
+  };
+  selectiveConfig.customDomains = [];
+  restoreDb.prepare("UPDATE app_settings SET value = ? WHERE key = 'routing_config'").run(JSON.stringify(selectiveConfig));
+  restoreDb.close();
 
   response = await fetch(`http://127.0.0.1:${app.port}/happ/portal-user`, {
     headers: { Accept: '*/*' }

@@ -17169,7 +17169,7 @@ function getRoutingConfig() {
 
 function routingModeTitle(mode) {
   return {
-    'proxy-except': 'RU и исключения напрямую, остальное через proxy',
+    'proxy-except': 'Выбранный через proxy кроме...',
     'node-selective': 'Выбранное через proxy, остальное напрямую'
   }[mode] || mode;
 }
@@ -17248,7 +17248,14 @@ function parseRoutingLines(text, kind) {
 function getRoutingDirectDomains() {
   const cfg = getRoutingConfig();
   if (cfg.enabled === false) return [];
-  return uniqueList(cfg.exceptDomains || []);
+  const domains = uniqueList(cfg.exceptDomains || []);
+  // Some mobile clients ship a delayed or reduced geosite.dat. Keep the
+  // explicit category rule, but add a dependency-free suffix fallback for the
+  // common RU zones so they still go direct.
+  if (domains.includes('geosite:category-ru')) {
+    domains.push('regexp:\\.(ru|su|xn--p1ai)$');
+  }
+  return uniqueList(domains);
 }
 
 function getRoutingDirectIps() {
@@ -17444,8 +17451,9 @@ function normalizeXrayJsonForIos(config, routingOutboundTag = '', routingMode = 
     // Важно: для geoip:ru по доменам нужен IPIfNonMatch.
     // AsIs ломает сценарий, когда domain не совпал, а geoip должен отправить
     // российский IP напрямую. Это поведение было в рабочих старых сборках.
-    config.routing.domainStrategy = config.routing.domainStrategy || 'IPIfNonMatch';
-    if (config.routing.domainStrategy === 'AsIs') config.routing.domainStrategy = 'IPIfNonMatch';
+    // Resolve before routing so geoip:ru can be evaluated reliably even when
+    // the original destination is a domain and geosite data is incomplete.
+    config.routing.domainStrategy = 'IPOnDemand';
     config.routing.domainMatcher = 'hybrid';
     config.routing.rules = getEffectiveJsonRoutingRules(routingOutboundTag, routingMode);
   }
@@ -17575,7 +17583,11 @@ function buildHappJsonConfig(client, lines, subscriptionName, routingEnabledForT
   }
 
   const routingCfg = getRoutingConfig();
-  const routingMode = String(options.routingMode || getRoutingModeForNode(options.nodeId, routingCfg) || '');
+  const assignedRoutingMode = String(options.routingMode || getRoutingModeForNode(options.nodeId, routingCfg) || '');
+  // Keep the node assignment as the source of truth. If the caller has already
+  // confirmed that routing applies to this node, fall back to the saved mode
+  // instead of silently omitting `routing` (which makes Xray use proxy #1).
+  const routingMode = assignedRoutingMode || (routingEnabledForThisConfig ? String(routingCfg.mode || '') : '');
   let selectiveOutboundTag = 'proxy';
 
   const routingActive = routingEnabledForThisConfig && routingCfg.enabled !== false && !!routingMode;
@@ -17600,7 +17612,7 @@ function buildHappJsonConfig(client, lines, subscriptionName, routingEnabledForT
         },
         sniffing: {
           enabled: jsonSniffingEnabled,
-          destOverride: jsonSniffingEnabled ? ['http', 'tls'] : []
+          destOverride: jsonSniffingEnabled ? ['http', 'tls', 'quic'] : []
         }
       },
       {
@@ -17612,7 +17624,7 @@ function buildHappJsonConfig(client, lines, subscriptionName, routingEnabledForT
         },
         sniffing: {
           enabled: jsonSniffingEnabled,
-          destOverride: jsonSniffingEnabled ? ['http', 'tls'] : []
+          destOverride: jsonSniffingEnabled ? ['http', 'tls', 'quic'] : []
         }
       }
     ],
@@ -17688,7 +17700,7 @@ function buildHappJsonConfig(client, lines, subscriptionName, routingEnabledForT
     },
     ...(routingActive ? {
       routing: {
-        domainStrategy: 'IPIfNonMatch',
+        domainStrategy: 'IPOnDemand',
         domainMatcher: 'hybrid',
         rules: getEffectiveJsonRoutingRules(selectiveOutboundTag, routingMode)
       }

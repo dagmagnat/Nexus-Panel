@@ -143,7 +143,7 @@
       <p class="hint">Можно включить несколько режимов. Каждый узел назначается только одному режиму; панель автоматически блокирует его в остальных списках.</p>
       <div class="routing-mode-assignments">
         <% [
-          ['proxy-except', 'RU и исключения напрямую, остальное через proxy', 'На отмеченных узлах российские и другие указанные исключения идут напрямую, весь остальной TCP/UDP-трафик — через этот узел.'],
+          ['proxy-except', 'Выбранный через proxy кроме...', 'На отмеченных узлах введённые ниже исключения идут напрямую мимо VPN, весь остальной TCP/UDP-трафик — через proxy.'],
           ['node-selective', 'Выбранное через proxy, остальное напрямую', 'На отмеченных узлах выбранные GeoSite/GeoIP идут через этот узел, остальной трафик — напрямую.']
         ].forEach(([mode, title, description]) => { const assigned = (routingModeAssignments[mode] || []).map(Number); %>
           <section class="routing-mode-assignment <%= assigned.length ? 'is-enabled' : '' %>" data-routing-mode-card="<%= mode %>">
@@ -277,7 +277,7 @@
       </div>
       <div class="kv-item">
         <strong>Назначение режимов</strong>
-        <% [['proxy-except', 'RU и исключения напрямую, остальное через proxy'], ['node-selective', 'Выбранное через proxy, остальное напрямую']].forEach(([mode, title]) => { const ids = (routingModeAssignments[mode] || []).map(Number); if (!ids.length) return; %>
+        <% [['proxy-except', 'Выбранный через proxy кроме...'], ['node-selective', 'Выбранное через proxy, остальное напрямую']].forEach(([mode, title]) => { const ids = (routingModeAssignments[mode] || []).map(Number); if (!ids.length) return; %>
           <div class="muted"><b><%= title %>:</b> <%= nodes.filter(node => ids.includes(Number(node.id))).map(node => node.country_name_ru || node.name).join(', ') %></div>
         <% }) %>
       </div>

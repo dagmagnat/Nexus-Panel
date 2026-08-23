@@ -22,7 +22,7 @@ function loadRoutingRuleBuilder() {
     () => ({ enabled: true, mode: 'proxy-except' }),
     () => [], () => [],
     () => ['domain:foreign.example'], () => ['8.8.8.8'],
-    () => ['geosite:category-ru'], () => ['geoip:ru']
+    () => ['geosite:category-ru', 'regexp:\\.(ru|su|xn--p1ai)$'], () => ['geoip:ru']
   );
 }
 
@@ -53,7 +53,7 @@ test('routing form exposes two visual rule scopes without a redundant node selec
   assert.match(view, /name="except_domains"/);
   assert.match(view, /name="custom_domains"/);
   assert.match(view, /Все доступные/);
-  assert.match(view, /RU и исключения напрямую, остальное через proxy/);
+  assert.match(view, /Выбранный через proxy кроме\.\.\./);
   assert.doesNotMatch(view, /Happ routing-профиль включается автоматически/);
   assert.doesNotMatch(view, /name="happ_routing_profile_enabled"/);
   assert.match(settings, /name="happ_routing_profile_enabled"/);
@@ -65,7 +65,7 @@ test('proxy-except sends RU rules direct and all remaining traffic through the c
   const buildRoutingRules = loadRoutingRuleBuilder();
   const rules = buildRoutingRules('', 'proxy-except');
   assert.deepEqual(rules.slice(-3), [
-    { type: 'field', domain: ['geosite:category-ru'], outboundTag: 'direct' },
+    { type: 'field', domain: ['geosite:category-ru', 'regexp:\\.(ru|su|xn--p1ai)$'], outboundTag: 'direct' },
     { type: 'field', ip: ['geoip:ru'], outboundTag: 'direct' },
     { type: 'field', network: 'tcp,udp', outboundTag: 'proxy' }
   ]);
