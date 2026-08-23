@@ -292,10 +292,15 @@
                 </div>
               </div>
             <% }) %>
+
+            <label class="switch-row compact happ-help-source" data-help-title="Отдельный Happ routing-профиль" data-help-text="Добавляет в HAPP-подписку отдельный routing header и ссылку на профиль Happ. Не влияет на правила Xray, уже встроенные в обычную JSON-подписку.">
+              <input type="checkbox" name="happ_routing_profile_enabled" value="1" <%= happRoutingProfileEnabled ? 'checked' : '' %> />
+              <span><strong>Happ routing-профиль</strong><small>Отдельная функция · по умолчанию выключена.</small></span>
+            </label>
           </div>
 
           <div class="alert ok happ-routing-link-note">
-            Sniffing и MUX в JSON не копируются из 3x-ui автоматически: здесь настраивается клиентский JSON, а на сервере — inbound. Маршруты, GeoSite/GeoIP, DNS и блокировка находятся в разделе <a href="/routing">«Маршрутизация»</a>.
+            Маршруты, GeoSite/GeoIP, DNS и блокировка из раздела <a href="/routing">«Маршрутизация»</a> встраиваются непосредственно в обычный JSON. Переключатель Happ выше управляет только отдельным routing-профилем приложения.
           </div>
 
           <div class="alert ok happ-free-only-note">

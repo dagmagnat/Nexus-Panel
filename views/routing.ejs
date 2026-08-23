@@ -130,8 +130,8 @@
 
 <div class="grid routing-page-grid" data-mobile-view="editor">
   <section class="card span-6 routing-editor-card">
-    <h2>Маршрутизация JSON и Happ</h2>
-    <p class="muted">Правила применяются внутри JSON-конфигов и автоматически передаются в Happ SUB через routing-профиль. Отдельно включать профиль Happ больше не нужно.</p>
+    <h2>Маршрутизация JSON</h2>
+    <p class="muted">Правила встраиваются непосредственно в каждый выбранный JSON-конфиг. Отдельный Happ routing-профиль настраивается независимо в разделе «Подписки и приложения».</p>
 
     <form method="post" action="/routing" class="routing-form">
       <label class="switch-row">
@@ -143,8 +143,8 @@
       <p class="hint">Можно включить несколько режимов. Каждый узел назначается только одному режиму; панель автоматически блокирует его в остальных списках.</p>
       <div class="routing-mode-assignments">
         <% [
-          ['proxy-except', 'Всё через proxy, кроме...', 'На отмеченных узлах исключения идут напрямую, весь остальной TCP/UDP-трафик — через этот узел.'],
-          ['node-selective', 'Только выбранное через узел', 'На отмеченных узлах выбранные GeoSite/GeoIP идут через этот узел, остальной трафик — напрямую.']
+          ['proxy-except', 'RU и исключения напрямую, остальное через proxy', 'На отмеченных узлах российские и другие указанные исключения идут напрямую, весь остальной TCP/UDP-трафик — через этот узел.'],
+          ['node-selective', 'Выбранное через proxy, остальное напрямую', 'На отмеченных узлах выбранные GeoSite/GeoIP идут через этот узел, остальной трафик — напрямую.']
         ].forEach(([mode, title, description]) => { const assigned = (routingModeAssignments[mode] || []).map(Number); %>
           <section class="routing-mode-assignment <%= assigned.length ? 'is-enabled' : '' %>" data-routing-mode-card="<%= mode %>">
             <label class="switch-row compact">
@@ -202,7 +202,7 @@
       </div>
 
       <h3>GeoSite / GeoIP источники</h3>
-      <div class="alert ok" style="margin-top:12px;">Источник выбирается отдельно: универсальный <strong>Loyalsoldier</strong>, обновляемые российские списки <strong>runetfreedom</strong>, локальные данные клиента или свои URL. Агрегатор сохраняет эти URL в JSON-метаданных и, если включить Happ routing-профиль, передаёт их в Happ.</div>
+      <div class="alert ok" style="margin-top:12px;">Источник выбирается отдельно: универсальный <strong>Loyalsoldier</strong>, обновляемые российские списки <strong>runetfreedom</strong>, локальные данные клиента или свои URL. Эти данные используются обычной JSON-маршрутизацией; отдельный Happ-профиль получает их только при ручном включении.</div>
       <div class="form-grid">
         <div class="field">
           <label>Основной источник GeoData</label>
@@ -231,7 +231,7 @@
         <small class="hint">Здесь можно хранить дополнительные ссылки/заметки. Для клиентской маршрутизации через провайдера важно, чтобы сам клиент понимал выбранные GeoData. Для серверной маршрутизации Xray эти же URL нужно добавлять в оригинальную 3x-ui отдельно.</small>
       </div>
       <div class="alert ok" style="margin-top:12px;">
-        <strong>Happ routing-профиль включается автоматически.</strong> При сохранении Nexus передаёт <code>routing</code>, прямые исключения, GeoData URL и новую ревизию в Happ SUB. После изменения достаточно обновить подписку в приложении.
+        <strong>Обычный JSON работает независимо от Happ routing.</strong> Текущий отдельный Happ-профиль: <%= happRoutingProfileEnabled ? 'включён' : 'выключен' %>. Изменить его можно в <a href="/settings#happ-control-app">«Настройки → Подписки и приложения»</a>.
       </div>
 
       <div class="preset-grid dns-preset-grid">
@@ -277,13 +277,13 @@
       </div>
       <div class="kv-item">
         <strong>Назначение режимов</strong>
-        <% [['proxy-except', 'Всё через узел, кроме исключений'], ['node-selective', 'Только выбранное через узел']].forEach(([mode, title]) => { const ids = (routingModeAssignments[mode] || []).map(Number); if (!ids.length) return; %>
+        <% [['proxy-except', 'RU и исключения напрямую, остальное через proxy'], ['node-selective', 'Выбранное через proxy, остальное напрямую']].forEach(([mode, title]) => { const ids = (routingModeAssignments[mode] || []).map(Number); if (!ids.length) return; %>
           <div class="muted"><b><%= title %>:</b> <%= nodes.filter(node => ids.includes(Number(node.id))).map(node => node.country_name_ru || node.name).join(', ') %></div>
         <% }) %>
       </div>
       <div class="kv-item">
         <strong>Happ routing-профиль</strong>
-        <div class="muted"><%= routingEnabled ? 'Включён автоматически · header routing + body link' : 'Отключён вместе с маршрутизацией' %></div>
+        <div class="muted"><%= happRoutingProfileEnabled ? 'Включён отдельно · header routing + body link' : 'Выключен · на обычный JSON не влияет' %></div>
         <div class="muted"><code><%= happRoutingJsonExample %></code></div>
       </div>
       <div class="kv-item">

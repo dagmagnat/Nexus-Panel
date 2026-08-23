@@ -204,11 +204,11 @@ function seedSubscription(dataDir, mockPort) {
       adBlockIps: [],
       geodataSource: 'loyalsoldier',
       dnsPreset: 'cloudflare',
-      // Regression input: the old separate checkbox was off even though
-      // routing itself was enabled. Happ must still receive the profile.
+      // Ordinary JSON routing remains active while Happ's separate profile is
+      // deliberately disabled.
       happRoutingProfileEnabled: false,
       happRoutingExplicit: true,
-      defaultsVersion: 6
+      defaultsVersion: 7
     }));
   } finally {
     db.close();
@@ -287,6 +287,25 @@ test('subscription sums unlimited-node traffic once and exposes a branded browse
     { type: 'field', ip: ['geoip:ru'], outboundTag: 'direct' },
     { type: 'field', network: 'tcp,udp', outboundTag: 'proxy' }
   ]);
+
+  response = await fetch(`http://127.0.0.1:${app.port}/happ/portal-user`, {
+    headers: { Accept: '*/*' }
+  });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('routing'), null, 'separate Happ routing must stay disabled');
+  assert.doesNotMatch(await response.text(), /happ:\/\/routing\/onadd\//);
+
+  response = await fetch(`http://127.0.0.1:${app.port}/happ-routing-json/portal-user`);
+  assert.equal(response.status, 404);
+
+  const routingDb = new Database(path.join(dataDir, 'app.db'));
+  const routingRow = routingDb.prepare("SELECT value FROM app_settings WHERE key = 'routing_config'").get();
+  const routingConfig = JSON.parse(routingRow.value);
+  routingConfig.happRoutingProfileEnabled = true;
+  routingConfig.happRoutingExplicit = true;
+  routingConfig.defaultsVersion = 7;
+  routingDb.prepare("UPDATE app_settings SET value = ? WHERE key = 'routing_config'").run(JSON.stringify(routingConfig));
+  routingDb.close();
 
   response = await fetch(`http://127.0.0.1:${app.port}/happ/portal-user`, {
     headers: { Accept: '*/*' }

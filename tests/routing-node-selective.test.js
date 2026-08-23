@@ -8,6 +8,7 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 const app = fs.readFileSync(path.join(root, 'app.js'), 'utf8');
 const view = fs.readFileSync(path.join(root, 'views', 'routing.ejs'), 'utf8');
+const settings = fs.readFileSync(path.join(root, 'views', 'settings.ejs'), 'utf8');
 
 function loadRoutingRuleBuilder() {
   const start = app.indexOf('function buildRoutingRules(');
@@ -41,7 +42,7 @@ test('per-node routing assignments keep direct exceptions and use the selected c
 });
 
 test('routing form exposes two visual rule scopes without a redundant node selector', () => {
-  assert.match(view, /\['node-selective', 'Только выбранное через узел'/);
+  assert.match(view, /\['node-selective', 'Выбранное через proxy, остальное напрямую'/);
   assert.doesNotMatch(view, /\['proxy-selected'/);
   assert.match(view, /name="routing_modes"/);
   assert.match(view, /data-routing-node-option/);
@@ -52,9 +53,12 @@ test('routing form exposes two visual rule scopes without a redundant node selec
   assert.match(view, /name="except_domains"/);
   assert.match(view, /name="custom_domains"/);
   assert.match(view, /Все доступные/);
-  assert.match(view, /Happ routing-профиль включается автоматически/);
+  assert.match(view, /RU и исключения напрямую, остальное через proxy/);
+  assert.doesNotMatch(view, /Happ routing-профиль включается автоматически/);
   assert.doesNotMatch(view, /name="happ_routing_profile_enabled"/);
-  assert.match(app, /function isHappAutoRoutingEnabled\(\)[\s\S]{0,520}return cfg\.enabled !== false/);
+  assert.match(settings, /name="happ_routing_profile_enabled"/);
+  assert.match(settings, /Отдельная функция · по умолчанию выключена/);
+  assert.match(app, /function isHappAutoRoutingEnabled\(\)[\s\S]{0,520}cfg\.happRoutingProfileEnabled === true/);
 });
 
 test('proxy-except sends RU rules direct and all remaining traffic through the checked node', () => {

@@ -13131,7 +13131,7 @@ app.get('/routing', requireAuth, (req, res) => {
     geodataSource: cfg.geodataSource || 'loyalsoldier',
     geositeUrl: cfg.geositeUrl || '',
     geoipUrl: cfg.geoipUrl || '',
-    happRoutingProfileEnabled: cfg.happRoutingProfileEnabled !== false,
+    happRoutingProfileEnabled: cfg.happRoutingProfileEnabled === true,
     happRoutingForceUpdate: cfg.happRoutingForceUpdate !== false,
     happRoutingJsonExample: `${getPublicSubBaseUrl()}/happ-routing-json/<slug>`,
     dnsPreset: cfg.dnsPreset || 'cloudflare',
@@ -13156,6 +13156,7 @@ app.get('/routing', requireAuth, (req, res) => {
 
 app.post('/routing', requireAuth, (req, res) => {
   try {
+    const previousRoutingCfg = getRoutingConfig();
     const presetsRaw = req.body.presets;
     const selectedPresets = Array.isArray(presetsRaw) ? presetsRaw : (presetsRaw ? [presetsRaw] : []);
     const allowedPresetKeys = new Set(ROUTING_PRESETS.map(p => p.key));
@@ -13223,15 +13224,17 @@ app.post('/routing', requireAuth, (req, res) => {
       dnsCustom,
       allNodes: false,
       excludedNodeIds: [],
-      happRoutingProfileEnabled: routingEnabled,
-      happRoutingExplicit: true,
-      happRoutingForceUpdate: routingEnabled,
-      happAutoRoutingEnabled: routingEnabled,
-      defaultsVersion: 6
+      // The Happ routing profile is a separate opt-in. Saving ordinary JSON
+      // routing must never silently enable or disable it.
+      happRoutingProfileEnabled: previousRoutingCfg.happRoutingProfileEnabled === true,
+      happRoutingExplicit: previousRoutingCfg.happRoutingExplicit === true,
+      happRoutingForceUpdate: previousRoutingCfg.happRoutingForceUpdate !== false,
+      happAutoRoutingEnabled: previousRoutingCfg.happRoutingProfileEnabled === true,
+      defaultsVersion: 7
     };
     setSetting('routing_config', JSON.stringify(cfg));
     bumpSubscriptionRevision();
-    res.redirect('/routing?message=' + encodeURIComponent('Маршрутизация сохранена. JSON-конфиги и Happ SUB получили обновлённые правила; обнови подписку в приложении.'));
+    res.redirect('/routing?message=' + encodeURIComponent('Маршрутизация сохранена в JSON-подписке. Отдельный Happ routing-профиль не изменён. Обнови подписку в приложении.'));
   } catch (err) {
     res.redirect('/routing?error=' + encodeURIComponent(String(err.message || err)));
   }
@@ -13732,7 +13735,7 @@ app.get('/settings', requireAuth, async (req, res) => {
     geodataSource: routingCfg.geodataSource || 'loyalsoldier',
     geositeUrl: routingCfg.geositeUrl || '',
     geoipUrl: routingCfg.geoipUrl || '',
-    happRoutingProfileEnabled: routingCfg.happRoutingProfileEnabled !== false,
+    happRoutingProfileEnabled: routingCfg.happRoutingProfileEnabled === true,
     happRoutingForceUpdate: routingCfg.happRoutingForceUpdate !== false,
     dnsPreset: routingCfg.dnsPreset || 'cloudflare',
     dnsCustomText: routingCfg.dnsCustom || '',
@@ -13934,6 +13937,18 @@ app.post('/settings/happ-control', requireAuth, (req, res) => {
     setSetting('json_sniffing_enabled', jsonSniffingEnabled ? '1' : '0');
     setSetting('json_mux_node_ids', JSON.stringify(jsonMuxNodeIds));
     setSetting('json_sniffing_node_ids', JSON.stringify(jsonSniffingNodeIds));
+
+    // Ordinary Xray routing lives inside /json. This checkbox controls only
+    // Happ's separate `routing` header/profile and is intentionally opt-in.
+    const routingCfg = getRoutingConfig();
+    const happRoutingProfileEnabled = req.body.happ_routing_profile_enabled === '1';
+    setSetting('routing_config', JSON.stringify({
+      ...routingCfg,
+      happRoutingProfileEnabled,
+      happRoutingExplicit: true,
+      happRoutingForceUpdate: true,
+      happAutoRoutingEnabled: happRoutingProfileEnabled
+    }));
 
     // Paid Happ application controls remain hard-disabled in the free build.
     setSetting('happ_provider_id', '');
@@ -16750,10 +16765,9 @@ function getRoutingGeoipUrl() {
 
 function isHappAutoRoutingEnabled() {
   const cfg = getRoutingConfig();
-  // Routing selected in Nexus must also reach ordinary /happ subscriptions.
-  // The former separate opt-in left the rules visible in the panel and in
-  // /json while Happ continued sending every site through the VPN.
-  return cfg.enabled !== false;
+  // Happ's routing header/profile is optional and independent from the Xray
+  // routing block embedded directly into each selected /json config.
+  return cfg.enabled !== false && cfg.happRoutingProfileEnabled === true;
 }
 
 function getHappRoutingLastUpdated() {
@@ -17068,7 +17082,7 @@ function getDefaultRoutingConfig() {
     happRoutingProfileEnabled: false,
     happRoutingForceUpdate: true,
     happAutoRoutingEnabled: false,
-    defaultsVersion: 6
+    defaultsVersion: 7
   };
 }
 
@@ -17099,6 +17113,7 @@ function getRoutingConfig() {
     const fallback = getDefaultRoutingConfig();
     if (isLegacyRoutingDefaultConfig(parsed)) return fallback;
     const parsedDefaultsVersion = Math.max(0, Number(parsed.defaultsVersion || 0) || 0);
+    const migrateAutoEnabledHappProfile = parsedDefaultsVersion < 7;
     const legacyDefaultAdBlock = parsedDefaultsVersion < 6
       && sameStringSet(parsed.adBlockDomains, ROUTING_LEGACY_ADBLOCK_DOMAINS)
       && (!Array.isArray(parsed.adBlockIps) || parsed.adBlockIps.length === 0);
@@ -17134,13 +17149,15 @@ function getRoutingConfig() {
           }
         : fallback.modeAssignments,
       assignmentExplicit: parsed.assignmentExplicit === true,
-      happRoutingProfileEnabled: parsed.enabled === true,
-      happRoutingExplicit: true,
+      // Version 6 coupled this option to ordinary JSON routing. Reset it once
+      // during migration so a separate Happ profile is never enabled silently.
+      happRoutingProfileEnabled: migrateAutoEnabledHappProfile ? false : parsed.happRoutingProfileEnabled === true,
+      happRoutingExplicit: migrateAutoEnabledHappProfile ? false : parsed.happRoutingExplicit === true,
       happRoutingForceUpdate: parsed.happRoutingForceUpdate !== false,
-      happAutoRoutingEnabled: parsed.enabled === true,
-      defaultsVersion: 6
+      happAutoRoutingEnabled: migrateAutoEnabledHappProfile ? false : parsed.happRoutingProfileEnabled === true,
+      defaultsVersion: 7
     };
-    if (parsedDefaultsVersion < 6 || legacyDefaultAdBlock) {
+    if (parsedDefaultsVersion < 7 || legacyDefaultAdBlock) {
       setSetting('routing_config', JSON.stringify(normalized));
       if (legacyDefaultAdBlock) bumpSubscriptionRevision();
     }
@@ -17152,8 +17169,8 @@ function getRoutingConfig() {
 
 function routingModeTitle(mode) {
   return {
-    'proxy-except': 'Всё через proxy, кроме исключений',
-    'node-selective': 'Только выбранное через узел'
+    'proxy-except': 'RU и исключения напрямую, остальное через proxy',
+    'node-selective': 'Выбранное через proxy, остальное напрямую'
   }[mode] || mode;
 }
 
@@ -17734,6 +17751,7 @@ app.get('/happ-routing/:slug', async (req, res) => {
 app.get('/happ-routing-json/:slug', async (req, res) => {
   const client = db.prepare('SELECT * FROM clients WHERE sub_slug = ? AND enabled = 1').get(req.params.slug);
   if (!client) return res.status(404).json({ error: 'Subscription not found' });
+  if (!isHappAutoRoutingEnabled()) return res.status(404).json({ error: 'Happ routing profile is disabled' });
   const subscriptionName = getSetting('subscription_name', DEFAULT_SUBSCRIPTION_NAME);
   res.json(buildHappRoutingProfile(subscriptionName));
 });
