@@ -3134,8 +3134,11 @@ body.client-modal-open { overflow: hidden; overscroll-behavior: none; }
 .node-mobile-health { display: none; }
 
 @media (min-width: 1121px) {
-  .page-nodes { height: 100dvh; overflow: hidden; }
-  .page-nodes .spectrum-shell, .page-nodes .spectrum-main { height: 100dvh; min-height: 0; overflow: hidden; }
+  /* Keep the fixed-height split view only on the node list itself.
+     Edit/add/help screens also use body.page-nodes and must keep normal page scrolling. */
+  .page-nodes:has(.nodes-modern-card.is-active) { height: 100dvh; overflow: hidden; }
+  .page-nodes:has(.nodes-modern-card.is-active) .spectrum-shell,
+  .page-nodes:has(.nodes-modern-card.is-active) .spectrum-main { height: 100dvh; min-height: 0; overflow: hidden; }
   .page-nodes .spectrum-page-content:has(.nodes-modern-card.is-active) {
     display: flex;
     height: calc(100dvh - 108px);

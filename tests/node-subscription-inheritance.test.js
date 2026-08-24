@@ -52,7 +52,8 @@ test('node editor and list keep compact stable layouts', () => {
   assert.match(nodeEdit, /class="switch-row compact xhttp-fragment-toggle"/);
   assert.doesNotMatch(nodeEdit, /<div class="field full">\s*<label class="switch-row compact">\s*<input type="checkbox" name="inbound_xhttp_fragment"/);
   assert.match(css, /\.xhttp-fragment-toggle[^}]*grid-template-columns:\s*20px minmax\(0, 1fr\)/);
-  assert.match(css, /\.page-nodes \{ height: 100dvh; overflow: hidden; \}/);
+  assert.match(css, /\.page-nodes:has\(\.nodes-modern-card\.is-active\) \{ height: 100dvh; overflow: hidden; \}/);
+  assert.doesNotMatch(css, /(?:^|\n)\s*\.page-nodes \{ height: 100dvh; overflow: hidden; \}/);
   assert.ok(nodesView.indexOf('node-detail-actions node-detail-actions-top') < nodesView.indexOf('<div class="node-detail-kv">'));
   assert.match(css, /node-mobile-quick-actions[^}]*padding:\s*0 84px 8px 8px/);
 });
