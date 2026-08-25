@@ -3490,17 +3490,53 @@ function unwrapRemnawaveResponse(data) {
   return data?.response ?? data?.data ?? data?.result ?? data ?? null;
 }
 
-function extractRemnawaveUser(data) {
+function extractRemnawaveUser(data, depth = 0) {
+  if (depth > 8 || data === null || data === undefined) return null;
+
   const root = unwrapRemnawaveResponse(data);
-  if (!root || typeof root !== 'object' || Array.isArray(root)) return null;
-  if (root.user && typeof root.user === 'object') return root.user;
-  return root;
+  if (!root) return null;
+
+  if (Array.isArray(root)) {
+    if (root.length !== 1) return null;
+    return extractRemnawaveUser(root[0], depth + 1);
+  }
+  if (typeof root !== 'object') return null;
+
+  // Remnawave has used several response envelopes across releases/proxies:
+  // { response: user }, { data: { response: user } }, { user }, etc.
+  // Walk the common wrappers recursively instead of treating an envelope as a user.
+  if (String(root.uuid || '').trim()) return root;
+  for (const key of ['user', 'response', 'data', 'result', 'item']) {
+    const nested = root[key];
+    if (!nested || nested === root) continue;
+    const user = extractRemnawaveUser(nested, depth + 1);
+    if (user?.uuid) return user;
+  }
+
+  // Keep partial user objects useful for update fallbacks, but do not return
+  // arbitrary success/metadata envelopes as if they were users.
+  if (root.username || root.vlessUuid || root.shortUuid || root.subscriptionUrl) return root;
+  return null;
 }
 
-function extractRemnawaveUsers(data) {
-  const root = unwrapRemnawaveResponse(data) || {};
-  const list = root.users ?? root.items ?? root.rows ?? root.data ?? (Array.isArray(root) ? root : []);
-  return Array.isArray(list) ? list : [];
+function extractRemnawaveUsers(data, depth = 0) {
+  if (depth > 8 || data === null || data === undefined) return [];
+  const root = unwrapRemnawaveResponse(data);
+  if (Array.isArray(root)) return root;
+  if (!root || typeof root !== 'object') return [];
+
+  for (const key of ['users', 'items', 'rows']) {
+    if (Array.isArray(root[key])) return root[key];
+  }
+  if (Array.isArray(root.data)) return root.data;
+
+  for (const key of ['response', 'data', 'result']) {
+    const nested = root[key];
+    if (!nested || nested === root) continue;
+    const users = extractRemnawaveUsers(nested, depth + 1);
+    if (users.length) return users;
+  }
+  return [];
 }
 
 function extractRemnawaveUsersTotal(data) {
@@ -3834,7 +3870,31 @@ async function ensureRemnawaveUserOnNode(node, client, opts = {}) {
     const data = await remnawaveApiPost(node, '/api/users', target.payload, FETCH_TIMEOUT_MS);
     current = extractRemnawaveUser(data);
     remoteCreated = true;
-    if (!current?.uuid) current = await getRemnawaveUserByUsername(node, target.desiredUsername, FETCH_TIMEOUT_MS);
+
+    // Some Remnawave builds/reverse proxies return only a success envelope on
+    // POST, and a freshly-created user may become visible to by-username with a
+    // short delay. Do not fail immediately: re-read the user a few times.
+    if (!current?.uuid) {
+      const retryDelays = [0, 150, 450, 900];
+      for (const delayMs of retryDelays) {
+        if (delayMs) await sleepMs(delayMs);
+        current = await getRemnawaveUserByUsername(node, target.desiredUsername, FETCH_TIMEOUT_MS);
+        if (current?.uuid) break;
+      }
+    }
+
+    // Last-resort compatibility fallback: locate the created account in the
+    // paginated users list by username or by the Aggregator VLESS UUID. This
+    // also protects against older installations where by-username is stale.
+    if (!current?.uuid) {
+      const expectedUsername = String(target.desiredUsername || '').trim();
+      const expectedVlessUuid = String(target.payload.vlessUuid || '').trim();
+      const users = await listRemnawaveUsers(node, FETCH_TIMEOUT_MS);
+      current = users.find(user =>
+        (expectedUsername && sameText(user?.username, expectedUsername)) ||
+        (expectedVlessUuid && sameText(user?.vlessUuid, expectedVlessUuid))
+      ) || current;
+    }
   } else if (opts.skip_existing !== true) {
     const target = buildRemnawaveUserPayload(node, client, { ...opts, remote_uuid: current.uuid }, current, 'update');
     const data = await remnawaveApiPatch(node, '/api/users', target.payload, FETCH_TIMEOUT_MS);
