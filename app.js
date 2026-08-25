@@ -3490,6 +3490,26 @@ function unwrapRemnawaveResponse(data) {
   return data?.response ?? data?.data ?? data?.result ?? data ?? null;
 }
 
+function getRemnawaveUserRemoteId(userOrId) {
+  if (userOrId && typeof userOrId === 'object') {
+    const uuid = String(userOrId.uuid || '').trim();
+    if (isUuidText(uuid)) return uuid;
+    const id = String(userOrId.id ?? '').trim();
+    if (/^[1-9]\d*$/.test(id)) return id;
+    return '';
+  }
+  const raw = String(userOrId ?? '').trim();
+  if (isUuidText(raw) || /^[1-9]\d*$/.test(raw)) return raw;
+  return '';
+}
+
+function buildRemnawaveUserIdentityPayload(userOrId) {
+  const remoteId = getRemnawaveUserRemoteId(userOrId);
+  if (!remoteId) return {};
+  if (/^[1-9]\d*$/.test(remoteId)) return { id: Number(remoteId) };
+  return { uuid: remoteId };
+}
+
 function extractRemnawaveUser(data, depth = 0) {
   if (depth > 8 || data === null || data === undefined) return null;
 
@@ -3505,12 +3525,12 @@ function extractRemnawaveUser(data, depth = 0) {
   // Remnawave has used several response envelopes across releases/proxies:
   // { response: user }, { data: { response: user } }, { user }, etc.
   // Walk the common wrappers recursively instead of treating an envelope as a user.
-  if (String(root.uuid || '').trim()) return root;
+  if (getRemnawaveUserRemoteId(root)) return root;
   for (const key of ['user', 'response', 'data', 'result', 'item']) {
     const nested = root[key];
     if (!nested || nested === root) continue;
     const user = extractRemnawaveUser(nested, depth + 1);
-    if (user?.uuid) return user;
+    if (getRemnawaveUserRemoteId(user)) return user;
   }
 
   // Keep partial user objects useful for update fallbacks, but do not return
@@ -3776,7 +3796,11 @@ function buildRemnawaveUserPayload(node, client, opts = {}, current = null, mode
     if (!isUuidText(payload.vlessUuid)) throw new Error('У клиента Aggregator отсутствует корректный VLESS UUID для Remnawave.');
     payload.expireAt = expiry.iso;
   } else {
-    payload.uuid = String(current?.uuid || opts.remote_uuid || '').trim();
+    const identity = buildRemnawaveUserIdentityPayload(current || opts.remote_uuid);
+    if (!Object.keys(identity).length) {
+      throw new Error('Remnawave не вернул идентификатор пользователя (id/UUID) для обновления.');
+    }
+    Object.assign(payload, identity);
     // Remnawave rejects an expired date in PATCH. For an expired local client
     // status=DISABLED is enough; the exact future date will be written on extend.
     if (!expiry.expired) payload.expireAt = expiry.iso;
@@ -3793,8 +3817,11 @@ async function getRemnawaveUserByUsername(node, username, timeoutMs = FETCH_TIME
 }
 
 async function getRemnawaveUserByUuid(node, uuid, timeoutMs = FETCH_TIMEOUT_MS) {
-  const clean = String(uuid || '').trim();
-  if (!isUuidText(clean)) return null;
+  // Remnawave 2.x identifies users by UUID; Remnawave 3.x switched the same
+  // /api/users/:identifier route to a numeric user id. Keep the historical
+  // function name for callers, but accept both forms.
+  const clean = getRemnawaveUserRemoteId(uuid);
+  if (!clean) return null;
   const data = await remnawaveApiGet(node, `/api/users/${encodeURIComponent(clean)}`, timeoutMs, { allowNotFound: true });
   return data ? extractRemnawaveUser(data) : null;
 }
@@ -3820,7 +3847,7 @@ function remnawaveRemoteToImportRecord(user) {
   const usedBytes = clampByteNumber(user?.userTraffic?.usedTrafficBytes || 0);
   return {
     uuid: String(user?.vlessUuid || '').trim(),
-    remoteUserUuid: String(user?.uuid || '').trim(),
+    remoteUserUuid: getRemnawaveUserRemoteId(user),
     email: String(user?.username || '').trim(),
     limitIp: Math.max(0, Number(user?.hwidDeviceLimit || 0)),
     expiryTime: expireAtMs,
@@ -3874,19 +3901,19 @@ async function ensureRemnawaveUserOnNode(node, client, opts = {}) {
     // Some Remnawave builds/reverse proxies return only a success envelope on
     // POST, and a freshly-created user may become visible to by-username with a
     // short delay. Do not fail immediately: re-read the user a few times.
-    if (!current?.uuid) {
+    if (!getRemnawaveUserRemoteId(current)) {
       const retryDelays = [0, 150, 450, 900];
       for (const delayMs of retryDelays) {
         if (delayMs) await sleepMs(delayMs);
         current = await getRemnawaveUserByUsername(node, target.desiredUsername, FETCH_TIMEOUT_MS);
-        if (current?.uuid) break;
+        if (getRemnawaveUserRemoteId(current)) break;
       }
     }
 
     // Last-resort compatibility fallback: locate the created account in the
     // paginated users list by username or by the Aggregator VLESS UUID. This
     // also protects against older installations where by-username is stale.
-    if (!current?.uuid) {
+    if (!getRemnawaveUserRemoteId(current)) {
       const expectedUsername = String(target.desiredUsername || '').trim();
       const expectedVlessUuid = String(target.payload.vlessUuid || '').trim();
       const users = await listRemnawaveUsers(node, FETCH_TIMEOUT_MS);
@@ -3896,7 +3923,7 @@ async function ensureRemnawaveUserOnNode(node, client, opts = {}) {
       ) || current;
     }
   } else if (opts.skip_existing !== true) {
-    const target = buildRemnawaveUserPayload(node, client, { ...opts, remote_uuid: current.uuid }, current, 'update');
+    const target = buildRemnawaveUserPayload(node, client, { ...opts, remote_uuid: getRemnawaveUserRemoteId(current) }, current, 'update');
     const data = await remnawaveApiPatch(node, '/api/users', target.payload, FETCH_TIMEOUT_MS);
     current = extractRemnawaveUser(data) || current;
     remoteUpdated = true;
@@ -3909,7 +3936,7 @@ async function ensureRemnawaveUserOnNode(node, client, opts = {}) {
     const currentSquads = getRemnawaveUserSquadUuids(current);
     if (!currentSquads.some(uuid => sameText(uuid, squadUuid))) {
       const data = await remnawaveApiPatch(node, '/api/users', {
-        uuid: String(current.uuid || '').trim(),
+        ...buildRemnawaveUserIdentityPayload(current),
         activeInternalSquads: uniqueList([...currentSquads, squadUuid])
       }, FETCH_TIMEOUT_MS);
       current = extractRemnawaveUser(data) || current;
@@ -3917,13 +3944,15 @@ async function ensureRemnawaveUserOnNode(node, client, opts = {}) {
     }
   }
 
-  if (!current?.uuid) throw new Error(`${getNodePublicName(node)}: Remnawave не вернул UUID созданного пользователя.`);
+  let remoteId = getRemnawaveUserRemoteId(current);
+  if (!remoteId) throw new Error(`${getNodePublicName(node)}: Remnawave не вернул идентификатор созданного пользователя (id/UUID).`);
   if (!current?.subscriptionUrl) {
-    const refreshed = await getRemnawaveUserByUuid(node, current.uuid, FETCH_TIMEOUT_MS);
+    const refreshed = await getRemnawaveUserByUuid(node, remoteId, FETCH_TIMEOUT_MS);
     if (refreshed) current = refreshed;
+    remoteId = getRemnawaveUserRemoteId(current) || remoteId;
   }
 
-  const target = buildRemnawaveUserPayload(node, client, opts, current, 'update');
+  const target = buildRemnawaveUserPayload(node, client, { ...opts, remote_uuid: remoteId }, current, 'update');
   const usageBytes = clampByteNumber(current?.userTraffic?.usedTrafficBytes || map?.used_bytes || 0);
   const remoteUsername = String(current?.username || target.desiredUsername || requestedUsername).trim();
   const remoteSubUrl = normalizeRemnawaveSubscriptionUrl(node, current?.subscriptionUrl || map?.remote_sub_url || '');
@@ -3931,7 +3960,7 @@ async function ensureRemnawaveUserOnNode(node, client, opts = {}) {
 
   if (!map) {
     const info = db.prepare('INSERT INTO client_nodes (client_id,node_id,remote_email,remote_uuid,remote_sub_url,traffic_gb,limit_ip,upload_bytes,download_bytes,used_bytes,enabled) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
-      .run(client.id, node.id, remoteUsername, String(current.uuid), remoteSubUrl, target.trafficGb, target.limitIp, 0, usageBytes, usageBytes, nodeEnabled ? 1 : 0);
+      .run(client.id, node.id, remoteUsername, remoteId, remoteSubUrl, target.trafficGb, target.limitIp, 0, usageBytes, usageBytes, nodeEnabled ? 1 : 0);
     map = db.prepare('SELECT * FROM client_nodes WHERE id = ?').get(info.lastInsertRowid);
     return { mapCreated: true, remoteCreated, remoteUpdated, skippedExisting: existedBefore && opts.skip_existing === true };
   }
@@ -3940,7 +3969,7 @@ async function ensureRemnawaveUserOnNode(node, client, opts = {}) {
     UPDATE client_nodes
     SET remote_email = ?, remote_uuid = ?, remote_sub_url = ?, traffic_gb = ?, limit_ip = ?, upload_bytes = ?, download_bytes = ?, used_bytes = ?, enabled = ?
     WHERE id = ?
-  `).run(remoteUsername, String(current.uuid), remoteSubUrl, target.trafficGb, target.limitIp, 0, usageBytes, usageBytes, nodeEnabled ? 1 : 0, map.id);
+  `).run(remoteUsername, remoteId, remoteSubUrl, target.trafficGb, target.limitIp, 0, usageBytes, usageBytes, nodeEnabled ? 1 : 0, map.id);
 
   return { mapCreated: false, remoteCreated, remoteUpdated, skippedExisting: existedBefore && opts.skip_existing === true };
 }
@@ -3950,20 +3979,21 @@ async function updateRemnawaveUserOnNode(node, map, client, opts = {}) {
 }
 
 async function deleteRemnawaveUser(node, clientUuid, username, timeoutMs = CLIENT_DELETE_TIMEOUT_MS) {
-  let remoteUuid = String(clientUuid || '').trim();
-  if (!isUuidText(remoteUuid)) {
+  let remoteId = getRemnawaveUserRemoteId(clientUuid);
+  if (!remoteId) {
     const current = await getRemnawaveUserByUsername(node, username, timeoutMs);
     if (!current) return { success: true, alreadyMissing: true };
-    remoteUuid = String(current.uuid || '').trim();
+    remoteId = getRemnawaveUserRemoteId(current);
   }
-  const result = await remnawaveApiDelete(node, `/api/users/${encodeURIComponent(remoteUuid)}`, timeoutMs, { allowNotFound: true });
+  if (!remoteId) return { success: true, alreadyMissing: true };
+  const result = await remnawaveApiDelete(node, `/api/users/${encodeURIComponent(remoteId)}`, timeoutMs, { allowNotFound: true });
   return { success: true, alreadyMissing: result === null };
 }
 
 async function detachRemnawaveUserFromNode(node, clientUuid, username, timeoutMs = CLIENT_DELETE_TIMEOUT_MS) {
   let current = null;
-  const remoteUuid = String(clientUuid || '').trim();
-  if (isUuidText(remoteUuid)) current = await getRemnawaveUserByUuid(node, remoteUuid, timeoutMs);
+  const remoteId = getRemnawaveUserRemoteId(clientUuid);
+  if (remoteId) current = await getRemnawaveUserByUuid(node, remoteId, timeoutMs);
   if (!current) current = await getRemnawaveUserByUsername(node, username, timeoutMs);
   if (!current) return { success: true, alreadyMissing: true, detachedSquad: false };
 
@@ -3975,7 +4005,7 @@ async function detachRemnawaveUserFromNode(node, clientUuid, username, timeoutMs
   }
 
   await remnawaveApiPatch(node, '/api/users', {
-    uuid: String(current.uuid || '').trim(),
+    ...buildRemnawaveUserIdentityPayload(current),
     activeInternalSquads: remainingSquads
   }, timeoutMs);
   return { success: true, alreadyMissing: false, detachedSquad: true };
@@ -11430,7 +11460,7 @@ async function refreshAllClientUsageFromNodes() {
     if (isRemnawaveNode(node)) {
       try {
         const users = await listRemnawaveUsers(node, 15000);
-        const byUuid = new Map(users.map(user => [String(user?.uuid || '').toLowerCase(), user]).filter(([key]) => key));
+        const byUuid = new Map(users.map(user => [getRemnawaveUserRemoteId(user).toLowerCase(), user]).filter(([key]) => key));
         const byVless = new Map(users.map(user => [String(user?.vlessUuid || '').toLowerCase(), user]).filter(([key]) => key));
         const byUsername = new Map(users.map(user => [String(user?.username || '').toLowerCase(), user]).filter(([key]) => key));
         const update = db.prepare('UPDATE client_nodes SET remote_email = ?, remote_uuid = ?, remote_sub_url = ?, upload_bytes = 0, download_bytes = ?, used_bytes = ? WHERE id = ?');
@@ -11442,7 +11472,7 @@ async function refreshAllClientUsageFromNodes() {
           const usedBytes = clampByteNumber(user?.userTraffic?.usedTrafficBytes || 0);
           update.run(
             String(user?.username || row.remote_email || row.client_login || ''),
-            String(user?.uuid || row.remote_uuid || ''),
+            getRemnawaveUserRemoteId(user) || String(row.remote_uuid || ''),
             normalizeRemnawaveSubscriptionUrl(node, user?.subscriptionUrl || row.remote_sub_url || ''),
             usedBytes,
             usedBytes,
