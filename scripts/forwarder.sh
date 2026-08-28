@@ -300,14 +300,15 @@ for r in data.get('rules',[]) or []:
     # Safety guard: never let a stale/manual rules file hijack the panel ports.
     if port in (80, 443):
         continue
-    if not re.match(r'^[0-9.]+$', bind) or not target or not (1 <= port <= 65535):
+    if (bind and not re.match(r'^[0-9.]+$', bind)) or not target or not (1 <= port <= 65535):
         continue
     protos=['tcp','udp'] if proto=='both' else [proto]
     for p in protos:
         if p not in ('tcp','udp'):
             continue
         q=shlex.quote
-        print('{} -t nat -A AGG_REDIRECT -d {} -p {} --dport {} -j DNAT --to-destination {}:{}'.format(q(ipt), q(bind), p, port, q(target), port))
+        destination_match = (' -d ' + q(bind)) if bind else ''
+        print('{} -t nat -A AGG_REDIRECT{} -p {} --dport {} -j DNAT --to-destination {}:{}'.format(q(ipt), destination_match, p, port, q(target), port))
         print('{} -A AGG_REDIRECT_FWD -p {} -d {} --dport {} -j ACCEPT'.format(q(ipt), p, q(target), port))
         print('{} -A AGG_REDIRECT_FWD -p {} -s {} --sport {} -j ACCEPT'.format(q(ipt), p, q(target), port))
         print('{} -t nat -A AGG_REDIRECT_POST -p {} -d {} --dport {} -j MASQUERADE'.format(q(ipt), p, q(target), port))

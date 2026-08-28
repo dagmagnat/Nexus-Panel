@@ -1254,6 +1254,8 @@ function initDb() {
     CREATE TABLE IF NOT EXISTS redirect_rules (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       bind_ip TEXT NOT NULL,
+      public_host TEXT NOT NULL DEFAULT '',
+      helper_enabled INTEGER NOT NULL DEFAULT 1,
       node_id INTEGER NOT NULL,
       target_host TEXT NOT NULL,
       target_port INTEGER NOT NULL,
@@ -1462,6 +1464,8 @@ function initDb() {
   addColumnIfMissing('telegram_orders', 'updated_at', "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP");
 
   addColumnIfMissing('redirect_rules', 'bind_ip', "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing('redirect_rules', 'public_host', "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing('redirect_rules', 'helper_enabled', 'INTEGER NOT NULL DEFAULT 1');
   addColumnIfMissing('redirect_rules', 'bind_label', "TEXT DEFAULT ''");
   addColumnIfMissing('redirect_rules', 'node_id', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing('redirect_rules', 'target_host', "TEXT NOT NULL DEFAULT ''");
@@ -3684,6 +3688,30 @@ function extractRemnawaveUsersTotal(data) {
   return Number.isFinite(total) && total >= 0 ? total : 0;
 }
 
+function getRemnawaveUsedTrafficBytes(user, fallback = 0) {
+  // Official Remnawave responses expose the current-period counter under
+  // userTraffic.usedTrafficBytes. Older releases, SDK adapters and a few
+  // reverse-proxy integrations expose the same value as a root or snake_case
+  // property, so accept all known shapes without confusing it with the
+  // lifetime counter (which must not be used for a period/quota value).
+  const candidates = [
+    user?.userTraffic?.usedTrafficBytes,
+    user?.userTraffic?.used_traffic_bytes,
+    user?.usedTrafficBytes,
+    user?.used_traffic_bytes,
+    user?.traffic?.usedTrafficBytes,
+    user?.traffic?.used_traffic_bytes,
+    user?.traffic?.usedBytes,
+    user?.traffic?.used_bytes
+  ];
+  for (const candidate of candidates) {
+    if (candidate === null || candidate === undefined || candidate === '') continue;
+    const value = Number(candidate);
+    if (Number.isFinite(value) && value >= 0) return Math.floor(value);
+  }
+  return clampByteNumber(fallback);
+}
+
 function extractRemnawaveCollection(data, preferredKeys = []) {
   const root = unwrapRemnawaveResponse(data);
   if (Array.isArray(root)) return root;
@@ -3894,6 +3922,7 @@ function buildRemnawaveUserPayload(node, client, opts = {}, current = null, mode
   const status = globalEnabled && !expiry.expired ? 'ACTIVE' : 'DISABLED';
   const trafficGb = Math.max(0, Number(opts.traffic_gb ?? client.traffic_gb ?? 0));
   const limitIp = Math.max(0, Number(opts.limit_ip ?? client.limit_ip ?? 0));
+  const deviceLimit = Math.max(0, Number(opts.device_limit ?? client.device_limit ?? 1));
   const currentSquads = getRemnawaveUserSquadUuids(current);
   const activeInternalSquads = nodeEnabled
     ? uniqueList([...currentSquads, squadUuid])
@@ -3906,7 +3935,10 @@ function buildRemnawaveUserPayload(node, client, opts = {}, current = null, mode
     trafficLimitBytes: toTotalGbBytes(trafficGb),
     trafficLimitStrategy: 'NO_RESET',
     description: description || '',
-    hwidDeviceLimit: limitIp,
+    // Remnawave's hwidDeviceLimit is a device/HWID limit, not an IP limit.
+    // Keeping it tied to limit_ip caused iPhone/Happ registrations to evict
+    // one another when the administrator only intended an IP restriction.
+    hwidDeviceLimit: deviceLimit,
     activeInternalSquads
   };
 
@@ -3925,7 +3957,7 @@ function buildRemnawaveUserPayload(node, client, opts = {}, current = null, mode
     if (!expiry.expired) payload.expireAt = expiry.iso;
   }
 
-  return { payload, desiredUsername, expiry, trafficGb, limitIp, nodeEnabled, status };
+  return { payload, desiredUsername, expiry, trafficGb, limitIp, deviceLimit, nodeEnabled, status };
 }
 
 async function getRemnawaveUserByUsername(node, username, timeoutMs = FETCH_TIMEOUT_MS) {
@@ -3963,7 +3995,7 @@ function remnawaveRemoteToImportRecord(user) {
   // Stage96 encodes Aggregator's unlimited term as 2099 because Remnawave
   // requires expireAt. Convert that marker back to local infinity on import.
   const expireAtMs = rawExpireAtMs >= Date.UTC(2099, 0, 1) ? 0 : rawExpireAtMs;
-  const usedBytes = clampByteNumber(user?.userTraffic?.usedTrafficBytes || 0);
+  const usedBytes = getRemnawaveUsedTrafficBytes(user, 0);
   return {
     uuid: String(user?.vlessUuid || '').trim(),
     remoteUserUuid: getRemnawaveUserRemoteId(user),
@@ -4072,7 +4104,7 @@ async function ensureRemnawaveUserOnNode(node, client, opts = {}) {
   }
 
   const target = buildRemnawaveUserPayload(node, client, { ...opts, remote_uuid: remoteId }, current, 'update');
-  const usageBytes = clampByteNumber(current?.userTraffic?.usedTrafficBytes || map?.used_bytes || 0);
+  const usageBytes = getRemnawaveUsedTrafficBytes(current, map?.used_bytes || 0);
   const remoteUsername = String(current?.username || target.desiredUsername || requestedUsername).trim();
   const remoteSubUrl = normalizeRemnawaveSubscriptionUrl(node, current?.subscriptionUrl || map?.remote_sub_url || '');
   const nodeEnabled = target.nodeEnabled;
@@ -6865,6 +6897,20 @@ function isValidIpv4(value) {
   return parts.every(p => /^\d+$/.test(p) && Number(p) >= 0 && Number(p) <= 255);
 }
 
+function normalizeRedirectPublicHost(value) {
+  let raw = String(value || '').trim();
+  if (!raw) return '';
+  try {
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(raw)) raw = new URL(raw).hostname;
+  } catch (_) { return ''; }
+  raw = raw.replace(/^\[|\]$/g, '').replace(/\.$/, '').toLowerCase();
+  if (isValidIpv4(raw)) return raw;
+  if (raw.length > 253 || !raw.includes('.')) return '';
+  const labels = raw.split('.');
+  if (!labels.every(label => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(label))) return '';
+  return raw;
+}
+
 function isPrivateOrServiceIpv4(value) {
   if (!isValidIpv4(value)) return true;
   const [a, b] = String(value).split('.').map(Number);
@@ -6946,12 +6992,12 @@ function getDetectedHostIps() {
 
 function getRedirectReplacementHost(nodeId, fallbackHost) {
   const row = db.prepare(`
-    SELECT bind_ip FROM redirect_rules
+    SELECT COALESCE(NULLIF(public_host, ''), bind_ip) AS replacement_host FROM redirect_rules
     WHERE node_id = ? AND enabled = 1 AND rewrite_enabled = 1
     ORDER BY updated_at DESC, id DESC
     LIMIT 1
   `).get(Number(nodeId));
-  return row?.bind_ip || fallbackHost;
+  return row?.replacement_host || fallbackHost;
 }
 
 function getNodeTargetHost(node) {
@@ -6973,6 +7019,32 @@ function getRedirectTargetPort(node, inbound = null) {
   const fromInbound = Number(inbound?.port || 0);
   if (Number.isInteger(fromInbound) && fromInbound > 0 && fromInbound <= 65535) return fromInbound;
   return 0;
+}
+
+function getRemnawaveRedirectTarget(hostDescriptor) {
+  if (!hostDescriptor || typeof hostDescriptor !== 'object') return { host: '', port: 0 };
+  let host = String(hostDescriptor.address || hostDescriptor.serverAddress || hostDescriptor.hostname || '').trim();
+  try {
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(host)) host = new URL(host).hostname;
+  } catch (_) { host = ''; }
+  host = host.replace(/^\[|\]$/g, '');
+  const port = normalizePortNumber(hostDescriptor.port || hostDescriptor.serverPort || 0);
+  return { host, port };
+}
+
+async function resolveRedirectTarget(node, inbound = null) {
+  if (isRemnawaveNode(node)) {
+    const descriptor = await getRemnawaveHostDescriptor(node);
+    return { ...getRemnawaveRedirectTarget(descriptor), inbound: null, descriptor };
+  }
+  let selectedInbound = inbound || getCachedInbound(node);
+  if (!selectedInbound) selectedInbound = await getInboundFast(node);
+  return {
+    host: getNodeTargetHost(node),
+    port: getRedirectTargetPort(node, selectedInbound),
+    inbound: selectedInbound,
+    descriptor: null
+  };
 }
 
 const RESERVED_PANEL_PORTS = new Set([80, 443]);
@@ -7052,7 +7124,7 @@ function assertRedirectListenPortAllowed(bindIp, port, protocol, exceptNodeId = 
 
 function serializeRedirectDesiredState() {
   const rules = db.prepare(`
-    SELECT rr.id, rr.bind_ip, rr.node_id, rr.target_host, rr.target_port, rr.protocol, rr.rewrite_enabled, rr.enabled,
+    SELECT rr.id, rr.bind_ip, rr.public_host, rr.helper_enabled, rr.node_id, rr.target_host, rr.target_port, rr.protocol, rr.rewrite_enabled, rr.enabled,
            n.country_name_ru, n.name, n.label_suffix
     FROM redirect_rules rr
     JOIN nodes n ON n.id = rr.node_id
@@ -7061,13 +7133,15 @@ function serializeRedirectDesiredState() {
   `).all().map(row => ({
     id: Number(row.id),
     bind_ip: String(row.bind_ip || ''),
+    public_host: String(row.public_host || row.bind_ip || ''),
+    helper_enabled: Number(row.helper_enabled) === 1,
     node_id: Number(row.node_id),
     target_host: String(row.target_host || ''),
     target_port: Number(row.target_port || 0),
     protocol: normalizeRedirectProtocol(row.protocol),
     rewrite_enabled: Number(row.rewrite_enabled) === 1,
     label: getNodePublicName(row)
-  })).filter(r => isValidIpv4(r.bind_ip) && r.target_host && r.target_port > 0);
+  })).filter(r => r.helper_enabled && normalizeRedirectPublicHost(r.public_host) && r.target_host && r.target_port > 0);
 
   return {
     version: 1,
@@ -7280,15 +7354,17 @@ async function buildNodeConnectivityProbe(nodeId) {
   const node = db.prepare('SELECT * FROM nodes WHERE id = ?').get(Number(nodeId || 0));
   if (!node) return null;
   let inbound = getCachedInbound(node);
-  try { inbound = await getInboundFast(node); } catch (_) {}
-  const targetHost = getNodeTargetHost(node);
-  const targetPort = getRedirectTargetPort(node, inbound);
+  let resolvedTarget = { host: getNodeTargetHost(node), port: getRedirectTargetPort(node, inbound), inbound };
+  try { resolvedTarget = await resolveRedirectTarget(node, inbound); } catch (_) {}
+  inbound = resolvedTarget.inbound || inbound;
+  const targetHost = resolvedTarget.host;
+  const targetPort = resolvedTarget.port;
   const activeRule = db.prepare(`
     SELECT * FROM redirect_rules
     WHERE node_id = ? AND enabled = 1 AND rewrite_enabled = 1
     ORDER BY updated_at DESC, id DESC LIMIT 1
   `).get(Number(node.id));
-  const redirectHost = activeRule?.bind_ip || '';
+  const redirectHost = activeRule?.public_host || activeRule?.bind_ip || '';
   const direct = targetHost && targetPort ? await tcpProbe(targetHost, targetPort, 4500) : { ok: false, message: 'нет host/port', latencyMs: 0 };
   const redirect = redirectHost && targetPort ? await tcpProbe(redirectHost, targetPort, 4500) : null;
   const stream = safeParseJsonField(inbound?.streamSettings, {});
@@ -7323,9 +7399,10 @@ async function buildRedirectProbeResults(nodeIds = [], bindIp = '') {
     const node = byId.get(id);
     if (!node) continue;
     let inbound = getCachedInbound(node);
-    try { inbound = await getInboundFast(node); } catch (_) {}
-    const targetHost = getNodeTargetHost(node);
-    const targetPort = getRedirectTargetPort(node, inbound);
+    let resolvedTarget = { host: getNodeTargetHost(node), port: getRedirectTargetPort(node, inbound), inbound };
+    try { resolvedTarget = await resolveRedirectTarget(node, inbound); } catch (_) {}
+    const targetHost = resolvedTarget.host;
+    const targetPort = resolvedTarget.port;
     let probe = { ok: false, message: 'нет target host/port', latencyMs: 0 };
     if (targetHost && targetPort) probe = await tcpProbe(targetHost, targetPort, 3500);
     results.push({
@@ -7743,8 +7820,8 @@ async function buildRemnawaveSubscriptionEntries(row, clientRow, includeOffline 
         db.prepare('UPDATE client_nodes SET remote_sub_url = ?, used_bytes = ?, download_bytes = ? WHERE id = ?')
           .run(
             subscriptionUrl,
-            clampByteNumber(user?.userTraffic?.usedTrafficBytes || row?.used_bytes || 0),
-            clampByteNumber(user?.userTraffic?.usedTrafficBytes || row?.download_bytes || 0),
+            getRemnawaveUsedTrafficBytes(user, row?.used_bytes || 0),
+            getRemnawaveUsedTrafficBytes(user, row?.download_bytes || 0),
             row.client_node_id
           );
       }
@@ -11103,9 +11180,11 @@ function buildTopClientPeriodUsageReport(period = 'week', limit = 500) {
         uploadBytes: summary.uploadBytes,
         downloadBytes: summary.downloadBytes,
         usedBytes: summary.usedBytes,
+        currentUsedBytes: current.used_bytes,
         uploadText: formatTrafficBytes(summary.uploadBytes),
         downloadText: formatTrafficBytes(summary.downloadBytes),
         totalText: formatTrafficBytes(summary.usedBytes),
+        currentUsedText: formatTrafficBytes(current.used_bytes),
         hasBaseline: Boolean(baseline)
       };
     });
@@ -11588,7 +11667,7 @@ async function refreshAllClientUsageFromNodes() {
             || byVless.get(String(row.client_uuid || '').toLowerCase())
             || byUsername.get(String(row.remote_email || row.client_login || '').toLowerCase());
           if (!user) continue;
-          const usedBytes = clampByteNumber(user?.userTraffic?.usedTrafficBytes || 0);
+          const usedBytes = getRemnawaveUsedTrafficBytes(user, row.used_bytes || 0);
           update.run(
             String(user?.username || row.remote_email || row.client_login || ''),
             getRemnawaveUserRemoteId(user) || String(row.remote_uuid || ''),
@@ -13542,18 +13621,23 @@ function isUpdateRunningStatus(status) {
 
 
 
-app.get('/redirects', requireAuth, (req, res) => {
+app.get('/redirects', requireAuth, async (req, res) => {
   updateRedirectRulesFromStatus();
-  const nodes = db.prepare(`SELECT * FROM nodes ORDER BY ${nodeOrderSql()}`).all().map(node => {
+  const rawNodes = db.prepare(`SELECT * FROM nodes ORDER BY ${nodeOrderSql()}`).all();
+  const nodes = await Promise.all(rawNodes.map(async node => {
     const cachedInbound = getCachedInbound(node);
+    let target = { host: getNodeTargetHost(node), port: getRedirectTargetPort(node, cachedInbound), inbound: cachedInbound };
+    try { target = await resolveRedirectTarget(node, cachedInbound); } catch (_) {}
     return {
       ...node,
-      redirect_target_host: getNodeTargetHost(node),
-      redirect_target_port: getRedirectTargetPort(node, cachedInbound),
-      redirect_has_inbound_cache: cachedInbound ? 1 : 0,
-      transport_label: cachedInbound ? getInboundTransportInfo(cachedInbound).label : 'не загружено'
+      redirect_target_host: target.host,
+      redirect_target_port: target.port,
+      redirect_has_inbound_cache: target.inbound || target.descriptor ? 1 : 0,
+      transport_label: isRemnawaveNode(node)
+        ? (target.host && target.port ? `Remnawave Host · ${target.host}:${target.port}` : 'Host не выбран или недоступен')
+        : (target.inbound ? getInboundTransportInfo(target.inbound).label : 'не загружено')
     };
-  });
+  }));
   const rules = getRedirectRules(true);
   const status = getRedirectStatus();
   const hostIps = getDetectedHostIps();
@@ -13631,14 +13715,14 @@ app.post('/redirects/helper/restart.json', requireAuth, async (req, res) => {
 
 app.post('/redirects/check', requireAuth, async (req, res) => {
   try {
-    const bindIp = String(req.body.bind_ip || '').trim();
+    let bindIp = normalizeRedirectPublicHost(req.body.bind_ip_custom || req.body.bind_ip || '');
     let nodeIds = req.body.node_ids || [];
     if (!Array.isArray(nodeIds)) nodeIds = [nodeIds];
     nodeIds = nodeIds.map(v => Number(v)).filter(Number.isFinite);
     if (!nodeIds.length) {
-      const activeRows = db.prepare('SELECT DISTINCT node_id, bind_ip FROM redirect_rules WHERE enabled = 1 ORDER BY id ASC').all();
+      const activeRows = db.prepare("SELECT DISTINCT node_id, COALESCE(NULLIF(public_host, ''), bind_ip) AS public_host FROM redirect_rules WHERE enabled = 1 ORDER BY id ASC").all();
       nodeIds = activeRows.map(r => Number(r.node_id)).filter(Number.isFinite);
-      if (!bindIp) bindIp = String(activeRows.find(r => r && r.bind_ip)?.bind_ip || '');
+      if (!bindIp) bindIp = String(activeRows.find(r => r && r.public_host)?.public_host || '');
     }
     if (!nodeIds.length) throw new Error('Выбери хотя бы один узел для проверки.');
     const results = await buildRedirectProbeResults(nodeIds, bindIp);
@@ -13657,9 +13741,9 @@ app.get('/redirects/check/refresh.json', requireAuth, async (req, res) => {
     // Always re-check the current active redirect rules first. The old behavior reused
     // the previous report and therefore mobile could keep showing only the two nodes
     // that were checked earlier, even after new rules were added.
-    let rows = db.prepare('SELECT DISTINCT node_id, bind_ip FROM redirect_rules WHERE enabled = 1 ORDER BY id ASC').all();
+    let rows = db.prepare("SELECT DISTINCT node_id, COALESCE(NULLIF(public_host, ''), bind_ip) AS public_host FROM redirect_rules WHERE enabled = 1 ORDER BY id ASC").all();
     let nodeIds = rows.map(r => Number(r.node_id)).filter(Number.isFinite);
-    let bindIp = String(rows.find(r => r && r.bind_ip)?.bind_ip || '');
+    let bindIp = String(rows.find(r => r && r.public_host)?.public_host || '');
     if (!nodeIds.length) {
       rows = db.prepare(`SELECT id AS node_id, '' AS bind_ip FROM nodes WHERE enabled = 1 ORDER BY ${nodeOrderSql()}`).all();
       nodeIds = rows.map(r => Number(r.node_id)).filter(Number.isFinite);
@@ -13679,10 +13763,27 @@ app.get('/redirects/check/refresh.json', requireAuth, async (req, res) => {
 app.post('/redirects/apply', requireAuth, async (req, res) => {
   try {
     const bindMode = String(req.body.bind_ip_mode || 'detected');
-    const customBindIp = String(req.body.bind_ip_custom || '').trim();
-    const bindIp = bindMode === 'custom' && customBindIp ? customBindIp : String(req.body.bind_ip || '').trim();
+    const runtimeMode = String(req.body.redirect_runtime || 'local') === 'external' ? 'external' : 'local';
+    const customPublicHost = normalizeRedirectPublicHost(req.body.bind_ip_custom || '');
+    const selectedDetectedIp = String(req.body.bind_ip || '').trim();
+    const publicHost = bindMode === 'custom' ? customPublicHost : normalizeRedirectPublicHost(selectedDetectedIp);
+    if (!publicHost) throw new Error('Укажи корректный IPv4 или домен входной точки перенаправления.');
+    const detectedIps = getDetectedHostIps();
+    let bindIp = '';
+    if (runtimeMode === 'local') {
+      if (isValidIpv4(publicHost) && detectedIps.includes(publicHost)) bindIp = publicHost;
+      if (!bindIp && bindMode !== 'custom' && isValidIpv4(selectedDetectedIp)) bindIp = selectedDetectedIp;
+      if (!bindIp && !isValidIpv4(publicHost)) {
+        try {
+          const resolved = await dns.lookup(publicHost, { all: true, family: 4 });
+          bindIp = String((resolved || []).find(item => detectedIps.includes(String(item.address || '')))?.address || '');
+        } catch (_) {}
+      }
+      // Empty bind_ip intentionally means “match this inbound port on any local
+      // IPv4”. This is required on cloud VMs where the public IP/domain is NATed
+      // to a private interface address before the packet reaches PREROUTING.
+    }
     const bindLabel = String(req.body.bind_label || '').trim().slice(0, 80);
-    if (!isValidIpv4(bindIp)) throw new Error('Укажи корректный IPv4 для входной точки перенаправления. Можно выбрать IP панели или ввести свой IP редирект-сервера.');
 
     let nodeIds = req.body.node_ids || [];
     if (!Array.isArray(nodeIds)) nodeIds = [nodeIds];
@@ -13698,15 +13799,18 @@ app.post('/redirects/apply', requireAuth, async (req, res) => {
     const nodeById = new Map(nodes.map(n => [Number(n.id), n]));
     const orderedNodes = nodeIds.map(id => nodeById.get(Number(id))).filter(Boolean);
 
+    const helperEnabled = runtimeMode === 'local' ? 1 : 0;
     const upsert = db.prepare(`
-      INSERT INTO redirect_rules (bind_ip, bind_label, node_id, target_host, target_port, protocol, rewrite_enabled, enabled, last_status, last_error, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'pending', '', CURRENT_TIMESTAMP)
+      INSERT INTO redirect_rules (bind_ip, public_host, helper_enabled, bind_label, node_id, target_host, target_port, protocol, rewrite_enabled, enabled, last_status, last_error, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, '', CURRENT_TIMESTAMP)
       ON CONFLICT(bind_ip, node_id, target_port, protocol) DO UPDATE SET
+        public_host = excluded.public_host,
+        helper_enabled = excluded.helper_enabled,
         target_host = excluded.target_host,
         bind_label = excluded.bind_label,
         rewrite_enabled = excluded.rewrite_enabled,
         enabled = 1,
-        last_status = 'pending',
+        last_status = excluded.last_status,
         last_error = '',
         updated_at = CURRENT_TIMESTAMP
     `);
@@ -13715,23 +13819,22 @@ app.post('/redirects/apply', requireAuth, async (req, res) => {
     let applied = 0;
     for (const node of orderedNodes) {
       let inbound = getCachedInbound(node);
-      try {
-        inbound = await getInboundFast(node);
-      } catch (err) {
-        console.error('Redirect inbound refresh failed:', getNodePublicName(node), err.message);
-      }
-      const targetHost = getNodeTargetHost(node);
-      const targetPort = getRedirectTargetPort(node, inbound);
+      let resolvedTarget = { host: getNodeTargetHost(node), port: getRedirectTargetPort(node, inbound), inbound };
+      try { resolvedTarget = await resolveRedirectTarget(node, inbound); }
+      catch (err) { console.error('Redirect target refresh failed:', getNodePublicName(node), err.message); }
+      inbound = resolvedTarget.inbound || inbound;
+      const targetHost = resolvedTarget.host;
+      const targetPort = resolvedTarget.port;
       if (!targetHost) {
         skipped.push(`${getNodePublicName(node)}: не найден IP/host панели узла`);
         continue;
       }
       if (!targetPort) {
-        skipped.push(`${getNodePublicName(node)}: не удалось получить порт inbound из 3x-ui или кэша. Открой узел/загрузи inbound и повтори.`);
+        skipped.push(`${getNodePublicName(node)}: ${isRemnawaveNode(node) ? 'не удалось получить порт выбранного Remnawave Host' : 'не удалось получить порт inbound из 3x-ui или кэша. Открой узел/загрузи inbound и повтори'}.`);
         continue;
       }
       try {
-        assertRedirectListenPortAllowed(bindIp, targetPort, selectedProtocol, Number(node.id));
+        if (helperEnabled) assertRedirectListenPortAllowed(bindIp, targetPort, selectedProtocol, Number(node.id));
       } catch (portErr) {
         skipped.push(`${getNodePublicName(node)}: ${portErr.message || portErr}`);
         continue;
@@ -13746,9 +13849,9 @@ app.post('/redirects/apply', requireAuth, async (req, res) => {
       db.prepare(`DELETE FROM redirect_rules WHERE bind_ip = ? AND node_id = ? AND target_port = ? AND protocol NOT IN (${keepPlaceholders})`)
         .run(bindIp, Number(node.id), targetPort, ...selectedProtocols);
       for (const proto of selectedProtocols) {
-        upsert.run(bindIp, bindLabel, Number(node.id), targetHost, targetPort, proto, rewriteEnabled);
+        upsert.run(bindIp, publicHost, helperEnabled, bindLabel, Number(node.id), targetHost, targetPort, proto, rewriteEnabled, helperEnabled ? 'pending' : 'external');
         db.prepare('UPDATE redirect_rules SET last_status = ?, last_error = ? WHERE bind_ip = ? AND node_id = ? AND target_port = ? AND protocol = ?')
-          .run(initialStatus, initialError, bindIp, Number(node.id), targetPort, proto);
+          .run(helperEnabled ? initialStatus : 'external', helperEnabled ? initialError : '', bindIp, Number(node.id), targetPort, proto);
         applied += 1;
       }
       if (!probe.ok) skipped.push(`${getNodePublicName(node)}: цель ${targetHost}:${targetPort} сейчас недоступна (${probe.message}), правило сохранено, но работать не будет до восстановления доступа`);
@@ -13756,7 +13859,9 @@ app.post('/redirects/apply', requireAuth, async (req, res) => {
 
     if (!applied) throw new Error('Не удалось создать ни одного правила. Проверь доступность узлов и кэш inbound. ' + skipped.join('; '));
     exportRedirectRulesForHelper();
-    let msg = `Правила сохранены: ${applied}. Helper применит их автоматически, если service запущен в режиме loop.`;
+    let msg = helperEnabled
+      ? `Правила сохранены: ${applied}. Локальный helper применит их автоматически.`
+      : `Правила сохранены: ${applied}. В подписке будет адрес ${publicHost}; внешний сервер должен быть настроен отдельно.`;
     if (skipped.length) msg += ` Пропущено: ${skipped.join('; ')}`;
     return res.redirect('/redirects?message=' + encodeURIComponent(msg));
   } catch (err) {

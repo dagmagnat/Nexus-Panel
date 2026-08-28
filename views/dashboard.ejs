@@ -470,11 +470,16 @@ function openTopUsageDetail(clientId) {
   const body = document.getElementById('topUsageDetailBody');
   if (!item || !body) return;
   const nodes = Array.isArray(item.nodes) ? item.nodes : [];
-  const nodesHtml = nodes.length ? nodes.map(node => `
+  const nodesHtml = nodes.length ? nodes.map(node => {
+    const counterHint = node.hasBaseline === false && Number(node.currentUsedBytes || 0) > Number(node.usedBytes || 0)
+      ? ` · общий счётчик ${escapeHtml(node.currentUsedText || '0 Б')}`
+      : '';
+    return `
     <div class="top-usage-node-row">
-      <div class="top-usage-node-title">${renderFlag(node.countryCode, node.countryFlag, node.nodeType)}<span><strong>${escapeHtml(node.title || 'Узел')}</strong><small>↓ ${escapeHtml(node.downloadText || '0 Б')} · ↑ ${escapeHtml(node.uploadText || '0 Б')}</small></span></div>
+      <div class="top-usage-node-title">${renderFlag(node.countryCode, node.countryFlag, node.nodeType)}<span><strong>${escapeHtml(node.title || 'Узел')}</strong><small>↓ ${escapeHtml(node.downloadText || '0 Б')} · ↑ ${escapeHtml(node.uploadText || '0 Б')}${counterHint}</small></span></div>
       <strong>${escapeHtml(node.totalText || '0 Б')}</strong>
-    </div>`).join('') : '<div class="empty-state">У клиента нет назначенных узлов.</div>';
+    </div>`;
+  }).join('') : '<div class="empty-state">У клиента нет назначенных узлов.</div>';
   body.innerHTML = `
     <div class="top-usage-detail-head"><span class="top-usage-rank">#${escapeHtml(item.clientId)}</span><div><h2>${escapeHtml(item.displayName || item.login || 'Клиент')}</h2><p>${escapeHtml(item.comment || item.login || '')}</p></div></div>
     <p class="muted">Расход ${escapeHtml(topUsageReport.periodLabel || 'за выбранный период')}</p>

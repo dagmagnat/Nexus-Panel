@@ -27,6 +27,7 @@
     return emoji ? `<span class="flag-badge emoji-fallback" aria-label="${escapeFlagAttr(String(code || '').toUpperCase())}">${emoji}</span>` : '';
   }
   function nodeEndpointLabel(node) {
+    if (String(node.node_type || '').toLowerCase() === 'remnawave') return node.redirect_target_port ? 'Remnawave Host' : 'Host не выбран';
     return 'inbound ' + (node.inbound_id || '—');
   }
   function formatMetricBytes(value) {
@@ -39,7 +40,7 @@
   }
 %>
 
-<%- include('partials_header', { pageTitle: 'Перенаправление', pageSubtitle: 'DNAT/SNAT перенаправление с IP сервера панели на выбранные 3x-ui узлы', activePage: 'redirects' }) %>
+<%- include('partials_header', { pageTitle: 'Перенаправление', pageSubtitle: 'L4-перенаправление с публичного IP или домена на выбранные узлы', activePage: 'redirects' }) %>
 
 <% if (message) { %><div class="alert ok"><%= message %></div><% } %>
 <% if (error) { %><div class="alert err"><%= error %></div><% } %>
@@ -47,14 +48,14 @@
 <div class="grid redirect-page-grid">
   <section class="card span-7 redirect-editor-card">
     <h2>Создать перенаправление</h2>
-    <p class="muted">Выбери IP текущего сервера панели и узлы. После применения адрес выбранных узлов в JSON/SUB будет заменяться на IP панели, а host-helper на сервере сделает перенаправление на настоящий IP узла и его порт.</p>
+    <p class="muted">Укажи публичный IP или домен входного сервера. Адрес выбранных узлов в JSON/SUB будет заменён на него. Для текущего сервера правила применит host-helper; для отдельного сервера панель выполнит только подмену подписки.</p>
     <form method="post" action="/redirects/apply" class="js-long-action" data-loading-title="Сохраняю перенаправление" data-loading-text="Готовлю правила для helper. Применение iptables на хосте занимает несколько секунд.">
       <div class="form-grid">
         <div class="field half">
-          <label>Источник IP</label>
+          <label>Публичная точка входа</label>
           <select name="bind_ip_mode" id="bindIpMode">
             <option value="detected" selected>IP панели / найденный IP</option>
-            <option value="custom">Свой IP редирект-сервера</option>
+            <option value="custom">Свой IP или домен</option>
           </select>
           <small class="hint">Если редирект стоит на отдельном сервере, выбери «Свой IP» и впиши его ниже.</small>
         </div>
@@ -71,9 +72,18 @@
         </div>
 
         <div class="field half" id="customBindIpField">
-          <label>Свой IP редирект-сервера</label>
-          <input name="bind_ip_custom" id="customBindIpInput" placeholder="например: 109.10.20.30" />
-          <small class="hint">В подписке будет заменён только IP. Порт останется портом оригинального inbound узла. Порты 80/443 и уже занятые порты запрещены.</small>
+          <label>Свой IP или домен входного сервера</label>
+          <input name="bind_ip_custom" id="customBindIpInput" placeholder="relay.example.com или 109.10.20.30" />
+          <small class="hint">В подписке меняется только адрес; порт и параметры REALITY/TLS остаются от исходного inbound.</small>
+        </div>
+
+        <div class="field half">
+          <label>Где работает перенаправление</label>
+          <select name="redirect_runtime">
+            <option value="local" selected>На этом сервере — управлять helper автоматически</option>
+            <option value="external">На отдельном сервере — только менять подписку</option>
+          </select>
+          <small class="hint">При отдельном сервере его DNAT/прокси настраивается там вручную. Панель не может изменить firewall другого сервера.</small>
         </div>
 
         <div class="field half">
@@ -242,7 +252,7 @@
           <thead>
             <tr>
               <th>ID</th>
-              <th>Entry IP</th>
+              <th>Публичный адрес</th>
               <th>Узел</th>
               <th>Цель</th>
               <th>Протокол</th>
@@ -256,7 +266,7 @@
             <% rules.forEach(rule => { %>
               <tr>
                 <td><%= rule.id %></td>
-                <td><code><%= rule.bind_ip %></code><% if (rule.bind_label) { %><br><small><%= rule.bind_label %></small><% } %></td>
+                <td><code><%= rule.public_host || rule.bind_ip %></code><br><small><%= rule.helper_enabled ? (rule.bind_ip ? 'helper: ' + rule.bind_ip : 'helper: любой локальный IPv4 (NAT)') : 'внешнее правило' %></small><% if (rule.bind_label) { %><br><small><%= rule.bind_label %></small><% } %></td>
                 <td><strong class="node-name-inline"><%- flagHtml(rule.country_code, rule.country_flag, rule.country_name_ru || rule.name) %><span><%= rule.country_name_ru || rule.name %><%= rule.label_suffix ? ' ' + String(rule.label_suffix).replace(/^\/+\s*/, '') : '' %></span></strong></td>
                 <td><code><%= rule.target_host %>:<%= rule.target_port %></code></td>
                 <td><%= rule.protocol.toUpperCase() %></td>
@@ -287,7 +297,7 @@
               <span class="status <%= rule.enabled ? 'ok' : 'off' %>"><%= rule.enabled ? (rule.last_status || 'pending') : 'disabled' %></span>
             </div>
             <div class="mobile-redirect-grid">
-              <div><span>Entry IP</span><code><%= rule.bind_ip %></code><% if (rule.bind_label) { %><small><%= rule.bind_label %></small><% } %></div>
+              <div><span>Публичный адрес</span><code><%= rule.public_host || rule.bind_ip %></code><small><%= rule.helper_enabled ? 'локальный helper' : 'внешний сервер' %></small><% if (rule.bind_label) { %><small><%= rule.bind_label %></small><% } %></div>
               <div><span>Цель</span><code><%= rule.target_host %>:<%= rule.target_port %></code></div>
               <div><span>Протокол</span><strong><%= rule.protocol.toUpperCase() %></strong></div>
               <div><span>Подмена</span><strong><%= rule.rewrite_enabled ? 'Включена' : 'Нет' %></strong></div>
