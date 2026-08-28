@@ -3083,10 +3083,59 @@ body.client-modal-open { overflow: hidden; overscroll-behavior: none; }
 .source-subscription-option-grid .switch-row > span { min-width: 0; }
 .source-subscription-warning { margin: 0; padding: 8px 10px; font-size: 9px; }
 
+.auto-select-explainer { display: grid; gap: 4px; margin: 0; }
+.auto-select-node-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.auto-select-node-option {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 11px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--input);
+  cursor: pointer;
+}
+.auto-select-node-option:has(input:checked) { border-color: color-mix(in srgb, var(--cyan) 62%, var(--border)); background: color-mix(in srgb, var(--cyan) 8%, var(--input)); }
+.auto-select-node-option > input { width: auto; min-height: 0; margin: 0; }
+.auto-select-node-option > span { display: grid; grid-template-columns: auto minmax(0, 1fr); min-width: 0; align-items: center; gap: 2px 8px; }
+.auto-select-node-option .flag-badge { grid-row: 1 / 3; }
+.auto-select-node-option strong,
+.auto-select-node-option small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.auto-select-node-option small { color: var(--muted); font-size: 9px; }
+
+.auto-select-profile-manager { display: grid; gap: 12px; margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line); }
+.auto-select-profile-manager-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.auto-select-profile-manager-head h3 { margin: 0 0 3px; }
+.auto-select-profile-manager-head p { margin: 0; }
+.auto-select-profile-list { display: grid; gap: 9px; }
+.auto-select-profile-card { border: 1px solid var(--border); border-radius: 13px; background: color-mix(in srgb, var(--panel) 88%, transparent); overflow: hidden; }
+.auto-select-profile-card > summary { display: flex; min-height: 56px; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 14px; cursor: pointer; list-style: none; }
+.auto-select-profile-card > summary::-webkit-details-marker { display: none; }
+.auto-select-profile-card > summary::after { color: var(--muted); content: "⌄"; font-size: 16px; transition: transform .16s ease; }
+.auto-select-profile-card[open] > summary::after { transform: rotate(180deg); }
+.auto-select-profile-title { display: flex; min-width: 0; align-items: center; gap: 9px; }
+.auto-select-profile-title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.auto-select-profile-icon { display: inline-grid; width: 32px; height: 32px; flex: 0 0 32px; place-items: center; border: 1px solid color-mix(in srgb, var(--cyan) 36%, var(--border)); border-radius: 9px; background: color-mix(in srgb, var(--cyan) 9%, var(--surface)); font-size: 17px; }
+.auto-select-profile-summary { margin-left: auto; color: var(--muted); font-size: 10px; white-space: nowrap; }
+.auto-select-profile-body { display: grid; gap: 12px; padding: 14px; border-top: 1px solid var(--line); }
+.auto-select-profile-edit-form { display: grid; gap: 12px; }
+.auto-select-profile-actions,
+.auto-select-profile-secondary-actions { margin: 0; }
+.auto-select-profile-secondary-actions { padding-top: 10px; border-top: 1px solid var(--line); }
+.auto-select-profile-secondary-actions .inline-form { margin: 0; }
+
 @media (max-width: 700px) {
   .source-subscription-controls-head { flex-direction: column; }
   .source-subscription-statuses { justify-content: flex-start; }
   .source-subscription-option-grid { grid-template-columns: minmax(0, 1fr); }
+  .auto-select-node-grid { grid-template-columns: minmax(0, 1fr); }
+  .auto-select-profile-card > summary { align-items: flex-start; flex-wrap: wrap; }
+  .auto-select-profile-summary { width: calc(100% - 42px); margin-left: 41px; white-space: normal; }
+  .auto-select-profile-actions .btn-main,
+  .auto-select-profile-secondary-actions,
+  .auto-select-profile-secondary-actions .inline-form,
+  .auto-select-profile-secondary-actions button { width: 100%; }
 }
 
 .client-summary-action-card {

@@ -135,6 +135,7 @@ function addSubscriptionNode(db, { mockPort, name, countryCode, countryName, cli
   };
   db.prepare('INSERT INTO node_inbound_cache (node_id, inbound_id, inbound_json) VALUES (?, ?, ?)')
     .run(nodeResult.lastInsertRowid, 1, JSON.stringify(inbound));
+  return Number(nodeResult.lastInsertRowid);
 }
 
 function seedSubscription(dataDir, mockPort) {
@@ -393,14 +394,19 @@ test('per-node quota never includes traffic spent on another node', { timeout: 6
         limit_ip, expiry_time, enabled
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run('portal-user', 'LTE Client', uuid, 'lte-client', 30, 0, 2, Date.now() + 30 * 86400000, 1);
-    addSubscriptionNode(db, {
+    const primaryNodeId = addSubscriptionNode(db, {
       mockPort: primary.port, name: 'Primary', countryCode: 'DE', countryName: 'Основной',
       clientId: client.lastInsertRowid, uuid, trafficGb: 0
     });
-    addSubscriptionNode(db, {
+    const lteNodeId = addSubscriptionNode(db, {
       mockPort: lte.port, name: 'LTE', countryCode: 'FI', countryName: 'LTE',
       clientId: client.lastInsertRowid, uuid, trafficGb: 50
     });
+    db.prepare(`
+      INSERT INTO auto_select_profiles (
+        name, icon, node_ids, probe_url, probe_interval_seconds, enabled, sort_order
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run('Самый быстрый', '⚡', JSON.stringify([primaryNodeId, lteNodeId]), 'https://cp.cloudflare.com/generate_204', 30, 1, 1);
   } finally {
     db.close();
   }
@@ -414,6 +420,37 @@ test('per-node quota never includes traffic spent on another node', { timeout: 6
   const links = decodeURIComponent(await response.text());
   assert.match(links, /LTE[^\r\n#]*7\/50 ГБ/);
   assert.doesNotMatch(links, /25\/50 ГБ/);
+
+  response = await fetch(`http://127.0.0.1:${app.port}/json/lte-client`, {
+    headers: { Accept: 'application/json' }
+  });
+  assert.equal(response.status, 200);
+  const jsonConfigs = await response.json();
+  assert.ok(Array.isArray(jsonConfigs));
+  assert.equal(jsonConfigs[0].title, '⚡ Самый быстрый');
+  assert.equal(jsonConfigs[0].autoSelect.strategy, 'leastPing');
+  assert.equal(jsonConfigs[0].autoSelect.connectivityCheck, true);
+  assert.equal(jsonConfigs[0].autoSelect.candidates, 2);
+  assert.deepEqual(jsonConfigs[0].observatory, {
+    subjectSelector: ['auto-1-node-'],
+    probeURL: 'https://cp.cloudflare.com/generate_204',
+    probeInterval: '30s',
+    enableConcurrency: true
+  });
+  assert.deepEqual(jsonConfigs[0].routing.balancers, [{
+    tag: 'auto-1-balancer',
+    selector: ['auto-1-node-'],
+    strategy: { type: 'leastPing' },
+    fallbackTag: 'auto-1-node-1'
+  }]);
+  const candidateTags = jsonConfigs[0].outbounds
+    .filter(outbound => String(outbound.tag || '').startsWith('auto-1-node-'))
+    .map(outbound => outbound.tag);
+  assert.deepEqual(candidateTags, ['auto-1-node-1', 'auto-1-node-2']);
+  const finalRule = jsonConfigs[0].routing.rules.at(-1);
+  assert.equal(finalRule.balancerTag, 'auto-1-balancer');
+  assert.equal(finalRule.outboundTag, undefined);
+  assert.equal(jsonConfigs.length, 3, 'auto-select profile must be prepended without hiding physical regions');
 
   response = await fetch(`http://127.0.0.1:${app.port}/open/lte-client/status`);
   assert.equal(response.status, 200);

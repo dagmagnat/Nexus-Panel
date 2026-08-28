@@ -1155,6 +1155,19 @@ function initDb() {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS auto_select_profiles (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      icon TEXT NOT NULL DEFAULT '⚡',
+      node_ids TEXT NOT NULL DEFAULT '[]',
+      probe_url TEXT NOT NULL DEFAULT 'https://cp.cloudflare.com/generate_204',
+      probe_interval_seconds INTEGER NOT NULL DEFAULT 30,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE TABLE IF NOT EXISTS clients (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       login TEXT UNIQUE NOT NULL,
@@ -1397,6 +1410,16 @@ function initDb() {
   addColumnIfMissing('nodes', 'enabled', 'INTEGER NOT NULL DEFAULT 1');
   addColumnIfMissing('nodes', 'last_status', "TEXT DEFAULT 'unknown'");
   addColumnIfMissing('nodes', 'last_error', "TEXT DEFAULT ''");
+
+  addColumnIfMissing('auto_select_profiles', 'name', "TEXT NOT NULL DEFAULT 'Автовыбор'");
+  addColumnIfMissing('auto_select_profiles', 'icon', "TEXT NOT NULL DEFAULT '⚡'");
+  addColumnIfMissing('auto_select_profiles', 'node_ids', "TEXT NOT NULL DEFAULT '[]'");
+  addColumnIfMissing('auto_select_profiles', 'probe_url', "TEXT NOT NULL DEFAULT 'https://cp.cloudflare.com/generate_204'");
+  addColumnIfMissing('auto_select_profiles', 'probe_interval_seconds', 'INTEGER NOT NULL DEFAULT 30');
+  addColumnIfMissing('auto_select_profiles', 'enabled', 'INTEGER NOT NULL DEFAULT 1');
+  addColumnIfMissing('auto_select_profiles', 'sort_order', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing('auto_select_profiles', 'created_at', "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing('auto_select_profiles', 'updated_at', "TEXT NOT NULL DEFAULT ''");
 
   addColumnIfMissing('nodes', 'sni_mode', "TEXT NOT NULL DEFAULT 'inbound'");
   addColumnIfMissing('nodes', 'sni_profile_id', 'INTEGER DEFAULT NULL');
@@ -2604,6 +2627,99 @@ function normalizeSubscriptionPolicyNodeIds(value) {
   return uniqueList(source.map(item => Number(item)).filter(item => Number.isInteger(item) && item > 0));
 }
 
+function normalizeAutoSelectProfileName(value) {
+  return sanitizeSubscriptionDeviceText(value, 80) || 'Автовыбор';
+}
+
+function normalizeAutoSelectProfileIcon(value) {
+  return sanitizeCustomFlag(value, { strict: true, fallback: '⚡' }) || '⚡';
+}
+
+function normalizeAutoSelectProbeUrl(value) {
+  const raw = String(value || AUTO_SELECT_DEFAULT_PROBE_URL).trim();
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch (_) {
+    throw new Error('URL интернет-проверки имеет неверный формат.');
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw new Error('URL интернет-проверки должен начинаться с http:// или https://.');
+  }
+  parsed.username = '';
+  parsed.password = '';
+  parsed.hash = '';
+  return parsed.toString().slice(0, 500);
+}
+
+function normalizeAutoSelectProbeInterval(value) {
+  const seconds = Number.parseInt(String(value ?? AUTO_SELECT_DEFAULT_PROBE_INTERVAL_SECONDS), 10);
+  if (!Number.isFinite(seconds)) return AUTO_SELECT_DEFAULT_PROBE_INTERVAL_SECONDS;
+  return Math.min(300, Math.max(10, seconds));
+}
+
+function validateAutoSelectNodeIds(value) {
+  const nodeIds = normalizeSubscriptionPolicyNodeIds(value);
+  const known = new Set(db.prepare('SELECT id FROM nodes').all().map(row => Number(row.id)));
+  const valid = nodeIds.filter(id => known.has(id));
+  if (valid.length < 2) throw new Error('Для автовыбора отметь минимум два существующих узла.');
+  return valid;
+}
+
+function enrichAutoSelectProfile(row) {
+  if (!row) return null;
+  const nodeIds = normalizeSubscriptionPolicyNodeIds(row.node_ids);
+  const nodeMap = new Map(db.prepare(`SELECT * FROM nodes ORDER BY ${nodeOrderSql()}`).all().map(node => [Number(node.id), enrichNodeFlagFields(node)]));
+  let probeUrl = AUTO_SELECT_DEFAULT_PROBE_URL;
+  let icon = '⚡';
+  try { probeUrl = normalizeAutoSelectProbeUrl(row.probe_url); } catch (_) {}
+  try { icon = normalizeAutoSelectProfileIcon(row.icon); } catch (_) {}
+  return {
+    ...row,
+    icon,
+    nodeIds,
+    nodes: nodeIds.map(id => nodeMap.get(id)).filter(Boolean),
+    title: `${icon} ${normalizeAutoSelectProfileName(row.name)}`.trim(),
+    probeIntervalSeconds: normalizeAutoSelectProbeInterval(row.probe_interval_seconds),
+    probeUrl
+  };
+}
+
+function getAutoSelectProfiles(options = {}) {
+  const where = options.enabledOnly === true ? 'WHERE enabled = 1' : '';
+  return db.prepare(`SELECT * FROM auto_select_profiles ${where} ORDER BY COALESCE(sort_order, id), id`).all().map(enrichAutoSelectProfile);
+}
+
+function createAutoSelectProfileFromBody(body = {}) {
+  const name = normalizeAutoSelectProfileName(body.auto_select_name);
+  const icon = normalizeAutoSelectProfileIcon(body.auto_select_icon);
+  const nodeIds = validateAutoSelectNodeIds(body.auto_select_node_ids);
+  const probeUrl = normalizeAutoSelectProbeUrl(body.auto_select_probe_url);
+  const interval = normalizeAutoSelectProbeInterval(body.auto_select_probe_interval_seconds);
+  const sortOrder = Number(db.prepare('SELECT COALESCE(MAX(sort_order), 0) + 1 AS n FROM auto_select_profiles').get()?.n || 1);
+  const info = db.prepare(`
+    INSERT INTO auto_select_profiles (name, icon, node_ids, probe_url, probe_interval_seconds, enabled, sort_order)
+    VALUES (?, ?, ?, ?, ?, 1, ?)
+  `).run(name, icon, JSON.stringify(nodeIds), probeUrl, interval, sortOrder);
+  return enrichAutoSelectProfile(db.prepare('SELECT * FROM auto_select_profiles WHERE id = ?').get(info.lastInsertRowid));
+}
+
+function updateAutoSelectProfileFromBody(id, body = {}) {
+  const current = db.prepare('SELECT * FROM auto_select_profiles WHERE id = ?').get(Number(id));
+  if (!current) throw new Error('Профиль автовыбора не найден.');
+  const name = normalizeAutoSelectProfileName(body.auto_select_name);
+  const icon = normalizeAutoSelectProfileIcon(body.auto_select_icon);
+  const nodeIds = validateAutoSelectNodeIds(body.auto_select_node_ids);
+  const probeUrl = normalizeAutoSelectProbeUrl(body.auto_select_probe_url);
+  const interval = normalizeAutoSelectProbeInterval(body.auto_select_probe_interval_seconds);
+  db.prepare(`
+    UPDATE auto_select_profiles
+    SET name = ?, icon = ?, node_ids = ?, probe_url = ?, probe_interval_seconds = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(name, icon, JSON.stringify(nodeIds), probeUrl, interval, current.id);
+  return enrichAutoSelectProfile(db.prepare('SELECT * FROM auto_select_profiles WHERE id = ?').get(current.id));
+}
+
 function getSubscriptionPolicyNodeIds(settingKey) {
   return normalizeSubscriptionPolicyNodeIds(getSetting(settingKey, '[]'));
 }
@@ -3204,6 +3320,9 @@ const NODE_TYPE_3XUI = '3xui';
 const NODE_TYPE_H1CLOUD_3XUI = 'h1cloud_3xui';
 const NODE_TYPE_H1CLOUD = 'h1cloud';
 const NODE_TYPE_REMNAWAVE = 'remnawave';
+const NODE_TYPE_AUTO_SELECT = 'auto_select';
+const AUTO_SELECT_DEFAULT_PROBE_URL = 'https://cp.cloudflare.com/generate_204';
+const AUTO_SELECT_DEFAULT_PROBE_INTERVAL_SECONDS = 30;
 
 const H1CLOUD_LINK_MODE_VLESS_REALITY = 'vless_reality';
 const H1CLOUD_LINK_MODE_VLESS_ALL = 'vless_all';
@@ -14374,12 +14493,12 @@ app.post('/settings/telegram-test', requireAuth, async (req, res) => {
 });
 
 function exportBackupPayload(req = null) {
-  const tables = ['app_users', 'app_settings', 'nodes', 'client_groups', 'client_tags', 'clients', 'subscription_devices', 'client_tag_assignments', 'client_nodes', 'node_inbound_cache', 'sni_profiles', 'telegram_users', 'telegram_orders', 'telegram_tickets', 'telegram_ticket_messages', 'telegram_announcements', 'vpn_hosts', 'vpn_services', 'vpn_clients', 'vpn_jobs'];
+  const tables = ['app_users', 'app_settings', 'nodes', 'auto_select_profiles', 'client_groups', 'client_tags', 'clients', 'subscription_devices', 'client_tag_assignments', 'client_nodes', 'node_inbound_cache', 'sni_profiles', 'telegram_users', 'telegram_orders', 'telegram_tickets', 'telegram_ticket_messages', 'telegram_announcements', 'vpn_hosts', 'vpn_services', 'vpn_clients', 'vpn_jobs'];
   const data = {};
   for (const table of tables) data[table] = db.prepare(`SELECT * FROM ${table}`).all();
   return {
     app: '3xui-aggregator',
-    version: 3,
+    version: 4,
     created_at: new Date().toISOString(),
     panel_host: req ? getRequestPanelHost(req) : '',
     panel_identity: req ? getBackupPanelIdentity(req) : safeFileSegment(BASE_URL, 'panel'),
@@ -14400,8 +14519,8 @@ function ensureAdminUserExists() {
 
 function restoreBackupPayload(payload) {
   if (!payload || payload.app !== '3xui-aggregator' || !payload.data) throw new Error('Неверный файл резервной копии');
-  const deleteTables = ['vpn_jobs', 'vpn_clients', 'vpn_services', 'vpn_hosts', 'telegram_ticket_messages', 'telegram_tickets', 'telegram_orders', 'telegram_announcements', 'telegram_users', 'sni_profiles', 'node_inbound_cache', 'client_nodes', 'client_tag_assignments', 'subscription_devices', 'clients', 'client_tags', 'client_groups', 'nodes', 'app_settings', 'app_users'];
-  const restoreTables = ['app_users', 'app_settings', 'nodes', 'client_groups', 'client_tags', 'clients', 'subscription_devices', 'client_tag_assignments', 'client_nodes', 'node_inbound_cache', 'sni_profiles', 'telegram_users', 'telegram_orders', 'telegram_tickets', 'telegram_ticket_messages', 'telegram_announcements', 'vpn_hosts', 'vpn_services', 'vpn_clients', 'vpn_jobs'];
+  const deleteTables = ['vpn_jobs', 'vpn_clients', 'vpn_services', 'vpn_hosts', 'telegram_ticket_messages', 'telegram_tickets', 'telegram_orders', 'telegram_announcements', 'telegram_users', 'sni_profiles', 'node_inbound_cache', 'client_nodes', 'client_tag_assignments', 'subscription_devices', 'clients', 'client_tags', 'client_groups', 'auto_select_profiles', 'nodes', 'app_settings', 'app_users'];
+  const restoreTables = ['app_users', 'app_settings', 'nodes', 'auto_select_profiles', 'client_groups', 'client_tags', 'clients', 'subscription_devices', 'client_tag_assignments', 'client_nodes', 'node_inbound_cache', 'sni_profiles', 'telegram_users', 'telegram_orders', 'telegram_tickets', 'telegram_ticket_messages', 'telegram_announcements', 'vpn_hosts', 'vpn_services', 'vpn_clients', 'vpn_jobs'];
   const columnCache = new Map();
   const tx = db.transaction(() => {
     for (const table of deleteTables) db.prepare(`DELETE FROM ${table}`).run();
@@ -14603,6 +14722,7 @@ app.get('/nodes', requireAuth, (req, res) => {
 
   render(res, 'nodes', {
     nodes,
+    autoSelectProfiles: getAutoSelectProfiles(),
     countries: getSortedCountriesRu(),
     nodePageSize: getNodesPageSize(),
     nodeAutoRefreshSeconds: getNodeAutoRefreshSeconds(),
@@ -14642,6 +14762,11 @@ app.post('/nodes', requireAuth, async (req, res) => {
       remnawave_link_filter,
       remnawave_remark_mode
     } = req.body;
+
+    if (String(node_type || '').trim().toLowerCase() === NODE_TYPE_AUTO_SELECT) {
+      const profile = createAutoSelectProfileFromBody(req.body || {});
+      return res.redirect('/nodes?tab=add&message=' + encodeURIComponent(`${profile.title}: профиль автовыбора создан. Он появится в JSON-подписках клиентов, у которых доступен хотя бы один из выбранных узлов.`));
+    }
 
     const normalizedNodeType = normalizeNodeTypeValue(node_type || NODE_TYPE_3XUI);
     const isH1ApiType = normalizedNodeType === NODE_TYPE_H1CLOUD;
@@ -14884,6 +15009,37 @@ app.post('/nodes', requireAuth, async (req, res) => {
     if (errorText) qs.set('error', errorText);
     qs.set('tab', 'list');
     res.redirect('/nodes?' + qs.toString());
+  } catch (err) {
+    res.redirect('/nodes?tab=add&error=' + encodeURIComponent(String(err.message || err)));
+  }
+});
+
+app.post('/auto-select-profiles/:id/edit', requireAuth, (req, res) => {
+  try {
+    const profile = updateAutoSelectProfileFromBody(req.params.id, req.body || {});
+    res.redirect('/nodes?tab=add&message=' + encodeURIComponent(`${profile.title}: настройки автовыбора сохранены.`));
+  } catch (err) {
+    res.redirect('/nodes?tab=add&error=' + encodeURIComponent(String(err.message || err)));
+  }
+});
+
+app.post('/auto-select-profiles/:id/toggle', requireAuth, (req, res) => {
+  try {
+    const profile = db.prepare('SELECT * FROM auto_select_profiles WHERE id = ?').get(Number(req.params.id));
+    if (!profile) throw new Error('Профиль автовыбора не найден.');
+    const enabled = Number(profile.enabled) === 1 ? 0 : 1;
+    db.prepare('UPDATE auto_select_profiles SET enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(enabled, profile.id);
+    res.redirect('/nodes?tab=add&message=' + encodeURIComponent(enabled ? 'Профиль автовыбора включён.' : 'Профиль автовыбора отключён и убран из новых JSON-подписок.'));
+  } catch (err) {
+    res.redirect('/nodes?tab=add&error=' + encodeURIComponent(String(err.message || err)));
+  }
+});
+
+app.post('/auto-select-profiles/:id/delete', requireAuth, (req, res) => {
+  try {
+    const result = db.prepare('DELETE FROM auto_select_profiles WHERE id = ?').run(Number(req.params.id));
+    if (!result.changes) throw new Error('Профиль автовыбора не найден.');
+    res.redirect('/nodes?tab=add&message=' + encodeURIComponent('Профиль автовыбора удалён. Физические узлы и клиенты не изменены.'));
   } catch (err) {
     res.redirect('/nodes?tab=add&error=' + encodeURIComponent(String(err.message || err)));
   }
@@ -17469,6 +17625,109 @@ function buildHappJsonConfigFromLine(client, line, subscriptionName, index = 0, 
   return config;
 }
 
+function autoSelectRuleForBalancer(rule, balancerTag) {
+  const next = JSON.parse(JSON.stringify(rule || {}));
+  if (String(next.outboundTag || '') === 'proxy') {
+    delete next.outboundTag;
+    next.balancerTag = balancerTag;
+  }
+  return next;
+}
+
+function buildAutoSelectJsonConfig(profile, client, entries, subscriptionName) {
+  const usableEntries = (entries || []).filter(entry => String(entry?.line || '').startsWith('vless://'));
+  if (!profile || !usableEntries.length) return null;
+
+  const routingCfg = getRoutingConfig();
+  const routingEnabled = routingCfg.enabled !== false;
+  const routingMode = routingEnabled ? String(routingCfg.mode || 'proxy-except') : '';
+  const config = buildHappJsonConfig(
+    client,
+    usableEntries.map(entry => entry.line),
+    profile.title,
+    routingEnabled,
+    {
+      nodeId: Number(usableEntries[0]?.nodeId || 0),
+      entryNodeIds: usableEntries.map(entry => Number(entry.nodeId || 0)),
+      routingMode,
+      preserveXhttpExtra: true
+    }
+  );
+
+  const tagPrefix = `auto-${Number(profile.id)}-node-`;
+  const candidateOutbounds = (config.outbounds || []).filter(outbound => /^proxy(?:-|$)/.test(String(outbound?.tag || '')));
+  candidateOutbounds.forEach((outbound, index) => { outbound.tag = `${tagPrefix}${index + 1}`; });
+  if (!candidateOutbounds.length) return null;
+
+  const balancerTag = `auto-${Number(profile.id)}-balancer`;
+  const baseRules = Array.isArray(config.routing?.rules) && config.routing.rules.length
+    ? config.routing.rules
+    : [{ type: 'field', network: 'tcp,udp', outboundTag: 'proxy' }];
+  config.routing = {
+    domainStrategy: String(config.routing?.domainStrategy || 'IPOnDemand'),
+    domainMatcher: String(config.routing?.domainMatcher || 'hybrid'),
+    balancers: [{
+      tag: balancerTag,
+      selector: [tagPrefix],
+      strategy: { type: 'leastPing' },
+      fallbackTag: candidateOutbounds[0].tag
+    }],
+    rules: baseRules.map(rule => autoSelectRuleForBalancer(rule, balancerTag))
+  };
+  config.observatory = {
+    subjectSelector: [tagPrefix],
+    probeURL: profile.probeUrl,
+    probeInterval: `${profile.probeIntervalSeconds}s`,
+    enableConcurrency: true
+  };
+
+  config.remarks = profile.title;
+  config.name = profile.title;
+  config.ps = profile.title;
+  config.title = profile.title;
+  config.autoSelect = {
+    enabled: true,
+    strategy: 'leastPing',
+    connectivityCheck: true,
+    probeUrl: profile.probeUrl,
+    intervalSeconds: profile.probeIntervalSeconds,
+    candidates: candidateOutbounds.length
+  };
+  config.meta = {
+    ...(config.meta || {}),
+    autoSelect: config.autoSelect,
+    serverDescription: `Автовыбор: ${candidateOutbounds.length} узл.`
+  };
+  return config;
+}
+
+function buildAutoSelectJsonConfigs(client, entries, subscriptionName) {
+  const profiles = getAutoSelectProfiles({ enabledOnly: true });
+  const byNodeId = new Map();
+  for (const entry of entries || []) {
+    const nodeId = Number(entry?.nodeId || 0);
+    if (!nodeId || !String(entry?.line || '').startsWith('vless://')) continue;
+    if (!byNodeId.has(nodeId)) byNodeId.set(nodeId, []);
+    byNodeId.get(nodeId).push(entry);
+  }
+
+  const configs = [];
+  for (const profile of profiles) {
+    const seen = new Set();
+    const selectedEntries = [];
+    for (const nodeId of profile.nodeIds) {
+      for (const entry of byNodeId.get(Number(nodeId)) || []) {
+        if (seen.has(entry.line)) continue;
+        seen.add(entry.line);
+        selectedEntries.push(entry);
+      }
+    }
+    const config = buildAutoSelectJsonConfig(profile, client, selectedEntries, subscriptionName);
+    if (config) configs.push(config);
+  }
+  return configs;
+}
+
 
 
 function isIosSafeRoutingEnabled() {
@@ -17667,7 +17926,10 @@ function buildHappJsonConfig(client, lines, subscriptionName, routingEnabledForT
 
   const proxyOutbounds = lines
     .filter(line => String(line).startsWith('vless://'))
-    .map((line, index) => parseVlessLineToOutbound(line, index, options));
+    .map((line, index) => parseVlessLineToOutbound(line, index, {
+      ...options,
+      nodeId: Number(options.entryNodeIds?.[index] || options.nodeId || 0)
+    }));
 
   if (!proxyOutbounds.length) {
     proxyOutbounds.push({
@@ -17907,7 +18169,10 @@ app.get('/json/:slug', async (req, res) => {
     // visible server. This was the reason only the last/random region appeared.
     if (!singleMode) {
       const vlessEntries = entries.filter(e => String(e.line).startsWith('vless://'));
-      const resultConfigs = [];
+      // Virtual auto-select profiles are intentionally JSON-only: a plain
+      // vless:// link cannot carry an Xray balancer or an observatory. Put the
+      // single easy-to-use profile before the individual regions in Happ.
+      const resultConfigs = buildAutoSelectJsonConfigs(client, vlessEntries, subscriptionName);
       const nativeJsonCache = new Map();
       for (let index = 0; index < vlessEntries.length; index += 1) {
         const entry = vlessEntries[index];

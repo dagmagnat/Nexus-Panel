@@ -2,6 +2,7 @@
   const activeNodeTab = ['list', 'add', 'help'].includes(String(typeof nodeActiveTab !== 'undefined' ? nodeActiveTab : 'list'))
     ? String(typeof nodeActiveTab !== 'undefined' ? nodeActiveTab : 'list')
     : 'list';
+  const autoProfiles = Array.isArray(typeof autoSelectProfiles !== 'undefined' ? autoSelectProfiles : []) ? autoSelectProfiles : [];
   function flagEmojiFromCode(code) {
     const cc = String(code || '').trim().toUpperCase();
     if (!/^[A-Z]{2}$/.test(cc) || ['ZZ','XX'].includes(cc)) return '';
@@ -116,8 +117,58 @@
           <select name="node_type" class="js-node-type-select">
             <option value="3xui" selected>3x-ui</option>
             <option value="remnawave">Remnawave Panel (API)</option>
+            <option value="auto_select">Автовыбор — самый быстрый рабочий узел</option>
           </select>
-          <small class="hint" data-node-type-summary>Remnawave добавляется по URL панели и API Token. Агрегатор создаёт пользователей с тем же VLESS UUID, назначает Internal Squad и добавляет Remnawave-хосты в общую SUB/JSON подписку клиента.</small>
+          <small class="hint" data-node-type-summary>Выбери обычное подключение панели либо виртуальный профиль «Автовыбор» для JSON-подписки.</small>
+        </div>
+
+        <div class="field full js-node-auto-select-only hidden" hidden style="display:none!important">
+          <div class="alert ok auto-select-explainer">
+            <strong>Автовыбор работает внутри приложения клиента.</strong>
+            Xray выполняет реальный HTTP-запрос через каждый выбранный узел, исключает узлы без доступа в интернет и подключает outbound с минимальной задержкой. Лимиты, срок и доступ наследуются от клиента и выбранных физических узлов.
+          </div>
+        </div>
+
+        <div class="field half js-node-auto-select-only hidden" hidden style="display:none!important">
+          <label>Название сервера</label>
+          <input name="auto_select_name" placeholder="Автовыбор" maxlength="80" data-auto-select-required />
+          <small class="hint">Так сервер будет называться в JSON-подписке клиента.</small>
+        </div>
+
+        <div class="field half js-node-auto-select-only hidden" hidden style="display:none!important">
+          <label>Значок / флаг</label>
+          <input name="auto_select_icon" value="⚡" placeholder="⚡ или 🇪🇺" maxlength="16" data-auto-select-required />
+          <small class="hint">Можно использовать флаг или короткий emoji.</small>
+        </div>
+
+        <div class="field half js-node-auto-select-only hidden" hidden style="display:none!important">
+          <label>Проверять каждые</label>
+          <select name="auto_select_probe_interval_seconds">
+            <option value="10">10 секунд</option>
+            <option value="30" selected>30 секунд</option>
+            <option value="60">1 минуту</option>
+            <option value="120">2 минуты</option>
+            <option value="300">5 минут</option>
+          </select>
+        </div>
+
+        <div class="field half js-node-auto-select-only hidden" hidden style="display:none!important">
+          <label>URL проверки интернета</label>
+          <input name="auto_select_probe_url" value="https://cp.cloudflare.com/generate_204" placeholder="https://cp.cloudflare.com/generate_204" data-auto-select-required />
+          <small class="hint">Это не простой ping: приложение должно получить HTTP-ответ через конкретный узел.</small>
+        </div>
+
+        <div class="field full js-node-auto-select-only hidden" hidden style="display:none!important">
+          <label>Узлы автовыбора</label>
+          <div class="auto-select-node-grid">
+            <% nodes.forEach(node => { const suffix = String(node.label_suffix || '').trim(); const baseName = node.country_name_ru || node.name; const displayName = suffix ? (/^\d+$/.test(suffix) ? `${baseName}-${suffix}` : `${baseName} ${suffix}`) : baseName; %>
+              <label class="auto-select-node-option">
+                <input type="checkbox" name="auto_select_node_ids" value="<%= node.id %>" />
+                <span><%- flagHtml(node.country_code, node.country_flag, node.country_name_ru || node.name, node.node_type) %><strong><%= displayName %></strong><small><%= node.node_type_label || (String(node.node_type) === 'remnawave' ? 'Remnawave' : '3x-ui') %> · <%= Number(node.enabled) === 1 ? 'включён' : 'отключён' %></small></span>
+              </label>
+            <% }) %>
+          </div>
+          <small class="hint">Нужно минимум два узла. Для конкретного клиента используются только те из них, где клиент уже создан и включён.</small>
         </div>
 
         <div class="field half" data-node-endpoint-field>
@@ -273,9 +324,82 @@
       </label>
 
       <div class="actions node-actions add-node-actions">
-        <button type="submit" class="btn-main add-node-submit">Добавить узел</button>
+        <button type="submit" class="btn-main add-node-submit" data-node-submit-label>Добавить узел</button>
       </div>
     </form>
+
+    <% if (autoProfiles.length) { %>
+      <div class="auto-select-profile-manager">
+        <div class="auto-select-profile-manager-head">
+          <div>
+            <h3>Созданные профили «Автовыбор»</h3>
+            <p class="muted">Они добавляются первыми в JSON-подписку. Обычная SUB-ссылка остаётся без изменений.</p>
+          </div>
+          <span class="count-chip"><%= autoProfiles.length %></span>
+        </div>
+
+        <div class="auto-select-profile-list">
+          <% autoProfiles.forEach(profile => { %>
+            <details class="auto-select-profile-card">
+              <summary>
+                <span class="auto-select-profile-title"><span class="auto-select-profile-icon"><%= profile.icon || '⚡' %></span><strong><%= profile.name %></strong></span>
+                <span class="auto-select-profile-summary"><%= profile.nodes.length %> узл. · <%= profile.probeIntervalSeconds %> сек. · <%= Number(profile.enabled) === 1 ? 'включён' : 'выключен' %></span>
+              </summary>
+
+              <div class="auto-select-profile-body">
+                <form method="post" action="/auto-select-profiles/<%= profile.id %>/edit" class="auto-select-profile-edit-form">
+                  <div class="form-grid">
+                    <div class="field half">
+                      <label>Название сервера</label>
+                      <input name="auto_select_name" value="<%= profile.name %>" maxlength="80" required />
+                    </div>
+                    <div class="field half">
+                      <label>Значок / флаг</label>
+                      <input name="auto_select_icon" value="<%= profile.icon || '⚡' %>" maxlength="16" required />
+                    </div>
+                    <div class="field half">
+                      <label>Проверять каждые</label>
+                      <select name="auto_select_probe_interval_seconds">
+                        <% [10, 30, 60, 120, 300].forEach(seconds => { %>
+                          <option value="<%= seconds %>" <%= Number(profile.probeIntervalSeconds) === seconds ? 'selected' : '' %>><%= seconds < 60 ? `${seconds} секунд` : `${seconds / 60} мин.` %></option>
+                        <% }) %>
+                      </select>
+                    </div>
+                    <div class="field half">
+                      <label>URL проверки интернета</label>
+                      <input name="auto_select_probe_url" value="<%= profile.probeUrl %>" required />
+                    </div>
+                    <div class="field full">
+                      <label>Узлы автовыбора</label>
+                      <div class="auto-select-node-grid compact">
+                        <% nodes.forEach(node => { const suffix = String(node.label_suffix || '').trim(); const baseName = node.country_name_ru || node.name; const displayName = suffix ? (/^\d+$/.test(suffix) ? `${baseName}-${suffix}` : `${baseName} ${suffix}`) : baseName; %>
+                          <label class="auto-select-node-option">
+                            <input type="checkbox" name="auto_select_node_ids" value="<%= node.id %>" <%= profile.nodeIds.includes(Number(node.id)) ? 'checked' : '' %> />
+                            <span><%- flagHtml(node.country_code, node.country_flag, node.country_name_ru || node.name, node.node_type) %><strong><%= displayName %></strong><small><%= Number(node.enabled) === 1 ? 'включён' : 'отключён' %></small></span>
+                          </label>
+                        <% }) %>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="actions auto-select-profile-actions">
+                    <button type="submit" class="btn-main">Сохранить профиль</button>
+                  </div>
+                </form>
+
+                <div class="actions auto-select-profile-secondary-actions">
+                  <form method="post" action="/auto-select-profiles/<%= profile.id %>/toggle" class="inline-form">
+                    <button type="submit" class="secondary"><%= Number(profile.enabled) === 1 ? 'Выключить' : 'Включить' %></button>
+                  </form>
+                  <form method="post" action="/auto-select-profiles/<%= profile.id %>/delete" class="inline-form" onsubmit="return confirm('Удалить профиль автовыбора? Физические узлы и клиенты останутся без изменений.')">
+                    <button type="submit" class="secondary danger-lite">Удалить профиль</button>
+                  </form>
+                </div>
+              </div>
+            </details>
+          <% }) %>
+        </div>
+      </div>
+    <% } %>
   </section>
 
   <section class="card span-12 tab-panel <%= activeNodeTab === 'help' ? 'is-active' : '' %>" data-tab-panel="help">
@@ -296,6 +420,10 @@
       <div class="kv-item">
         <strong>Inbound ID</strong>
         <div class="muted">Для каждого узла 3x-ui укажи inbound, в котором Aggregator будет создавать и обновлять клиентов. Для Remnawave вместо inbound используется Internal Squad.</div>
+      </div>
+      <div class="kv-item">
+        <strong>Автовыбор</strong>
+        <div class="muted">Это виртуальный сервер только для JSON-подписки. Клиент Xray проверяет реальный HTTP-доступ через выбранные физические узлы и использует доступный узел с наименьшей задержкой. Срок и лимиты отдельно не задаются: они наследуются от клиента и его доступа к физическим узлам.</div>
       </div>
     </div>
   </section>
@@ -1116,19 +1244,26 @@ document.addEventListener('DOMContentLoaded', () => {
       input.disabled = input.dataset.requiredWhen !== mode;
     });
   }
-  function setNodeTypeGroup(form, selector, visible) {
-    form.querySelectorAll(selector).forEach(el => {
-      el.classList.toggle('hidden', !visible);
-      el.hidden = !visible;
-      if (visible) el.style.removeProperty('display');
-      else el.style.setProperty('display', 'none', 'important');
-      el.querySelectorAll('input, select, textarea, button').forEach(control => {
-        control.disabled = !visible;
-      });
+  function setNodeTypeElement(el, visible) {
+    if (!el) return;
+    el.classList.toggle('hidden', !visible);
+    el.hidden = !visible;
+    if (visible) el.style.removeProperty('display');
+    else el.style.setProperty('display', 'none', 'important');
+    el.querySelectorAll('input, select, textarea, button').forEach(control => {
+      control.disabled = !visible;
     });
+  }
+  function setNodeTypeGroup(form, selector, visible) {
+    form.querySelectorAll(selector).forEach(el => setNodeTypeElement(el, visible));
+  }
+  function setNamedNodeFields(form, names, visible) {
+    names.forEach(name => setNodeTypeElement(form.querySelector(`[name="${name}"]`)?.closest('.field'), visible));
   }
   function updateNodeTypeText(form, type) {
     const isRemnawave = type === 'remnawave';
+    const isAutoSelect = type === 'auto_select';
+    const summary = form.querySelector('[data-node-type-summary]');
     const endpointLabel = form.querySelector('[data-node-endpoint-label]');
     const endpointInput = form.querySelector('[data-node-endpoint-input]');
     const endpointHint = form.querySelector('[data-node-endpoint-hint]');
@@ -1143,6 +1278,9 @@ document.addEventListener('DOMContentLoaded', () => {
     if (tokenHint) tokenHint.innerHTML = isRemnawave
       ? 'Создай токен в панели Remnawave с правами list/create/update/delete для Users; для выбора по Host UUID также разреши чтение Hosts. Aggregator отправляет его как <code>Authorization: Bearer</code> и хранит зашифрованно.'
       : 'Токен удалённой панели 3x-ui хранится зашифрованно.';
+    if (summary) summary.textContent = isAutoSelect
+      ? 'Один виртуальный сервер в JSON-подписке: выбирает самый быстрый узел только среди прошедших HTTP-проверку интернета.'
+      : (isRemnawave ? 'Подключение к Remnawave Panel API.' : 'Подключение к обычной панели 3x-ui.');
   }
   function updateNodeType(select) {
     const form = select.closest('form');
@@ -1150,13 +1288,18 @@ document.addEventListener('DOMContentLoaded', () => {
     const type = select.value;
     const isRemnawave = type === 'remnawave';
     const is3xuiType = type === '3xui';
+    const isAutoSelect = type === 'auto_select';
+    setNamedNodeFields(form, ['country_code', 'custom_country_name_ru', 'custom_country_flag', 'label_suffix'], !isAutoSelect);
+    setNodeTypeElement(form.querySelector('[data-node-endpoint-field]'), !isAutoSelect);
+    setNodeTypeElement(form.querySelector('#add-node-auth-fields'), !isAutoSelect);
+    setNodeTypeGroup(form, '.js-node-auto-select-only', isAutoSelect);
     setNodeTypeGroup(form, '.js-node-3xui-only', is3xuiType);
     setNodeTypeGroup(form, '.js-node-remnawave-only', isRemnawave);
-    setNodeTypeGroup(form, '.js-node-client-sync-only', true);
+    setNodeTypeGroup(form, '.js-node-client-sync-only', !isAutoSelect);
     setNodeTypeGroup(form, '.js-node-3xui-editable-only', is3xuiType);
     updateNodeTypeText(form, type);
     const authSelect = form.querySelector('.js-api-auth-mode');
-    if (authSelect) {
+    if (authSelect && !isAutoSelect) {
       if (isRemnawave) authSelect.value = 'token';
       authSelect.disabled = isRemnawave;
       updateApiMode(authSelect);
@@ -1167,9 +1310,14 @@ document.addEventListener('DOMContentLoaded', () => {
     if (squadInput) squadInput.required = isRemnawave;
     const apiToken = form.querySelector('input[name="api_token"]');
     if (apiToken) {
-      apiToken.disabled = false;
-      apiToken.required = true;
+      apiToken.disabled = isAutoSelect;
+      apiToken.required = !isAutoSelect;
     }
+    form.querySelectorAll('[data-auto-select-required]').forEach(input => {
+      input.required = isAutoSelect;
+    });
+    const submitLabel = form.querySelector('[data-node-submit-label]');
+    if (submitLabel) submitLabel.textContent = isAutoSelect ? 'Создать автовыбор' : 'Добавить узел';
   }
   document.querySelectorAll('.js-api-auth-mode').forEach(select => {
     select.addEventListener('change', () => updateApiMode(select));
