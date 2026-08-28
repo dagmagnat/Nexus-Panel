@@ -3124,6 +3124,14 @@ body.client-modal-open { overflow: hidden; overscroll-behavior: none; }
 .auto-select-profile-secondary-actions { margin: 0; }
 .auto-select-profile-secondary-actions { padding-top: 10px; border-top: 1px solid var(--line); }
 .auto-select-profile-secondary-actions .inline-form { margin: 0; }
+.auto-select-list-row { background: color-mix(in srgb, var(--cyan) 3%, transparent); }
+.auto-select-fixed-mark { display: grid; place-items: center; cursor: default; font-size: 13px; }
+.auto-select-fixed-mark:active { cursor: default; }
+.node-row-auto-icon { display: inline-grid; place-items: center; font-size: 16px; line-height: 1; }
+.auto-select-detail-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.auto-select-member-row > span:first-child { display: flex; min-width: 0; align-items: center; gap: 7px; }
+.auto-select-member-row .flag-badge { width: 22px; height: 22px; flex: 0 0 22px; }
+.auto-select-profile-card:target { border-color: var(--cyan); box-shadow: 0 0 0 3px color-mix(in srgb, var(--cyan) 12%, transparent); }
 
 @media (max-width: 700px) {
   .source-subscription-controls-head { flex-direction: column; }
@@ -3136,6 +3144,7 @@ body.client-modal-open { overflow: hidden; overscroll-behavior: none; }
   .auto-select-profile-secondary-actions,
   .auto-select-profile-secondary-actions .inline-form,
   .auto-select-profile-secondary-actions button { width: 100%; }
+  .auto-select-detail-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 .client-summary-action-card {
@@ -3242,6 +3251,7 @@ body.client-modal-open { overflow: hidden; overscroll-behavior: none; }
   .page-nodes .node-list-row.is-expanded .node-mobile-quick-actions a { display: inline-flex; width: 100%; min-width: 0; height: 32px; min-height: 32px; margin: 0; align-items: center; justify-content: center; padding: 4px 5px; font-size: 8.5px; }
   .page-nodes .node-list-row.is-expanded .node-mobile-quick-actions form { padding: 0; }
   .page-nodes .node-list-row.is-expanded .node-mobile-quick-actions form > button { height: 100%; padding: 4px 5px; }
+  .page-nodes .node-list-row.is-expanded .auto-select-mobile-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); padding-right: 8px; }
   .page-nodes .node-mobile-order-controls { position: absolute !important; right: 7px; bottom: 8px; z-index: 4; display: flex; gap: 5px; padding: 0 !important; }
   .page-nodes .node-list-row:not(.is-expanded) .node-mobile-order-controls { top: 50%; bottom: auto; transform: translateY(-50%); }
   .page-nodes .node-list-row.is-touch-dragging { z-index: 20; opacity: .86; border-color: var(--cyan); box-shadow: 0 12px 30px rgba(0, 0, 0, .35), inset 3px 0 0 var(--cyan); }

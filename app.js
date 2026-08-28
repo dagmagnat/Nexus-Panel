@@ -14728,6 +14728,7 @@ app.get('/nodes', requireAuth, (req, res) => {
     nodeAutoRefreshSeconds: getNodeAutoRefreshSeconds(),
     sniProfiles: getSniProfiles(),
     nodeActiveTab: ['list', 'add', 'help'].includes(requestedTab) ? requestedTab : 'list',
+    autoSelectEditId: Math.max(0, Number(req.query.auto_select_edit || 0)),
     message: req.query.message || '',
     error: req.query.error || ''
   });
@@ -15017,7 +15018,7 @@ app.post('/nodes', requireAuth, async (req, res) => {
 app.post('/auto-select-profiles/:id/edit', requireAuth, (req, res) => {
   try {
     const profile = updateAutoSelectProfileFromBody(req.params.id, req.body || {});
-    res.redirect('/nodes?tab=add&message=' + encodeURIComponent(`${profile.title}: настройки автовыбора сохранены.`));
+    res.redirect(`/nodes?tab=add&auto_select_edit=${profile.id}&message=${encodeURIComponent(`${profile.title}: настройки автовыбора сохранены.`)}#auto-select-profile-${profile.id}`);
   } catch (err) {
     res.redirect('/nodes?tab=add&error=' + encodeURIComponent(String(err.message || err)));
   }
@@ -15029,7 +15030,7 @@ app.post('/auto-select-profiles/:id/toggle', requireAuth, (req, res) => {
     if (!profile) throw new Error('Профиль автовыбора не найден.');
     const enabled = Number(profile.enabled) === 1 ? 0 : 1;
     db.prepare('UPDATE auto_select_profiles SET enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(enabled, profile.id);
-    res.redirect('/nodes?tab=add&message=' + encodeURIComponent(enabled ? 'Профиль автовыбора включён.' : 'Профиль автовыбора отключён и убран из новых JSON-подписок.'));
+    res.redirect(`/nodes?tab=add&auto_select_edit=${profile.id}&message=${encodeURIComponent(enabled ? 'Профиль автовыбора включён.' : 'Профиль автовыбора отключён и убран из новых JSON-подписок.')}#auto-select-profile-${profile.id}`);
   } catch (err) {
     res.redirect('/nodes?tab=add&error=' + encodeURIComponent(String(err.message || err)));
   }

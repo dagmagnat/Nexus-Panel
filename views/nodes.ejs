@@ -340,7 +340,7 @@
 
         <div class="auto-select-profile-list">
           <% autoProfiles.forEach(profile => { %>
-            <details class="auto-select-profile-card">
+            <details id="auto-select-profile-<%= profile.id %>" class="auto-select-profile-card" <%= Number(typeof autoSelectEditId !== 'undefined' ? autoSelectEditId : 0) === Number(profile.id) ? 'open' : '' %>>
               <summary>
                 <span class="auto-select-profile-title"><span class="auto-select-profile-icon"><%= profile.icon || '⚡' %></span><strong><%= profile.name %></strong></span>
                 <span class="auto-select-profile-summary"><%= profile.nodes.length %> узл. · <%= profile.probeIntervalSeconds %> сек. · <%= Number(profile.enabled) === 1 ? 'включён' : 'выключен' %></span>
@@ -431,10 +431,10 @@
   <section class="card span-12 tab-panel nodes-modern-card <%= activeNodeTab === 'list' ? 'is-active' : '' %>" data-tab-panel="list">
     <div class="nodes-modern-head">
       <div class="section-title-row nodes-order-title">
-        <h2>Список узлов <span class="count-chip"><%= nodes.length %></span></h2>
+        <h2>Список узлов <span class="count-chip"><%= nodes.length + autoProfiles.length %></span></h2>
         <span id="nodeOrderStatus" class="muted">Перетащи ⠿ на ПК или используй ↑/↓ на телефоне, чтобы изменить порядок в приложении</span>
       </div>
-      <% if (nodes.length) { %>
+      <% if (nodes.length || autoProfiles.length) { %>
         <div class="nodes-modern-toolbar" role="search">
           <label class="nodes-search-field" for="nodeSearchInput">
             <span aria-hidden="true">⌕</span>
@@ -447,6 +447,7 @@
                 <option value="all">Все</option>
                 <option value="3xui">3x-ui</option>
                 <option value="remnawave">Remnawave</option>
+                <option value="auto_select">Автовыбор</option>
               </select>
             </label>
             <label class="nodes-filter-field nodes-filter-state">
@@ -465,7 +466,7 @@
       <% } %>
     </div>
 
-    <% if (!nodes.length) { %>
+    <% if (!nodes.length && !autoProfiles.length) { %>
       <p class="muted">Пока нет добавленных узлов.</p>
     <% } else { %>
       <div class="nodes-modern-layout" id="nodesModernLayout">
@@ -479,6 +480,41 @@
             <span>Активность</span>
           </div>
           <div id="nodesOrderBody" class="nodes-modern-list" data-page-size="<%= nodePageSize || 10 %>">
+            <% autoProfiles.forEach((profile, profileIndex) => {
+              const profileEnabled = Number(profile.enabled) === 1;
+              const profileNodeNames = profile.nodes.map(node => {
+                const suffix = String(node.label_suffix || '').trim();
+                const baseName = node.country_name_ru || node.name;
+                return suffix ? (/^\d+$/.test(suffix) ? `${baseName}-${suffix}` : `${baseName} ${suffix}`) : baseName;
+              });
+              const profileSearch = [profile.id, profile.name, profile.title, 'автовыбор', 'leastping', profile.probeUrl, ...profileNodeNames].join(' ').toLowerCase();
+            %>
+              <div
+                class="node-list-row auto-select-list-row <%= profileIndex === 0 ? 'is-selected' : '' %> <%= profileEnabled ? '' : 'muted-row' %>"
+                data-node-id="auto-<%= profile.id %>"
+                data-node-type="auto_select"
+                data-node-enabled="<%= profileEnabled ? 'enabled' : 'disabled' %>"
+                data-node-activity="<%= profileEnabled ? 'online' : 'disabled' %>"
+                data-node-search="<%= profileSearch %>"
+              >
+                <span class="drag-handle auto-select-fixed-mark" title="Виртуальный профиль" aria-hidden="true">⚡</span>
+                <button type="button" class="node-row-select" data-select-node="auto-<%= profile.id %>" data-node-edit-url="/nodes?tab=add&amp;auto_select_edit=<%= profile.id %>#auto-select-profile-<%= profile.id %>" aria-label="Редактировать автовыбор <%= profile.name %>">
+                  <span class="node-row-id">A<%= profile.id %></span>
+                  <span class="node-row-name"><strong><span class="flag-badge emoji-fallback node-row-auto-icon"><%= profile.icon || '⚡' %></span><span><%= profile.name %></span></strong></span>
+                  <span class="node-row-type">Автовыбор</span>
+                  <span class="transport-chip transport-chip-full">leastPing / HTTP</span><span class="transport-chip transport-chip-mobile">AUTO / HTTP</span>
+                  <span class="badge <%= profileEnabled ? 'online' : 'offline' %>"><%= profileEnabled ? 'Включён' : 'Отключён' %></span>
+                  <span class="node-row-activity"><span class="badge <%= profileEnabled ? 'online' : 'disabled' %>"><%= profile.nodes.length %> узл.</span></span>
+                  <span class="node-mobile-health" aria-label="Статус автовыбора"><i class="node-health-mark <%= profileEnabled ? 'is-ok' : 'is-bad' %>"><%= profileEnabled ? '✓' : '×' %></i></span>
+                  <span class="node-row-chevron" aria-hidden="true">›</span>
+                  <span class="node-mobile-edit-hint" aria-hidden="true">Изменить</span>
+                </button>
+                <div class="node-mobile-quick-actions auto-select-mobile-actions" aria-label="Действия с автовыбором" onclick="event.stopPropagation()">
+                  <a href="/nodes?tab=add&amp;auto_select_edit=<%= profile.id %>#auto-select-profile-<%= profile.id %>" class="link-btn secondary">Изменить</a>
+                  <form method="post" action="/auto-select-profiles/<%= profile.id %>/toggle" class="inline-form"><button type="submit" class="secondary"><%= profileEnabled ? 'Выключить' : 'Включить' %></button></form>
+                </div>
+              </div>
+            <% }) %>
             <% nodes.forEach((node, idx) => {
               const suffix = (node.label_suffix || '').trim();
               const baseName = node.country_name_ru || node.name;
@@ -497,9 +533,10 @@
               const searchText = [node.id, displayName, nodeTypeLabel, node.panel_url, node.panel_path, node.sub_base_url, node.inbound_id, transportLabel, activityStatus, node.last_error].join(' ').toLowerCase();
             %>
               <div
-                class="node-list-row <%= idx === 0 ? 'is-selected' : '' %> <%= isEnabled ? '' : 'muted-row' %>"
+                class="node-list-row <%= idx === 0 && !autoProfiles.length ? 'is-selected' : '' %> <%= isEnabled ? '' : 'muted-row' %>"
                 draggable="true"
                 data-node-id="<%= node.id %>"
+                data-physical-node="1"
                 data-node-type="<%= nodeKind %>"
                 data-node-enabled="<%= isEnabled ? 'enabled' : 'disabled' %>"
                 data-node-activity="<%= activityStatus %>"
@@ -534,13 +571,50 @@
             <% }) %>
           </div>
           <div class="nodes-list-footer">
-            <span>Показано <strong id="nodesPageRange">0–0</strong> из <strong id="visibleNodesCount"><%= nodes.length %></strong> узлов</span>
+            <span>Показано <strong id="nodesPageRange">0–0</strong> из <strong id="visibleNodesCount"><%= nodes.length + autoProfiles.length %></strong> узлов</span>
             <div class="nodes-pagination" id="nodesPagination" aria-label="Страницы узлов"></div>
           </div>
         </div>
 
         <aside class="nodes-detail-panel" id="nodesDetailPanel" aria-live="polite">
           <button type="button" class="nodes-detail-close" id="nodeDetailsClose" aria-label="Скрыть детали" onclick="event.preventDefault(); event.stopPropagation(); closeNodeDetailsPanel(event); return false;">×</button>
+          <% autoProfiles.forEach((profile, profileIndex) => {
+            const profileEnabled = Number(profile.enabled) === 1;
+          %>
+            <article class="node-detail-card auto-select-detail-card <%= profileIndex === 0 ? 'is-active' : '' %>" data-detail-node-id="auto-<%= profile.id %>" <%= profileIndex === 0 ? '' : 'hidden' %>>
+              <div class="node-detail-title-row">
+                <div class="node-detail-flag"><span class="flag-badge emoji-fallback node-row-auto-icon"><%= profile.icon || '⚡' %></span></div>
+                <div class="node-detail-title">
+                  <div><strong><%= profile.name %></strong> <span class="badge <%= profileEnabled ? 'online' : 'offline' %>"><%= profileEnabled ? 'Включён' : 'Отключён' %></span></div>
+                  <small>ID: A<%= profile.id %> · Тип: Автовыбор · Стратегия: leastPing</small>
+                </div>
+              </div>
+
+              <div class="node-detail-actions node-detail-actions-top auto-select-detail-actions">
+                <a href="/nodes?tab=add&amp;auto_select_edit=<%= profile.id %>#auto-select-profile-<%= profile.id %>" class="link-btn btn-main node-detail-action-link">Изменить</a>
+                <form method="post" action="/auto-select-profiles/<%= profile.id %>/toggle" class="inline-form node-detail-action-form">
+                  <button type="submit" class="secondary <%= profileEnabled ? 'danger-lite' : '' %>"><%= profileEnabled ? 'Выключить' : 'Включить' %></button>
+                </form>
+              </div>
+
+              <div class="node-detail-kv">
+                <div class="node-detail-kv-row"><span>Выбранные узлы</span><strong><%= profile.nodes.length %></strong></div>
+                <% profile.nodes.forEach(node => {
+                  const suffix = String(node.label_suffix || '').trim();
+                  const baseName = node.country_name_ru || node.name;
+                  const displayName = suffix ? (/^\d+$/.test(suffix) ? `${baseName}-${suffix}` : `${baseName} ${suffix}`) : baseName;
+                %>
+                  <div class="node-detail-kv-row auto-select-member-row">
+                    <span><%- flagHtml(node.country_code, node.country_flag, node.country_name_ru || node.name, node.node_type) %> <%= displayName %></span>
+                    <strong><%= Number(node.enabled) === 1 ? 'Включён' : 'Отключён' %></strong>
+                  </div>
+                <% }) %>
+                <div class="node-detail-kv-row"><span>Проверка интернета</span><code><%= profile.probeUrl %></code></div>
+                <div class="node-detail-kv-row"><span>Интервал проверки</span><strong><%= profile.probeIntervalSeconds %> сек.</strong></div>
+                <div class="node-detail-kv-row"><span>Формат подписки</span><strong>JSON</strong></div>
+              </div>
+            </article>
+          <% }) %>
           <% nodes.forEach((node, idx) => {
             const suffix = (node.label_suffix || '').trim();
             const baseName = node.country_name_ru || node.name;
@@ -561,7 +635,7 @@
             const inboundNetwork = String(node.inbound_network || node.transport_network || '').toLowerCase();
             const inboundHasSni = ['tls', 'reality'].includes(inboundSecurity);
           %>
-            <article class="node-detail-card <%= idx === 0 ? 'is-active' : '' %>" data-detail-node-id="<%= node.id %>" <%= idx === 0 ? '' : 'hidden' %>>
+            <article class="node-detail-card <%= idx === 0 && !autoProfiles.length ? 'is-active' : '' %>" data-detail-node-id="<%= node.id %>" <%= idx === 0 && !autoProfiles.length ? '' : 'hidden' %>>
               <div class="node-detail-title-row">
                 <div class="node-detail-flag"><%- flagHtml(node.country_code, node.country_flag, node.country_name_ru || node.name, node.node_type) %></div>
                 <div class="node-detail-title">
@@ -764,6 +838,10 @@ function getNodeRows() {
   return [...document.querySelectorAll('#nodesOrderBody .node-list-row')];
 }
 
+function getPhysicalNodeRows() {
+  return getNodeRows().filter(row => row.dataset.physicalNode === '1');
+}
+
 let nodeCurrentPage = 1;
 
 function getNodePageSize() {
@@ -828,7 +906,7 @@ function ensureSelectedNodeOnVisiblePage() {
 }
 
 function getDesktopNodeOrder() {
-  return getNodeRows().map(row => Number(row.dataset.nodeId)).filter(Boolean);
+  return getPhysicalNodeRows().map(row => Number(row.dataset.nodeId)).filter(Boolean);
 }
 
 function getMobileNodeOrder() {
@@ -836,7 +914,7 @@ function getMobileNodeOrder() {
 }
 
 function refreshMobileOrderControls() {
-  const rows = getNodeRows();
+  const rows = getPhysicalNodeRows();
   rows.forEach((row, index) => {
     const up = row.querySelector('[data-mobile-move="up"]');
     const down = row.querySelector('[data-mobile-move="down"]');
@@ -996,11 +1074,11 @@ function initNodeDragOrder() {
       dragged = null;
     });
   }
-  getNodeRows().forEach(bindRow);
+  getPhysicalNodeRows().forEach(bindRow);
   body.addEventListener('dragover', event => {
     event.preventDefault();
     if (!dragged) return;
-    const rows = getNodeRows().filter(row => row !== dragged && !row.classList.contains('hidden-by-filter') && !row.classList.contains('hidden-by-page'));
+    const rows = getPhysicalNodeRows().filter(row => row !== dragged && !row.classList.contains('hidden-by-filter') && !row.classList.contains('hidden-by-page'));
     const next = rows.find(row => event.clientY <= row.getBoundingClientRect().top + row.getBoundingClientRect().height / 2);
     body.insertBefore(dragged, next || null);
   });
@@ -1024,11 +1102,13 @@ function initMobileNodeOrder() {
     if (!button || button.disabled) return;
     const row = button.closest('.node-list-row');
     if (!row) return;
+    const rows = getPhysicalNodeRows();
+    const index = rows.indexOf(row);
     const direction = button.dataset.mobileMove;
-    if (direction === 'up' && row.previousElementSibling) {
-      list.insertBefore(row, row.previousElementSibling);
-    } else if (direction === 'down' && row.nextElementSibling) {
-      list.insertBefore(row.nextElementSibling, row);
+    if (direction === 'up' && index > 0) {
+      list.insertBefore(row, rows[index - 1]);
+    } else if (direction === 'down' && index >= 0 && index < rows.length - 1) {
+      list.insertBefore(rows[index + 1], row);
     } else {
       return;
     }
@@ -1065,7 +1145,7 @@ function initMobileNodeLongPressOrder() {
     if (!isMobileNodesLayout() || !['touch', 'pen'].includes(event.pointerType)) return;
     if (event.target.closest('a, button:not(.node-row-select), input, select, textarea')) return;
     const row = event.target.closest('.node-list-row');
-    if (!row) return;
+    if (!row || row.dataset.physicalNode !== '1') return;
     state = { row, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, active: false, moved: false, timer: 0 };
     state.timer = window.setTimeout(() => {
       if (!state || state.row !== row) return;
@@ -1085,7 +1165,7 @@ function initMobileNodeLongPressOrder() {
     }
     event.preventDefault();
     const target = document.elementFromPoint(event.clientX, event.clientY)?.closest('.node-list-row');
-    if (!target || target === state.row || target.parentElement !== list) return;
+    if (!target || target.dataset.physicalNode !== '1' || target === state.row || target.parentElement !== list) return;
     const before = event.clientY < target.getBoundingClientRect().top + target.offsetHeight / 2;
     list.insertBefore(state.row, before ? target : target.nextElementSibling);
     state.moved = true;

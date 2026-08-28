@@ -61,3 +61,18 @@ test('2.7.1 applies JSON controls and routing modes to explicit non-overlapping 
   assert.match(routing, /data-routing-mode-card/);
   assert.match(routing, /data-routing-select-all/);
 });
+
+test('auto-select profiles are visible in the main node list and open their checked-node editor', () => {
+  const app = read('app.js');
+  const nodes = read('views/nodes.ejs');
+  const css = read('public/css/spectrum-clear.css');
+
+  assert.match(app, /autoSelectEditId: Math\.max/);
+  assert.match(nodes, /class="node-list-row auto-select-list-row/);
+  assert.match(nodes, /data-node-type="auto_select"/);
+  assert.match(nodes, /auto_select_edit=<%= profile\.id %>#auto-select-profile-/);
+  assert.match(nodes, /profile\.nodeIds\.includes\(Number\(node\.id\)\) \? 'checked'/);
+  assert.match(nodes, /data-detail-node-id="auto-<%= profile\.id %>"/);
+  assert.match(nodes, /function getPhysicalNodeRows\(\)/);
+  assert.match(css, /\.auto-select-list-row/);
+});
