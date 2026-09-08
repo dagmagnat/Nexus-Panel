@@ -238,6 +238,20 @@
     </div>
     <div id="topUsageStatus" class="hint"></div>
     <div class="top-usage-list" id="topUsageList"></div>
+    <hr />
+    <h2>Лимиты трафика клиентов</h2>
+    <p class="muted">Текущий расход относительно заданных ГБ — не расход за период выше. Исчерпан хотя бы один лимит узла или общий лимит.</p>
+    <div class="top-usage-toolbar quota-toolbar">
+      <label>Узел<select id="quotaNode"><option value="">Все узлы</option></select></label>
+      <label>Показать<select id="quotaFilter"><option value="limited">С заданным лимитом</option><option value="exhausted">Лимит ГБ исчерпан</option></select></label>
+      <label>Сортировка<select id="quotaSort"><option value="desc">Больше потрачено</option><option value="asc">Меньше потрачено</option><option value="name">По алфавиту</option></select></label>
+      <label>Поиск<input id="quotaSearch" type="search" placeholder="Имя или логин" /></label>
+      <button type="button" id="quotaRefresh" class="btn-secondary">Обновить ГБ</button>
+    </div>
+    <p id="quotaStatus" class="hint" role="status"></p>
+    <div id="quotaList" class="top-usage-list"></div>
+    <script src="/js/client-usage.js?v=273"></script>
+    <script src="/js/dashboard-quotas.js?v=273" defer></script>
   </section>
 
   <section class="card span-12 tab-panel is-active" data-tab-panel="expiry">

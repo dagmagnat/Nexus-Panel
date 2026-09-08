@@ -6,7 +6,7 @@
 
 Nexus Panel объединяет узлы **3x-ui** и **Remnawave** в одной панели: клиенты, подписки, лимиты, трафик, маршрутизация, перенаправление, Telegram и резервные копии.
 
-[![Version](https://img.shields.io/badge/version-2.7.2-blue)](https://github.com/dagmagnat/Nexus-Panel)
+[![Version](https://img.shields.io/badge/version-2.7.3-blue)](https://github.com/dagmagnat/Nexus-Panel)
 ![Node.js](https://img.shields.io/badge/node-%3E%3D22-gray)
 ![License](https://img.shields.io/badge/license-MIT-gray)
 
@@ -153,6 +153,13 @@ npm run dev
 ```
 
 Технологии: Node.js 22, Express, SQLite, EJS и Docker Compose. Лицензия: MIT.
+
+## Обновление 2.7.3
+
+Живые счётчики во вкладке клиентов, фильтры онлайн по выбранному узлу,
+лимиты ГБ на дашборде, сортировки по расходу и выключенные копии узлов.
+Автовыбор больше не возвращается принудительно к первому узлу, если все
+HTTPS-проверки неуспешны. Возможности и ограничения: [docs/UPDATE_2.7.3.md](docs/UPDATE_2.7.3.md).
 
 ## Обновление 2.7.2
 

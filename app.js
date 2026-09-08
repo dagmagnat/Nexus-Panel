@@ -21,6 +21,7 @@ const https = require('https');
 const dns = require('dns').promises;
 const { encrypt, decrypt } = require('./lib_crypto');
 const { createVpnManager } = require('./lib_vpn_manager');
+const { nodeCloneValues } = require('./lib_node_clone');
 const { initNexusNodeControlSchema, attachNexusNodeControl } = require('./lib_nexus_node_control');
 
 const COUNTRIES = [
@@ -2743,8 +2744,8 @@ function normalizeAutoSelectProbeUrl(value) {
   } catch (_) {
     throw new Error('URL интернет-проверки имеет неверный формат.');
   }
-  if (!['http:', 'https:'].includes(parsed.protocol)) {
-    throw new Error('URL интернет-проверки должен начинаться с http:// или https://.');
+  if (parsed.protocol !== 'https:') {
+    throw new Error('Для проверки интернета нужен HTTPS URL: HTTP может отвечать страницей блокировки.');
   }
   parsed.username = '';
   parsed.password = '';
@@ -11785,10 +11786,37 @@ function recordTrafficSnapshot(force = false, sourceKind = 'passive') {
   return { totals, nodeTotals, inserted: shouldInsert };
 }
 
-async function refreshAllClientUsageFromNodes() {
+let usageRefreshPending = null;
+let usageRefreshFinishedAt = 0;
+let usageRefreshErrors = [];
+function refreshAllClientUsageFromNodes() {
+  if (usageRefreshPending) return usageRefreshPending;
+  usageRefreshPending = collectAllClientUsageFromNodes().then(result => {
+    usageRefreshFinishedAt = Date.now();
+    usageRefreshErrors = result.errors || [];
+    return result;
+  }).finally(() => { usageRefreshPending = null; });
+  return usageRefreshPending;
+}
+
+function buildClientUsageDirectory() {
+  const clients = db.prepare('SELECT id, login, display_name, traffic_gb FROM clients').all();
+  const mappings = db.prepare(`SELECT cn.client_id, cn.node_id, cn.traffic_gb, cn.used_bytes, cn.enabled, n.name, n.country_name_ru, n.label_suffix
+    FROM client_nodes cn JOIN nodes n ON n.id = cn.node_id`).all();
+  const byClient = new Map();
+  for (const row of mappings) {
+    if (!byClient.has(Number(row.client_id))) byClient.set(Number(row.client_id), []);
+    byClient.get(Number(row.client_id)).push({ id: Number(row.node_id), name: getNodePublicName(row),
+      limitGb: Math.max(0, Number(row.traffic_gb || 0)), usedBytes: clampByteNumber(row.used_bytes), enabled: Number(row.enabled) });
+  }
+  return clients.map(client => ({ id: Number(client.id), login: client.login, name: client.display_name || client.login,
+    limitGb: Math.max(0, Number(client.traffic_gb || 0)), nodes: byClient.get(Number(client.id)) || [] }));
+}
+
+async function collectAllClientUsageFromNodes() {
   const nodes = db.prepare(`SELECT * FROM nodes ORDER BY ${nodeOrderSql()}`).all();
   const errors = [];
-  for (const node of nodes) {
+  const results = await runWithConcurrency(nodes, 4, async node => {
     const rows = db.prepare(`
       SELECT cn.*, c.uuid AS client_uuid, c.login AS client_login
       FROM client_nodes cn
@@ -11796,7 +11824,7 @@ async function refreshAllClientUsageFromNodes() {
       WHERE cn.node_id = ?
       ORDER BY cn.id ASC
     `).all(node.id);
-    if (!rows.length) continue;
+    if (!rows.length) return;
 
     if (isRemnawaveNode(node)) {
       try {
@@ -11809,7 +11837,10 @@ async function refreshAllClientUsageFromNodes() {
           const user = byUuid.get(String(row.remote_uuid || '').toLowerCase())
             || byVless.get(String(row.client_uuid || '').toLowerCase())
             || byUsername.get(String(row.remote_email || row.client_login || '').toLowerCase());
-          if (!user) continue;
+          if (!user) {
+            if (errors.length < 8) errors.push(`${getNodePublicName(node)}: не найден удалённый клиент ID ${row.client_id}`);
+            continue;
+          }
           const usedBytes = getRemnawaveUsedTrafficBytes(user, row.used_bytes || 0);
           update.run(
             String(user?.username || row.remote_email || row.client_login || ''),
@@ -11824,10 +11855,10 @@ async function refreshAllClientUsageFromNodes() {
       } catch (err) {
         errors.push(`${getNodePublicName(node)}: ${err.message || err}`);
       }
-      continue;
+      return;
     }
 
-    if (isH1CloudNode(node)) continue;
+    if (isH1CloudNode(node)) return;
 
     let inbound = null;
     let trafficList = [];
@@ -11836,7 +11867,8 @@ async function refreshAllClientUsageFromNodes() {
       inbound = await getInbound(node, 15000);
     } catch (err) {
       errors.push(`${getNodePublicName(node)}: ${err.message || err}`);
-      inbound = getCachedInbound(node);
+      // Preserve stored counters on failure, do not overwrite them from an older cache.
+      inbound = null;
     }
 
     try {
@@ -11847,33 +11879,30 @@ async function refreshAllClientUsageFromNodes() {
       trafficList = [];
     }
 
-    if (!inbound && !trafficList.length) continue;
+    if (!inbound && !trafficList.length) return;
     const nowMs = Date.now();
     for (const row of rows) {
-      const inboundUsage = inbound ? readUsageForClientNode(
-        { id: node.id, inbound_id: node.inbound_id },
-        { uuid: row.client_uuid, login: row.client_login },
-        row,
-        inbound
-      ) : null;
+      const inboundStat = inbound && findClientStat(inbound, row.remote_uuid || row.client_uuid, row.remote_email || row.client_login);
+      const inboundUsage = inboundStat && hasTrafficStatFields(inboundStat) ? extractTrafficInfoFromClientTraffic(inboundStat) : null;
 
       let apiUsage = null;
       const statFromList = pickTrafficFromList(trafficList, row.remote_email || row.client_login, row.remote_uuid || row.client_uuid);
       if (statFromList) {
         apiUsage = extractTrafficInfoFromClientTraffic(statFromList);
-      } else {
-        try {
-          apiUsage = await getClientTrafficFromApi(node, row.remote_email || row.client_login, 15000, row.remote_uuid || row.client_uuid);
-        } catch (_) {
-          apiUsage = null;
-        }
       }
-
+      // Bulk polling must not turn into hundreds of serial timeout requests.
+      if (!apiUsage && !inboundUsage) {
+        if (errors.length < 8) errors.push(`${getNodePublicName(node)}: нет свежего счётчика клиента ID ${row.client_id}`);
+        continue;
+      }
       const usage = mergeTrafficInfo(apiUsage, inboundUsage || row);
       updateClientNodeUsage(row.id, usage);
       recordClientTrafficSnapshot(row.client_id, node.id, usage, nowMs);
     }
-  }
+  });
+  results.forEach((result, index) => {
+    if (result.status === 'rejected') errors.push(`${getNodePublicName(nodes[index])}: ${String(result.reason?.message || result.reason)}`);
+  });
   return { errors: errors.slice(0, 8), totals: getCurrentTrafficTotals() };
 }
 
@@ -12101,8 +12130,23 @@ function getDashboardLimitRows() {
   return rows;
 }
 
+function isRemnawaveUserRecentlyOnline(user, node, nowMs = Date.now()) {
+  const traffic = user?.userTraffic || user || {};
+  const onlineAt = Date.parse(traffic.onlineAt || user?.onlineAt || '');
+  // Remnawave exposes last activity, not an exact open-session list.
+  if (!Number.isFinite(onlineAt) || onlineAt > nowMs + 30000 || nowMs - onlineAt > 120000) return false;
+  const wanted = String(node.remnawave_node_uuid || '').toLowerCase();
+  const connected = String(traffic.lastConnectedNodeUuid || user?.lastConnectedNodeUuid || '').toLowerCase();
+  return !wanted || wanted === connected;
+}
+
 async function fetchOnlineEmailsFromNode(node) {
-  if (isRemnawaveNode(node) || isH1CloudNode(node)) return [];
+  if (isRemnawaveNode(node)) {
+    const users = await listRemnawaveUsers(node, 8000);
+    return users.filter(user => isRemnawaveUserRecentlyOnline(user, node))
+      .map(user => String(user.username || '').trim()).filter(Boolean);
+  }
+  if (isH1CloudNode(node)) throw new Error('Проверка онлайн не поддерживается этим типом узла');
   let data;
   try {
     data = await apiPost(node, '/panel/api/clients/onlines', {}, false);
@@ -12210,11 +12254,11 @@ async function getOnlineClientsForDashboard() {
       const client = db.prepare(`
         SELECT c.*
         FROM clients c
-        LEFT JOIN client_nodes cn ON cn.client_id = c.id
-        WHERE LOWER(c.login) = LOWER(?) OR LOWER(c.display_name) = LOWER(?) OR LOWER(cn.remote_email) = LOWER(?)
+        JOIN client_nodes cn ON cn.client_id = c.id AND cn.node_id = ?
+        WHERE LOWER(cn.remote_email) = LOWER(?) OR LOWER(c.login) = LOWER(?)
         ORDER BY c.id ASC
         LIMIT 1
-      `).get(email, email, email);
+      `).get(node.id, email, email);
 
       if (!client) continue;
       const seenAt = markClientSeenOnline(client.id);
@@ -12246,7 +12290,8 @@ async function getOnlineClientsForDashboard() {
     }
   });
 
-  return { clients: Array.from(items.values()), errors: errors.slice(0, 8) };
+  return { clients: Array.from(items.values()), errors: errors.slice(0, 8),
+    failedNodeIds: nodes.filter((node, index) => nodeResults[index]?.status !== 'fulfilled').map(node => Number(node.id)) };
 }
 
 function isRemoteClientAlreadyAbsentError(err) {
@@ -13403,6 +13448,20 @@ app.get('/dashboard/live-client-traffic-probe.json', requireAuth, async (req, re
 });
 
 
+app.get('/clients/usage.json', requireAuth, (req, res) => {
+  // Serve the last snapshot immediately; slow/offline upstreams must not hold
+  // every browser request open. A single shared refresh runs in the background.
+  if (!usageRefreshPending && Date.now() - usageRefreshFinishedAt >= 30000) {
+    refreshAllClientUsageFromNodes().catch(err => {
+      usageRefreshErrors = [String(err.message || err)];
+      usageRefreshFinishedAt = Date.now();
+    });
+  }
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ ok: true, clients: buildClientUsageDirectory(), refreshing: Boolean(usageRefreshPending),
+    updatedAt: usageRefreshFinishedAt || null, errors: usageRefreshErrors });
+});
+
 app.get('/dashboard/online-clients.json', requireAuth, async (req, res) => {
   try {
     const result = await getOnlineClientsForDashboard();
@@ -13411,7 +13470,9 @@ app.get('/dashboard/online-clients.json', requireAuth, async (req, res) => {
       ok: true,
       generatedAt: new Date().toISOString(),
       clients: result.clients || [],
-      errors: result.errors || []
+      errors: result.errors || [],
+      failedNodeIds: result.failedNodeIds || [],
+      onlineNote: 'Remnawave: активность за последние 2 минуты; при выборе физического узла — последняя отмеченная нода.'
     });
   } catch (err) {
     res.status(500).json({ ok: false, error: String(err.message || err), clients: [], errors: [] });
@@ -14935,28 +14996,21 @@ app.get('/nodes/:id/remnawave-resources.json', requireAuth, async (req, res) => 
   }
 });
 
-app.post('/nodes/:id/clone-remnawave', requireAuth, (req, res) => {
+app.post(['/nodes/:id/clone', '/nodes/:id/clone-remnawave'], requireAuth, (req, res) => {
   try {
     const nodeId = Number(req.params.id);
     const source = db.prepare('SELECT * FROM nodes WHERE id = ?').get(nodeId);
     if (!source) throw new Error('Узел не найден');
-    if (!isRemnawaveNode(source)) throw new Error('Клонировать этим способом можно только Remnawave-узел');
-
-    const columns = db.prepare('PRAGMA table_info(nodes)').all().map(row => String(row.name || '')).filter(name => name && name !== 'id');
+    if (!['3xui', 'remnawave', 'h1cloud'].includes(String(source.node_type || '3xui'))) throw new Error('Этот тип узла не поддерживает клонирование');
+    const maxOrder = Number(db.prepare('SELECT COALESCE(MAX(sort_order), 0) AS m FROM nodes').get()?.m || 0);
+    const copy = nodeCloneValues(source, maxOrder + 1);
+    const columns = Object.keys(copy);
     const quoted = columns.map(name => `"${name.replace(/"/g, '""')}"`).join(', ');
     const placeholders = columns.map(() => '?').join(', ');
-    const values = columns.map(name => source[name]);
+    const values = columns.map(name => copy[name]);
     const info = db.prepare(`INSERT INTO nodes (${quoted}) VALUES (${placeholders})`).run(...values);
     const newId = Number(info.lastInsertRowid);
-    const maxOrder = Number(db.prepare('SELECT COALESCE(MAX(sort_order), 0) AS m FROM nodes').get()?.m || 0);
-    const baseSuffix = String(source.label_suffix || '').trim();
-    db.prepare(`
-      UPDATE nodes
-      SET label_suffix = ?, remnawave_node_uuid = '', remnawave_host_uuid = '', remnawave_link_filter = '', enabled = 0,
-          last_status = 'unknown', last_error = '', sort_order = ?
-      WHERE id = ?
-    `).run(baseSuffix ? `${baseSuffix} copy` : 'Remnawave copy', maxOrder + 1, newId);
-    res.redirect(`/nodes/${newId}/edit?message=${encodeURIComponent('Создана безопасная копия подключения Remnawave. Выбери другую физическую ноду и Host, затем включи её.')}`);
+    res.redirect(`/nodes/${newId}/edit?message=${encodeURIComponent('Создана выключенная копия сохранённых параметров подключения. Клиенты, статистика и состояние не скопированы. Проверь адрес, inbound или физическую ноду/Host перед включением. Пароли и API-токен сохранены на сервере.')}`);
   } catch (err) {
     res.redirect('/nodes?tab=list&error=' + encodeURIComponent(String(err.message || err)));
   }
@@ -15850,13 +15904,14 @@ app.get('/clients', requireAuth, (req, res) => {
 
     for (const row of client.node_limits) {
       if (!row.client_node_id) continue;
-      const usage = readUsageForClientNode({ id: row.node_id, inbound_id: row.inbound_id }, client, row);
+      // Directory rendering is read-only. Live polling updates client_nodes;
+      // an older inbound cache must never roll its fresh counters back.
+      const usage = { uploadBytes: clampByteNumber(row.upload_bytes), downloadBytes: clampByteNumber(row.download_bytes), usedBytes: clampByteNumber(row.used_bytes) };
       row.upload_bytes = usage.uploadBytes;
       row.download_bytes = usage.downloadBytes;
       row.used_bytes = usage.usedBytes;
       row.limit_bytes = toTotalGbBytes(row.traffic_gb || 0);
       row.remaining_bytes = Math.max(0, row.limit_bytes - row.used_bytes);
-      updateClientNodeUsage(row.client_node_id, usage);
       if (isRemnawaveNode(row)) {
         row.transport_label = 'Remnawave · VLESS / XHTTP / TLS';
         row.transport_network = 'remnawave';
@@ -17919,6 +17974,10 @@ function buildAutoSelectJsonConfig(profile, client, entries, subscriptionName) {
   if (!candidateOutbounds.length) return null;
 
   const balancerTag = `auto-${Number(profile.id)}-balancer`;
+  // Never route into a known dead first candidate when every probe fails.
+  // A dedicated blackhole also prevents accidental direct fallback.
+  const unavailableTag = `auto-${Number(profile.id)}-unavailable`;
+  config.outbounds.push({ tag: unavailableTag, protocol: 'blackhole', settings: {} });
   const baseRules = Array.isArray(config.routing?.rules) && config.routing.rules.length
     ? config.routing.rules
     : [{ type: 'field', network: 'tcp,udp', outboundTag: 'proxy' }];
@@ -17929,13 +17988,13 @@ function buildAutoSelectJsonConfig(profile, client, entries, subscriptionName) {
       tag: balancerTag,
       selector: [tagPrefix],
       strategy: { type: 'leastPing' },
-      fallbackTag: candidateOutbounds[0].tag
+      fallbackTag: unavailableTag
     }],
     rules: baseRules.map(rule => autoSelectRuleForBalancer(rule, balancerTag))
   };
   config.observatory = {
     subjectSelector: [tagPrefix],
-    probeURL: profile.probeUrl,
+    probeURL: /^https:\/\//i.test(profile.probeUrl || '') ? profile.probeUrl : AUTO_SELECT_DEFAULT_PROBE_URL,
     probeInterval: `${profile.probeIntervalSeconds}s`,
     enableConcurrency: true
   };
@@ -17948,7 +18007,8 @@ function buildAutoSelectJsonConfig(profile, client, entries, subscriptionName) {
     enabled: true,
     strategy: 'leastPing',
     connectivityCheck: true,
-    probeUrl: profile.probeUrl,
+    probeUrl: config.observatory.probeURL,
+    noHealthyNode: 'block-until-healthy',
     intervalSeconds: profile.probeIntervalSeconds,
     candidates: candidateOutbounds.length
   };

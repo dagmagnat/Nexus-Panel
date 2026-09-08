@@ -28,9 +28,7 @@
       <% if (is3xuiFamily) { %>
         <a class="link-btn secondary" href="/nodes/<%= node.id %>/edit?load_inbound=1">Загрузить параметры из 3x-ui</a>
       <% } %>
-      <% if (isRemnawave) { %>
-        <button type="submit" class="btn-secondary" form="nodeEditForm" formaction="/nodes/<%= node.id %>/clone-remnawave" formmethod="post" formnovalidate onclick="return confirm('Создать отдельную копию подключения для ещё одной физической Remnawave-ноды? Копия будет выключена до настройки.');">Добавить ещё Remnawave-ноду</button>
-      <% } %>
+      <form method="post" action="/nodes/<%= node.id %>/clone" class="inline-form" onsubmit="return confirm('Скопировать сохранённые параметры подключения? Несохранённые правки не копируются. Копия будет выключена.');"><button type="submit" class="btn-secondary">Клонировать узел</button></form>
       <% if (!isRemnawave) { %>
         <form method="post" action="/nodes/<%= node.id %>/sync-clients" class="inline-form js-long-action" data-loading-title="Импортирую клиентов" data-loading-text="Читаю клиентов из выбранного узла и добавляю недостающих в агрегатор." onsubmit="return confirm('Импортировать клиентов из этого узла в агрегатор?')">
           <button type="submit" class="secondary">Импорт клиентов из 3x-ui</button>

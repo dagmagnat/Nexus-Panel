@@ -155,7 +155,7 @@
         <div class="field half js-node-auto-select-only hidden" hidden style="display:none!important">
           <label>URL проверки интернета</label>
           <input name="auto_select_probe_url" value="https://cp.cloudflare.com/generate_204" placeholder="https://cp.cloudflare.com/generate_204" data-auto-select-required />
-          <small class="hint">Это не простой ping: приложение должно получить HTTP-ответ через конкретный узел.</small>
+          <small class="hint">HTTPS-запрос проходит через VPN каждого узла. Выбери внешний адрес, доступный через все узлы (например, generate_204). Если ни один не отвечает, трафик блокируется до успешной проверки; принудительного возврата к первому узлу нет.</small>
         </div>
 
         <div class="field full js-node-auto-select-only hidden" hidden style="display:none!important">
@@ -423,7 +423,7 @@
       </div>
       <div class="kv-item">
         <strong>Автовыбор</strong>
-        <div class="muted">Это виртуальный сервер только для JSON-подписки. Клиент Xray проверяет реальный HTTP-доступ через выбранные физические узлы и использует доступный узел с наименьшей задержкой. Срок и лимиты отдельно не задаются: они наследуются от клиента и его доступа к физическим узлам.</div>
+        <div class="muted">Только JSON-подписка и приложение с поддержкой Xray Observatory. HTTPS-проверки выполняет приложение через каждый VPN-узел, а не панель. После неудачной проверки узел исключается для новых соединений; существующие соединения не переносятся. При старте нужно дождаться первой проверки. Если все проверки неуспешны, трафик блокируется до восстановления. Один доступный проверочный сайт не гарантирует доступ ко всему интернету. Обнови подписку и перезапусти VPN после изменения настроек.</div>
       </div>
     </div>
   </section>
@@ -649,6 +649,7 @@
                   <button type="submit" class="btn-main">Проверить</button>
                 </form>
                 <a href="/nodes/<%= node.id %>/edit" class="link-btn secondary node-detail-action-link" onclick="event.stopPropagation()">Изменить</a>
+                <form method="post" action="/nodes/<%= node.id %>/clone" class="inline-form" onsubmit="return confirm('Создать выключенную копию сохранённых настроек подключения без клиентов и статистики?')"><button type="submit" class="btn-secondary">Клонировать</button></form>
                 <form method="post" action="/nodes/<%= node.id %>/create-missing-clients" class="inline-form node-detail-action-form js-long-action" data-loading-title="Добавляю отсутствующих клиентов" data-loading-text="На этот узел будут созданы только отсутствующие клиенты. Уже существующие записи не обновляются." onclick="event.stopPropagation()" onsubmit="return confirm('<%= isRemnawave ? 'Создать в Remnawave только отсутствующих пользователей Aggregator и назначить им настроенный Internal Squad?' : 'Создать на выбранном узле только отсутствующих клиентов агрегатора? Уже существующие клиенты будут пропущены.' %>')">
                   <button type="submit" class="secondary">Создать отсутствующих</button>
                 </form>

@@ -316,6 +316,10 @@
         <option value="disabled">Показать: отключённые</option>
         <option value="active">Показать: активные</option>
         <option value="online">Показать: сейчас в сети</option>
+        <option value="traffic-desc">Трафик: больше потрачено</option>
+        <option value="traffic-asc">Трафик: меньше потрачено</option>
+        <option value="limited">Показать: с лимитом ГБ</option>
+        <option value="exhausted">Показать: лимит ГБ исчерпан</option>
       </select>
     </label>
     <div class="client-directory-toolbar-actions">
@@ -323,6 +327,7 @@
         <label class="client-online-auto"><input type="checkbox" id="clientOnlineAutoRefresh" checked /><span>Авто</span></label>
         <select id="clientOnlineRefreshInterval" aria-label="Интервал автообновления"><option value="10">10 сек.</option><option value="30">30 сек.</option><option value="60">60 сек.</option></select>
         <button type="button" class="btn-secondary" id="clientOnlineRefreshNow">Обновить</button>
+        <small id="clientUsageRefreshStatus" role="status"></small>
       </div>
       <div class="client-directory-result">
         <span>Показано</span>
@@ -435,7 +440,7 @@
         </div>
 
         <div class="mobile-client-metrics">
-          <div><span>Трафик</span><strong><%= clientTrafficHeadline(client) %></strong></div>
+          <div><span>Трафик</span><strong data-client-usage-text="<%= client.id %>"><%= clientTrafficHeadline(client) %></strong></div>
           <div><span>Лимит дней</span><strong><%= termShort(client) %></strong></div>
           <div><span>Устройства</span><button type="button" class="client-device-count-link" title="Показать устройства клиента" aria-label="Показать устройства клиента" onclick="event.stopPropagation(); openModalById('deviceDetails-<%= client.id %>')"><%= clientDeviceUsage(client) %></button></div>
         </div>
@@ -582,7 +587,7 @@
           const trafficLimitGb = Math.max(0, Number(client.traffic_gb || 0));
           const remaining = clientRemainingMeta(client);
           const onlineEligible = client.enabled !== 0 && clientStatus.key !== 'expired';
-          const onlineLabel = client.enabled === 0 ? 'Отключён' : (clientStatus.key === 'expired' ? 'Исчерпано' : 'Не в сети');
+          const onlineLabel = client.enabled === 0 ? 'Отключён' : (clientStatus.key === 'expired' ? 'Срок истёк' : 'Не в сети');
           const onlineClass = client.enabled === 0 ? 'disabled' : (clientStatus.key === 'expired' ? 'expired' : 'offline');
           const displayTitle = compactTitle(client);
           const secondaryText = String(displayTitle || '').trim() !== String(client.login || '').trim()
@@ -1245,8 +1250,8 @@
           <% details.forEach(nl => { %>
             <div class="limit-details-row <%= nl.enabled === 0 ? 'disabled' : '' %>">
               <span><%= nodeName(nl) %><% if (nl.transport_label) { %> <em class="transport-chip"><%= nl.transport_label %></em><% } %></span>
-              <strong><%= nodeLimitText(nl) %></strong>
-              <% if (nl.enabled !== 0 && nl.traffic_gb > 0) { %><small>осталось <%= nodeRemainingText(nl) %></small><% } %>
+              <strong data-node-usage-client="<%= client.id %>" data-node-usage-id="<%= nl.node_id %>"><%= nodeLimitText(nl) %></strong>
+              <% if (nl.enabled !== 0 && nl.traffic_gb > 0) { %><small data-node-remaining-client="<%= client.id %>" data-node-usage-id="<%= nl.node_id %>">осталось <%= nodeRemainingText(nl) %></small><% } %>
             </div>
           <% }) %>
         </div>
@@ -1421,11 +1426,78 @@
   </div>
 </div>
 
+<script src="/js/client-usage.js?v=273"></script>
 <script>
 const clientDirectoryMode = <%= clientType === 'xray' ? 'true' : 'false' %>;
+const clientUsageById = new Map(<%- JSON.stringify(clients.map(c => [String(c.id), { id: c.id, limitGb: c.traffic_gb || 0, nodes: (c.node_limits || []).filter(n => n.client_node_id).map(n => ({ id: n.node_id, name: n.country_name_ru || n.name, limitGb: n.traffic_gb || 0, usedBytes: n.used_bytes || 0 })) }])).replace(/</g, '\\u003c') %>);
+const clientOnlineNodesById = new Map();
+let clientOnlineFailedNodeIds = new Set();
+function clientUsageSummary(id) {
+  return NexusUsage.summarize(clientUsageById.get(String(id)) || {}, clientDirectoryState.nodeId);
+}
+function clientIsOnlineHere(id) {
+  const nodes = clientOnlineNodesById.get(String(id)) || [];
+  return clientDirectoryState.nodeId ? nodes.includes(String(clientDirectoryState.nodeId)) : nodes.length > 0;
+}
+function renderClientUsageAndOnline() {
+  document.querySelectorAll('[data-modern-traffic-client], [data-client-usage-text]').forEach(cell => {
+    const id = cell.dataset.modernTrafficClient || cell.dataset.clientUsageText;
+    const summary = clientUsageSummary(id);
+    cell.textContent = NexusUsage.headline(summary);
+    cell.title = NexusUsage.text(summary);
+    cell.classList.toggle('is-limit-exhausted', summary.exhausted);
+    cell.classList.add('client-usage-readable');
+    const detail = document.getElementById('limitDetails-' + id);
+    if (detail) {
+      cell.tabIndex = 0; cell.setAttribute('role', 'button');
+      cell.onclick = event => { event.stopPropagation(); openLimitDetails(id); };
+      cell.onkeydown = event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.stopPropagation(); openLimitDetails(id); } };
+    }
+  });
+  document.querySelectorAll('[data-node-usage-client], [data-node-remaining-client]').forEach(cell => {
+    const client = clientUsageById.get(String(cell.dataset.nodeUsageClient || cell.dataset.nodeRemainingClient));
+    const s = NexusUsage.summarize(client || {}, cell.dataset.nodeUsageId);
+    if (cell.dataset.nodeRemainingClient) {
+      const node = s.limited[0];
+      cell.textContent = node ? 'Осталось: ' + new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(Math.max(0, node.limitBytes - node.usedBytes) / 1024 ** 3) + ' ГБ' : 'Без лимита';
+    } else cell.textContent = NexusUsage.headline({ ...s, globalLimitBytes: 0, globalExhausted: false, exhausted: s.exhaustedNodes.length > 0 });
+    cell.classList.add('client-usage-readable');
+    cell.classList.toggle('is-limit-exhausted', s.exhausted);
+  });
+  document.querySelectorAll('[data-modern-online-state]').forEach(state => {
+    if (state.dataset.onlineEligible !== '1') return;
+    const online = clientIsOnlineHere(state.dataset.clientId);
+    const unknown = !online && (clientDirectoryState.nodeId ? clientOnlineFailedNodeIds.has(String(clientDirectoryState.nodeId)) : clientOnlineFailedNodeIds.size > 0);
+    state.classList.toggle('online', online);
+    state.classList.toggle('offline', !online);
+    const label = state.querySelector('b');
+    if (label) label.textContent = online ? 'В сети' : unknown ? 'Нет данных' : 'Не в сети';
+    state.title = 'Для выбранного узла. Remnawave: активность за 2 минуты, последняя отмеченная нода; не точный список соединений.';
+  });
+}
+let clientUsageRefreshPending = false;
+let clientUsagePollTimer = null;
+async function refreshClientUsage() {
+  if (clientUsageRefreshPending) return;
+  clientUsageRefreshPending = true;
+  clearTimeout(clientUsagePollTimer);
+  const status = document.getElementById('clientUsageRefreshStatus');
+  try {
+    const response = await fetch('/clients/usage.json', { cache: 'no-store', signal: AbortSignal.timeout(10000) });
+    if (!response.ok) throw new Error('Ошибка обновления трафика');
+    const data = await response.json();
+    (data.clients || []).forEach(client => clientUsageById.set(String(client.id), client));
+    applyClientDirectoryFilters({ updateUrl: false });
+    if (status) status.textContent = data.refreshing ? 'Обновляю ГБ…' : data.errors?.length ? 'ГБ: часть узлов недоступна' : `ГБ: ${data.updatedAt ? new Date(data.updatedAt).toLocaleTimeString('ru-RU') : 'кэш'}`;
+    if (status) status.title = (data.errors || []).join(' | ');
+    if (data.refreshing && !document.hidden) clientUsagePollTimer = setTimeout(refreshClientUsage, 3000);
+  } catch (err) {
+    if (status) status.textContent = 'ГБ: нет свежих данных';
+  } finally { clientUsageRefreshPending = false; }
+}
 const clientDirectoryInitialQuery = new URLSearchParams(window.location.search).get('q') || '';
 let clientDirectoryState = { query: clientDirectoryInitialQuery, nodeId: '', groupId: '', tagId: '', sort: 'newest' };
-const clientDirectorySortModes = ['newest','oldest','name-asc','name-desc','expiring','expired','disabled','active','online'];
+const clientDirectorySortModes = ['newest','oldest','name-asc','name-desc','expiring','expired','disabled','active','online','traffic-desc','traffic-asc','limited','exhausted'];
 
 function normalizeClientDirectoryText(value) {
   return String(value || '').toLocaleLowerCase('ru-RU').replace(/ё/g, 'е').replace(/\s+/g, ' ').trim();
@@ -1453,6 +1525,10 @@ function compareClientDirectoryEntries(a, b) {
   const an = normalizeClientDirectoryText(a.dataset.clientName || '');
   const bn = normalizeClientDirectoryText(b.dataset.clientName || '');
   if (mode === 'oldest') return ai - bi;
+  if (mode === 'traffic-desc' || mode === 'traffic-asc') {
+    const diff = clientUsageSummary(a.dataset.clientIdEntry).usedBytes - clientUsageSummary(b.dataset.clientIdEntry).usedBytes;
+    return (mode === 'traffic-asc' ? diff : -diff) || bi - ai;
+  }
   if (mode === 'name-asc') return an.localeCompare(bn, 'ru', { numeric: true, sensitivity: 'base' }) || bi - ai;
   if (mode === 'name-desc') return bn.localeCompare(an, 'ru', { numeric: true, sensitivity: 'base' }) || bi - ai;
   if (mode === 'expiring') return (ae || Number.MAX_SAFE_INTEGER) - (be || Number.MAX_SAFE_INTEGER) || bi - ai;
@@ -1511,8 +1587,10 @@ function applyClientDirectoryFilters(options = {}) {
     const tagMatches = !tagId || (tagId === 'none' ? tags.length === 0 : tags.includes(tagId));
     const status = String(entry.dataset.clientStatus || '');
     const statusMatches = !statusMode || status === statusMode || (statusMode === 'active' && status === 'expiring');
-    const onlineMatches = !onlineOnly || entry.dataset.clientOnline === '1';
-    if ((!query || search.includes(query)) && (!nodeId || nodes.includes(nodeId)) && groupMatches && tagMatches && statusMatches && onlineMatches) visibleIds.add(id);
+    const onlineMatches = !onlineOnly || clientIsOnlineHere(id);
+    const usage = clientUsageSummary(id);
+    const usageMatches = clientDirectoryState.sort === 'exhausted' ? usage.exhausted : clientDirectoryState.sort === 'limited' ? usage.hasLimit : true;
+    if ((!query || search.includes(query)) && (!nodeId || nodes.includes(nodeId)) && groupMatches && tagMatches && statusMatches && onlineMatches && usageMatches) visibleIds.add(id);
   });
   getClientDirectoryEntries().forEach(entry => {
     const id = String(entry.dataset.clientIdEntry || '');
@@ -1523,6 +1601,7 @@ function applyClientDirectoryFilters(options = {}) {
     if (hidden) entry.querySelectorAll('.client-check[data-client-id]').forEach(cb => { cb.checked = false; cb.indeterminate = false; });
   });
   reorderClientDirectory();
+  renderClientUsageAndOnline();
   const count = document.getElementById('clientDirectoryCount');
   if (count) count.textContent = String(visibleIds.size);
   const empty = document.getElementById('clientDirectoryEmpty');
@@ -2077,6 +2156,9 @@ async function refreshClientOnlineSummary() {
     if (!response.ok) throw new Error(data.error || 'Ошибка проверки');
 
     const list = Array.isArray(data.clients) ? data.clients : [];
+    clientOnlineNodesById.clear();
+    clientOnlineFailedNodeIds = new Set((data.failedNodeIds || []).map(String));
+    list.forEach(item => clientOnlineNodesById.set(String(item.id || item.clientId), (item.nodes || []).map(node => String(node.id))));
     const onlineIds = new Set();
     const onlineKeys = new Set();
     list.forEach(item => {
@@ -2129,9 +2211,12 @@ async function refreshClientOnlineSummary() {
     });
 
     clientOnlineInitialized = true;
-    if (clientDirectoryState.sort === 'online') applyClientDirectoryFilters();
+    applyClientDirectoryFilters({ updateUrl: false });
   } catch (err) {
-    if (!clientOnlineInitialized) target.textContent = '—';
+    target.textContent = '—';
+    clientOnlineNodesById.clear();
+    clientOnlineFailedNodeIds = new Set(getClientDirectoryEntries().flatMap(entry => String(entry.dataset.clientNodeIds || '').split(/\s+/).filter(Boolean)));
+    applyClientDirectoryFilters({ updateUrl: false });
     target.title = err.name === 'AbortError' ? 'Проверка онлайн превысила 12 секунд' : (err.message || String(err));
     onlineCard?.classList.add('online-check-error');
   } finally {
@@ -2170,7 +2255,7 @@ function configureClientOnlineAutoRefresh() {
   if (!toggle.checked) return;
   const seconds = [10, 30, 60].includes(Number(select.value)) ? Number(select.value) : 10;
   clientOnlineAutoTimer = window.setInterval(() => {
-    if (!document.hidden) refreshClientOnlineSummary();
+    if (!document.hidden) { refreshClientOnlineSummary(); refreshClientUsage(); }
   }, seconds * 1000);
 }
 
@@ -2184,7 +2269,7 @@ function setupClientOnlineAutoRefresh() {
   } catch (_) {}
   toggle?.addEventListener('change', configureClientOnlineAutoRefresh);
   select?.addEventListener('change', configureClientOnlineAutoRefresh);
-  document.getElementById('clientOnlineRefreshNow')?.addEventListener('click', refreshClientOnlineSummary);
+  document.getElementById('clientOnlineRefreshNow')?.addEventListener('click', () => { refreshClientOnlineSummary(); refreshClientUsage(); });
   configureClientOnlineAutoRefresh();
 }
 
@@ -2195,6 +2280,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setupClientOverviewShortcuts();
   setupClientOnlineAutoRefresh();
   refreshClientOnlineSummary();
+  refreshClientUsage();
   document.querySelectorAll('.client-check[data-client-id]').forEach(cb => {
     cb.addEventListener('change', () => {
       syncClientCheckboxCopies(cb);
