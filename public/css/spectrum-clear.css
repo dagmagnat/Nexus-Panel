@@ -1091,8 +1091,20 @@ tr.muted-row { opacity: .58; }
 .kv-list, .security-info-list { display: grid; gap: 8px; }
 .kv-item, .vpn-kv { display: grid; grid-template-columns: minmax(120px, .7fr) minmax(0, 1.3fr); gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
 .kv-item:last-child, .vpn-kv:last-child { border-bottom: 0; }
-.node-edit-layout { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 16px; align-items: start; }
+.node-edit-layout { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(280px, 1fr); gap: 20px; align-items: start; }
 .node-edit-main { min-width: 0; }
+.node-edit-layout > .card { grid-column: auto; width: 100%; min-width: 0; }
+.node-edit-layout .form-grid > .field:not(.full) { grid-column: span 6; }
+.node-edit-layout .form-grid > .field.full { grid-column: 1 / -1; }
+.node-edit-layout input, .node-edit-layout select, .node-edit-layout textarea { min-width: 0; max-width: 100%; font-size: 14px; }
+.node-edit-layout label { font-size: 12px; }
+.node-edit-layout .hint { font-size: 11px; line-height: 1.45; }
+.node-edit-layout .kv-item { grid-template-columns: minmax(0, 1fr); gap: 5px; }
+.node-edit-layout .kv-item > * { min-width: 0; overflow-wrap: anywhere; }
+.node-edit-preview { display: grid; gap: 12px; margin-bottom: 22px; padding: 18px; background: var(--surface-raised); border: 1px solid var(--line); border-radius: var(--radius-md); overflow-wrap: anywhere; }
+.node-edit-preview > strong { font-size: 18px; }
+.node-edit-preview > span { color: var(--cyan); font-size: 12px; }
+.node-edit-preview p { margin: 0; font-size: 12px; }
 .node-edit-help-card { position: sticky; top: 105px; }
 .node-edit-top-actions, .node-edit-final-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
 .inbound-editor-box, .transport-settings-box, .xhttp-settings-box, .probe-control-card, .network-load-box, .update-box, .geodata-catalog-card { margin-top: 13px; padding: 14px; background: var(--surface-raised); border: 1px solid var(--line); border-radius: var(--radius-md); }
@@ -1536,15 +1548,13 @@ details[open] > summary { margin-bottom: 10px; color: var(--text-strong); }
   .agg-pulse-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .agg-pulse-item { grid-template-columns: 24px minmax(0, 1fr) auto 8px; }
   .traffic-grid, .traffic-grid-secondary, .redirect-metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .modal, .modal-backdrop { align-items: end; padding: 0; }
+  .modal, .modal-backdrop { align-items: center; padding: 12px; }
   .modal-card, .editor-modal, .online-modal-card, .qr-modal-card, .order-modal-card {
     width: 100%;
-    max-height: 92dvh;
+    max-height: calc(100dvh - 32px);
     padding: 17px 14px calc(17px + env(safe-area-inset-bottom));
-    border-right: 0;
-    border-bottom: 0;
-    border-left: 0;
-    border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius-xl);
   }
   .form-grid, .inline-select-grid, .happ-control-grid, .dns-preset-grid, .mode-grid, .vpn-form, .security-settings-form, .routing-form { gap: 11px; }
   .field.half, .form-grid > .half, .field.third, .form-grid > .third, .happ-control-grid > .field.half, .happ-control-grid > .switch-row { grid-column: span 12; }
@@ -1968,7 +1978,7 @@ details[open] > summary { margin-bottom: 10px; color: var(--text-strong); }
 
 @media (max-width: 900px) {
   .client-editor-shell {
-    align-items: stretch !important;
+    align-items: center !important;
     padding: calc(8px + env(safe-area-inset-top)) 7px calc(72px + env(safe-area-inset-bottom)) !important;
   }
   .client-editor-shell .existing-client-editor-modal {
@@ -2121,7 +2131,7 @@ body.client-modal-open { overflow: hidden; overscroll-behavior: none; }
   .mobile-client-expiry { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 3px; }
   .mobile-client-edit-link { display: inline-flex; min-height: 25px; align-items: center; padding: 2px 6px; color: var(--cyan); background: transparent; border: 0; box-shadow: none; font-size: 9px; }
 
-  .client-editor-shell { align-items: end; }
+  .client-editor-shell { align-items: center; }
   .client-editor-shell .existing-client-editor-modal { max-height: calc(100dvh - 64px - env(safe-area-inset-top)); padding: 12px 11px calc(12px + env(safe-area-inset-bottom)); }
   .client-editor-shell h2 { margin-right: 38px; margin-bottom: 2px; font-size: 17px; }
   .client-editor-shell h2 + .muted { margin-bottom: 8px; font-size: 9px; }
@@ -2164,7 +2174,7 @@ body.client-modal-open { overflow: hidden; overscroll-behavior: none; }
   .dashboard-health-icon { width: 27px; height: 27px; }
   .dashboard-priority-actions > * { min-height: 31px; padding-inline: 4px; font-size: 9px; }
   .dashboard-health-issues a { grid-template-columns: 1fr; gap: 2px; }
-  .client-editor-shell .existing-client-editor-modal { border-radius: 16px 16px 0 0; }
+  .client-editor-shell .existing-client-editor-modal { border-radius: 16px; }
 }
 
 /* Spectrum Clear 2.2.1 — phone density, contextual actions and stable settings cards. */
@@ -3244,15 +3254,45 @@ body.client-modal-open { overflow: hidden; overscroll-behavior: none; }
 
 .node-mobile-health { display: none; }
 
+/* Compact actions and centred dialogs share one mobile contract. */
+@media (max-width: 900px) {
+  .modal, .modal-backdrop, .modal.client-editor-shell, #onlineClientsModal {
+    align-items: center;
+    justify-items: center;
+    padding: max(12px, env(safe-area-inset-top)) 12px max(12px, env(safe-area-inset-bottom)) !important;
+  }
+  .modal > .modal-card, .modal-backdrop > .modal-card,
+  .client-editor-shell .existing-client-editor-modal, #onlineClientsModal > .online-modal-card {
+    width: 100%;
+    max-width: 560px;
+    height: auto;
+    max-height: calc(100dvh - 32px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+    min-width: 0;
+    margin: 0;
+    border: 1px solid var(--line-strong);
+    border-radius: 16px;
+  }
+  .modal > .qr-modal-card:not(.is-pair) { max-width: 380px; }
+  .modal > .loading-card { max-width: 420px; }
+  .client-editor-summary .client-summary-uuid { grid-column: 1 / -1; min-height: 44px; }
+  .client-editor-summary .client-summary-action-card { min-height: 58px; padding: 7px; }
+  .client-editor-summary .client-summary-link-actions > * { min-height: 34px; padding: 5px 4px; font-size: 10px; }
+  .client-editor-summary .client-summary-open-btn { min-height: 34px; font-size: 11px; }
+  .node-edit-layout .form-grid > .field:not(.full) { grid-column: 1 / -1; }
+}
+
 @media (min-width: 1121px) {
   /* Keep the fixed-height split view only on the node list itself.
      Edit/add/help screens also use body.page-nodes and must keep normal page scrolling. */
+  .page-nodes:has(.nodes-modern-card.is-active) .spectrum-pagebar { min-height: 0; height: 0; padding: 0; border: 0; }
+  .page-nodes:has(.nodes-modern-card.is-active) .spectrum-page-heading { display: none; }
+  .page-nodes:has(.nodes-modern-card.is-active) .spectrum-page-actions { position: absolute; top: 18px; right: 28px; }
   .page-nodes:has(.nodes-modern-card.is-active) { height: 100dvh; overflow: hidden; }
   .page-nodes:has(.nodes-modern-card.is-active) .spectrum-shell,
   .page-nodes:has(.nodes-modern-card.is-active) .spectrum-main { height: 100dvh; min-height: 0; overflow: hidden; }
   .page-nodes .spectrum-page-content:has(.nodes-modern-card.is-active) {
     display: flex;
-    height: calc(100dvh - 108px);
+    height: 100dvh;
     min-height: 0;
     flex-direction: column;
     padding-bottom: 14px;
@@ -3272,6 +3312,10 @@ body.client-modal-open { overflow: hidden; overscroll-behavior: none; }
 
 @media (max-width: 900px) {
   .page-nodes .nodes-modern-list { gap: 5px; padding: 6px; }
+  /* The later auto-select rule used to re-show the mobile drag handle,
+     adding an entire extra row above the actual card. */
+  .page-nodes .auto-select-list-row > .auto-select-fixed-mark { display: none; }
+  .page-nodes .auto-select-list-row .node-row-select { padding-right: 12px; }
   .page-nodes .node-list-row { min-height: 56px; touch-action: pan-y; }
   .page-nodes .node-row-select {
     grid-template-columns: 18px minmax(0, 1fr) auto;
