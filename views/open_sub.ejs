@@ -147,6 +147,9 @@
       </div>
     </section>
 
+    <% if (Number(client.start_on_activation) === 1 && !Number(client.activation_started_at) && Number(client.duration_days) > 0) { %>
+    <section class="portal-support"><div><strong>Срок ещё не начался</strong><p>Добавьте ссылку подписки в VPN-приложение с поддержкой HWID. После привязки устройства начнётся период на <%= client.duration_days %> дн. Открытие этой страницы и копирование ссылки срок не запускают.</p></div></section>
+    <% } %>
     <% if ((supportNote || supportUrl)) { %>
     <section class="portal-support">
       <div><span class="portal-eyebrow">Помощь</span><strong><%= supportNote || 'Нужна помощь с подключением?' %></strong></div>

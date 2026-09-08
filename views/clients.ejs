@@ -64,7 +64,11 @@
     const left = daysLeftNumber(ts);
     return left === null ? '∞' : String(left);
   }
+  function isActivationPending(client) {
+    return Number(client.start_on_activation) === 1 && Number(client.activation_started_at || 0) <= 0 && Number(client.duration_days || 0) > 0;
+  }
   function termShort(client) {
+    if (isActivationPending(client)) return String(Math.max(0, Number(client.duration_days || 0)));
     const left = daysLeftNumber(client.expiry_time);
     if (left === null) return '∞';
     const total = Number(client.duration_days || 0);
@@ -108,6 +112,7 @@
     const enabled = client.enabled !== 0;
     const left = daysLeftNumber(client.expiry_time);
     if (!enabled) return { key: 'offline', label: 'Отключён', text: 'Клиент отключён и не может подключаться.' };
+    if (isActivationPending(client)) return { key: 'warning', label: 'Ждёт активации', text: 'Срок начнётся после первого добавления подписки в приложении с HWID устройства.' };
     if (left === 0) return { key: 'expired', label: 'Срок истёк', text: 'Срок доступа закончился. Продли доступ или отключи клиента на узлах.' };
     if (left !== null && left <= 7) return { key: 'warning', label: 'Скоро закончится', text: 'Срок доступа скоро закончится: осталось ' + left + ' дн.' };
     return { key: 'online', label: 'Включён', text: 'Клиент активен и может подключаться.' };
@@ -116,6 +121,7 @@
     const enabled = client.enabled !== 0;
     const left = daysLeftNumber(client.expiry_time);
     if (!enabled) return 'disabled';
+    if (isActivationPending(client)) return 'active';
     if (left === 0) return 'expired';
     if (left !== null && left <= 7) return 'expiring';
     return 'active';
@@ -199,6 +205,7 @@
     return new Date(ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
   }
   function clientRemainingMeta(client) {
+    if (isActivationPending(client)) return { text: 'после активации', key: 'warning' };
     const expiry = Number(client.expiry_time || 0);
     if (!Number.isFinite(expiry) || expiry <= 0) return { text: '∞', key: 'unlimited' };
     const diff = expiry - Date.now();
@@ -432,7 +439,7 @@
           <div><span>Лимит дней</span><strong><%= termShort(client) %></strong></div>
           <div><span>Устройства</span><button type="button" class="client-device-count-link" title="Показать устройства клиента" aria-label="Показать устройства клиента" onclick="event.stopPropagation(); openModalById('deviceDetails-<%= client.id %>')"><%= clientDeviceUsage(client) %></button></div>
         </div>
-        <div class="mobile-client-expiry"><span>Действует до: <strong><%= expiryDateTime(client.expiry_time) %></strong></span><button type="button" class="mobile-client-edit-link" onclick="openClientEditor(<%= client.id %>)">Изменить ›</button></div>
+        <div class="mobile-client-expiry"><span><%= isActivationPending(client) ? 'Срок начнётся: ' : 'Действует до: ' %><strong><%= isActivationPending(client) ? 'после активации' : expiryDateTime(client.expiry_time) %></strong></span><button type="button" class="mobile-client-edit-link" onclick="openClientEditor(<%= client.id %>)">Изменить ›</button></div>
 
         <div class="mobile-client-actions">
           <% if (canShowSub) { %>
@@ -646,7 +653,7 @@
               <% if (trafficLimitGb > 0) { %><div class="modern-traffic-track"><i style="width:<%= clientTrafficPercent(client).toFixed(1) %>%"></i></div><% } %>
             </td>
             <td class="modern-device-cell"><button type="button" class="client-device-count-link" onclick="openModalById('deviceDetails-<%= client.id %>')" title="Показать устройства"><%= clientDeviceUsage(client) %></button></td>
-            <td><span class="modern-term <%= remaining.key %>" title="Действует до <%= expiryDateTime(client.expiry_time) %>"><%= termShort(client) %><%= termShort(client) === '∞' ? '' : ' дн.' %></span></td>
+            <td><span class="modern-term <%= remaining.key %>" title="<%= isActivationPending(client) ? 'Срок начнётся после активации устройства' : ('Действует до ' + expiryDateTime(client.expiry_time)) %>"><%= termShort(client) %><%= termShort(client) === '∞' ? '' : ' дн.' %><% if (isActivationPending(client)) { %><small> · ждёт</small><% } %></span></td>
           </tr>
         <% }) %>
         </tbody>
@@ -758,6 +765,14 @@
           <label>Срок в днях</label>
           <input name="duration_days" type="number" min="0" value="30" />
           <small class="hint">0 = без срока.</small>
+        </div>
+        <div class="field half">
+          <label>Запуск срока</label>
+          <label class="switch-row compact">
+            <input type="checkbox" name="start_on_activation" value="1" />
+            <span><strong>Начать после активации</strong><small>Срок начнётся, когда клиент добавит подписку в приложение, передающее HWID устройства. Открытие ссылки в браузере срок не запускает.</small></span>
+          </label>
+          <small class="hint">До активации доступ на узлах отключён. Для срока 0 эта настройка не применяется.</small>
         </div>
         <div class="field half">
           <label>Общий лимит, ГБ</label>
@@ -1090,7 +1105,7 @@
       <div class="client-detail-summary client-editor-summary">
         <div class="client-summary-id"><span>ID</span><strong><%= client.id %></strong></div>
         <div><span>Статус</span><strong class="badge <%= clientStatusMeta(client).key %>"><%= clientStatusMeta(client).label %></strong></div>
-        <div><span>Срок</span><strong><%= termShort(client) %> дн.</strong><small>до <%= expiryDateTime(client.expiry_time) %></small></div>
+        <div><span>Срок</span><strong><%= termShort(client) %> дн.</strong><small><% if (Number(client.start_on_activation) === 1 && Number(client.activation_started_at || 0) <= 0) { %>ожидает активации устройства<% } else { %>до <%= expiryDateTime(client.expiry_time) %><% } %></small></div>
         <div><span>Общий лимит</span><strong><%= client.traffic_gb && client.traffic_gb > 0 ? client.traffic_gb + ' ГБ' : '∞' %></strong></div>
         <div><span>Лимит IP</span><strong><%= client.limit_ip && Number(client.limit_ip) > 0 ? client.limit_ip : '∞' %></strong></div>
         <div><span>Лимит устройств</span><strong><%= Number(client.device_limit) > 0 ? client.device_limit : '∞' %></strong></div>
@@ -1160,7 +1175,12 @@
           <div class="field half">
             <label>Новый срок в днях</label>
             <input name="duration_days" type="number" min="0" value="" placeholder="не менять" />
-            <small class="hint">Сейчас: <%= termShort(client) %> дн., до <%= expiryDateTime(client.expiry_time) %>. Пусто = не менять, 0 = убрать срок.</small>
+            <small class="hint">Сейчас: <%= termShort(client) %> дн., <%= isActivationPending(client) ? 'ожидает активации' : ('до ' + expiryDateTime(client.expiry_time)) %>. Пусто = не менять, 0 = убрать срок.</small>
+          </div>
+          <div class="field half">
+            <input type="hidden" name="activation_option_present" value="1">
+            <label class="switch-row compact"><input type="checkbox" name="start_on_activation" value="1" <%= Number(client.start_on_activation) === 1 ? 'checked' : '' %>><span><strong>Начать после активации</strong><small>Первое добавление подписки в приложение с HWID запускает срок. Повторные обновления не продлевают его.</small></span></label>
+            <small class="hint"><% if (Number(client.activation_started_at) > 0) { %>Активирован: <%= expiryDateTime(client.activation_started_at) %>. Повторный запуск исключён.<% } else { %>До привязки устройства срок ожидает. Снятие галочки запускает ожидающий период сразу.<% } %></small>
           </div>
           <div class="field half">
             <label>Общий лимит трафика, ГБ</label>

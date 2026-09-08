@@ -22,7 +22,7 @@
 %>
 
 <div class="grid node-edit-layout">
-  <section class="card span-8 node-edit-main">
+  <section class="card node-edit-main">
     <h2>Параметры узла</h2>
     <div class="actions node-edit-top-actions" style="margin-bottom:14px;">
       <% if (is3xuiFamily) { %>
@@ -371,7 +371,13 @@
     </div>
   </section>
 
-  <aside class="card span-4 node-edit-help-card">
+  <aside class="card node-edit-help-card">
+    <h2>Вид в подписке</h2>
+    <div class="node-edit-preview" aria-live="polite">
+      <strong data-node-preview-name><%= node.country_name_ru || node.name %> <%= node.label_suffix || '' %></strong>
+      <span data-node-preview-type><%= isRemnawave ? 'Remnawave' : '3x-ui' %></span>
+      <p class="muted">Предпросмотр названия. Лимит и расход будут добавлены отдельно для каждого клиента.</p>
+    </div>
     <h2>Что меняется</h2>
     <div class="kv-list">
       <div class="kv-item">
@@ -390,6 +396,7 @@
   </aside>
 </div>
 
+<script src="/js/node-edit-preview.js?v=272" defer></script>
 
 <script>
 (function(){

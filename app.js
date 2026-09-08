@@ -21,6 +21,7 @@ const https = require('https');
 const dns = require('dns').promises;
 const { encrypt, decrypt } = require('./lib_crypto');
 const { createVpnManager } = require('./lib_vpn_manager');
+const { initNexusNodeControlSchema, attachNexusNodeControl } = require('./lib_nexus_node_control');
 
 const COUNTRIES = [
   { code: 'AE', name_ru: 'ОАЭ', flag: '🇦🇪' },
@@ -455,6 +456,8 @@ const OFFICIAL_REPOSITORY_SLUG = 'dagmagnat/Nexus-Panel';
 const PROJECT_UPDATE_REQUEST_FILE = path.join(DATA_DIR, 'project_update_request.json');
 const PROJECT_UPDATE_STATUS_FILE = path.join(DATA_DIR, 'project_update_status.json');
 const IS_PRODUCTION = String(process.env.NODE_ENV || '').trim().toLowerCase() === 'production';
+// Experimental control plane: normal installations use 3x-ui / Remnawave.
+const NEXUS_NODE_ENABLED = String(process.env.NEXUS_NODE_ENABLED || '0') === '1';
 
 function assertSecureRuntimeConfiguration() {
   if (!IS_PRODUCTION) return;
@@ -883,6 +886,9 @@ function ensureCsrfToken(req) {
 }
 
 app.use((req, res, next) => {
+  // Nexus Node uses its own HMAC authentication. Requiring a browser CSRF
+  // token here would make an outbound, headless agent impossible to enroll.
+  if (NEXUS_NODE_ENABLED && req.path.startsWith('/api/nexus-node/v1/')) return next();
   const token = ensureCsrfToken(req);
   res.locals.csrfToken = token;
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
@@ -1179,6 +1185,8 @@ function initDb() {
       limit_ip INTEGER NOT NULL DEFAULT 0,
       device_limit INTEGER NOT NULL DEFAULT 1,
       expiry_time INTEGER NOT NULL DEFAULT 0,
+      start_on_activation INTEGER NOT NULL DEFAULT 0,
+      activation_started_at INTEGER NOT NULL DEFAULT 0,
       enabled INTEGER NOT NULL DEFAULT 1,
       comment TEXT NOT NULL DEFAULT '',
       flow TEXT NOT NULL DEFAULT '',
@@ -1436,6 +1444,9 @@ function initDb() {
   addColumnIfMissing('clients', 'limit_ip', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing('clients', 'device_limit', 'INTEGER NOT NULL DEFAULT 1');
   addColumnIfMissing('clients', 'expiry_time', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing('clients', 'start_on_activation', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing('clients', 'activation_started_at', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing('clients', 'activation_sync_pending', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing('clients', 'enabled', 'INTEGER NOT NULL DEFAULT 1');
   addColumnIfMissing('clients', 'comment', "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing('clients', 'flow', "TEXT NOT NULL DEFAULT ''");
@@ -1630,6 +1641,7 @@ function migrateSubscriptionDeviceLimitsOnce() {
 }
 
 initDb();
+initNexusNodeControlSchema(db);
 const vpnManager = createVpnManager({ db, appSecret: APP_SECRET, encrypt, decrypt, dataDir: DATA_DIR });
 ensureMissingAppSettings();
 migrateOfficialRepositorySetting();
@@ -1861,6 +1873,7 @@ function render(res, view, params = {}) {
   const data = {
     ...params,
     isDevelopment: !IS_PRODUCTION,
+    nexusNodeEnabled: NEXUS_NODE_ENABLED,
     currentAdminUsername,
     currentPath: res.req.path,
     panelInterfaceTheme: getPanelInterfaceTheme(),
@@ -1889,6 +1902,10 @@ function render(res, view, params = {}) {
 
     return res.status(500).send(formatServerErrorPage(`Ошибка страницы ${view}`, err));
   });
+}
+
+if (NEXUS_NODE_ENABLED) {
+  attachNexusNodeControl({ app, db, requireAuth, render, appSecret: APP_SECRET, encrypt, decrypt });
 }
 
 function encodeSettingValue(key, value) {
@@ -2282,6 +2299,35 @@ function isClientExpired(clientRow) {
   return isClientExpiredAt(clientRow?.expiry_time || 0);
 }
 
+function isClientActivationPending(clientRow) {
+  return Number(clientRow?.start_on_activation) === 1
+    && Number(clientRow?.activation_started_at || 0) <= 0
+    && Math.max(0, Number(clientRow?.duration_days || 0)) > 0;
+}
+
+function expiryAfterActivationDays(days, startedAt = Date.now()) {
+  const n = Math.max(0, Number(days || 0));
+  const base = normalizeEpochMillis(startedAt) || Date.now();
+  return Number.isFinite(n) && n > 0 ? base + Math.ceil(n) * 24 * 60 * 60 * 1000 : 0;
+}
+
+function clientTermForEdit(client, body, deviceCount, now = Date.now()) {
+  const raw = String(body.duration_days ?? '').trim();
+  const days = raw === '' ? Number(client.duration_days || 0) : Number(raw);
+  if (!Number.isSafeInteger(days) || days < 0 || days > 36500) throw new Error('Срок должен быть целым числом от 0 до 36500 дней.');
+  const requested = body.activation_option_present === '1' ? body.start_on_activation === '1' : Number(client.start_on_activation) === 1;
+  if (requested && Number(client.start_on_activation) !== 1 && (Number(client.activation_started_at) > 0 || deviceCount > 0 || client.last_online_at)) {
+    throw new Error('У клиента уже была активация или привязка устройства. Отложенный старт доступен только до первого использования.');
+  }
+  const startOnActivation = requested && days > 0 ? 1 : 0;
+  const startedAt = Number(client.activation_started_at || 0);
+  const pending = startOnActivation === 1 && startedAt === 0;
+  const expiry = pending ? 0 : raw !== '' || isClientActivationPending(client)
+    ? (days > 0 ? (isClientActivationPending(client) ? expiryAfterActivationDays(days, now) : expiryAtMidnightAfterDays(days, now)) : 0)
+    : Number(client.expiry_time || 0);
+  return { days, startOnActivation, expiry };
+}
+
 function getExpiredSubscriptionNotice() {
   return '⛔ Срок доступа закончился.\n💳 Продлите доступ и обновите подписку 🔄';
 }
@@ -2302,6 +2348,7 @@ function getEffectiveSubscriptionSupportMeta(clientRow) {
 
 function isClientEffectivelyEnabled(clientRow, expiryOverride = undefined) {
   if (Number(clientRow?.enabled) === 0) return false;
+  if (isClientActivationPending(clientRow)) return false;
   const expiry = expiryOverride !== undefined ? expiryOverride : clientRow?.expiry_time;
   return !isClientExpiredAt(expiry || 0);
 }
@@ -2490,7 +2537,10 @@ function listSubscriptionDevices(clientId) {
 }
 
 function registerSubscriptionDevice(req, clientRow, options = {}) {
-  const trackingEnabled = isSubscriptionDeviceTrackingEnabled();
+  // An activation-on-first-device client must be bound even when the optional
+  // global device registry is turned off. Its first HWID is the proof that a
+  // VPN application, rather than a browser page, consumed the subscription.
+  const trackingEnabled = options.forceTracking === true || isSubscriptionDeviceTrackingEnabled();
   const limit = getClientDeviceLimit(clientRow);
   const info = getSubscriptionDeviceFromRequest(req);
   const base = {
@@ -2509,6 +2559,9 @@ function registerSubscriptionDevice(req, clientRow, options = {}) {
   if (!trackingEnabled || !clientRow?.id) return base;
 
   if (!info.hwid) {
+    if (options.requireHwid === true) {
+      return { ...base, allowed: false, reason: 'activation-hwid-required' };
+    }
     if (limit > 0 && isSubscriptionDeviceLimitEnforced() && isSubscriptionDeviceHwidRequired()) {
       return { ...base, allowed: false, reason: 'hwid-required' };
     }
@@ -2593,9 +2646,13 @@ function getSubscriptionNoticeTitle(kind) {
 }
 
 function buildSubscriptionNoticeEntry(kind) {
-  const title = getSubscriptionNoticeTitle(kind);
+  const title = kind === 'activation-required'
+    ? '🔐 Откройте подписку в VPN-приложении для активации'
+    : getSubscriptionNoticeTitle(kind);
   const noticeUuid = kind === 'device-limit'
     ? '00000000-0000-4000-8000-000000000002'
+    : kind === 'activation-required'
+      ? '00000000-0000-4000-8000-000000000003'
     : '00000000-0000-4000-8000-000000000001';
   const line = `vless://${noticeUuid}@127.0.0.1:1?encryption=none&security=none&type=tcp#${encodeURIComponent(title)}`;
   return {
@@ -2614,6 +2671,45 @@ function buildSubscriptionNoticeEntry(kind) {
       enabled: false
     }
   };
+}
+
+async function activateClientOnFirstDevice(clientRow) {
+  if (!isClientActivationPending(clientRow)) return { client: clientRow, activated: false };
+
+  const startedAt = Date.now();
+  const expiryTime = expiryAfterActivationDays(clientRow.duration_days, startedAt);
+  const claimed = db.prepare(`
+    UPDATE clients
+    SET activation_started_at = ?, expiry_time = ?, activation_sync_pending = 1
+    WHERE id = ? AND start_on_activation = 1 AND activation_started_at = 0 AND enabled = 1
+  `).run(startedAt, expiryTime, clientRow.id);
+  const activeClient = db.prepare('SELECT * FROM clients WHERE id = ?').get(clientRow.id);
+  if (!activeClient) throw new Error('Клиент не найден во время активации.');
+
+  // Another subscription refresh may win the race. In either case take the
+  // persisted client state, so all concurrent app refreshes see one deadline.
+  Object.assign(clientRow, activeClient);
+  if (!claimed.changes) return { client: clientRow, activated: false };
+
+  // The account existed on remote nodes in a disabled state. Enable it only
+  // after a real device has presented a valid HWID and a final expiry exists.
+  return { client: clientRow, activated: true };
+}
+
+const activationSyncJobs = new Map();
+async function syncActivatedClient(clientRow) {
+  if (!Number(clientRow.activation_sync_pending)) return true;
+  if (activationSyncJobs.has(clientRow.id)) return activationSyncJobs.get(clientRow.id);
+  const job = (async () => {
+    const fresh = db.prepare('SELECT * FROM clients WHERE id = ?').get(clientRow.id);
+    if (!fresh) return false;
+    const result = await updateClientEverywhere(fresh, { expiry_time: fresh.expiry_time, duration_days: fresh.duration_days });
+    if (result.failed) return false;
+    db.prepare('UPDATE clients SET activation_sync_pending = 0 WHERE id = ? AND expiry_time = ?').run(fresh.id, fresh.expiry_time);
+    return true;
+  })();
+  activationSyncJobs.set(clientRow.id, job);
+  try { return await job; } finally { activationSyncJobs.delete(clientRow.id); }
 }
 
 function normalizeSubscriptionPolicyNodeIds(value) {
@@ -2833,10 +2929,45 @@ async function ensureSubscriptionPolicyNodesForClient(clientRow, nodeIds, option
 }
 
 async function buildSubscriptionEntriesForRequest(req, res, clientRow, options = {}) {
-  const expired = isClientExpired(clientRow);
+  // Refresh after any earlier asynchronous route work; a concurrent request
+  // may already have committed the one-time activation.
+  Object.assign(clientRow, db.prepare('SELECT * FROM clients WHERE id = ?').get(clientRow.id));
+  const activationPending = isClientActivationPending(clientRow);
+  let expired = isClientExpired(clientRow);
+  if (activationPending && (req.method !== 'GET' || /text\/html/i.test(req.get('accept') || ''))) {
+    return { entries: [buildSubscriptionNoticeEntry('activation-required')], deviceState: {}, accessState: 'activation-pending', subscriptionExpiryOverride: 0 };
+  }
   // After expiry, a refresh may update an already-known device's last_seen, but
   // it must not consume a fresh activation slot while access is suspended.
-  const deviceState = registerSubscriptionDevice(req, clientRow, { allowNew: !expired });
+  const deviceState = registerSubscriptionDevice(req, clientRow, {
+    allowNew: !expired && Number(clientRow.enabled) !== 0 && req.method === 'GET',
+    forceTracking: activationPending,
+    requireHwid: activationPending
+  });
+
+  if (activationPending) {
+    res.setHeader('x-nexus-activation-required', 'hwid');
+    if (!deviceState.allowed || !deviceState.hasHwid || !deviceState.registered || Number(clientRow.enabled) === 0 || req.method !== 'GET' || /text\/html/i.test(req.get('accept') || '')) {
+      // A browser can view the branded subscription portal, but must not start
+      // a trial. Only a VPN app that sends a valid HWID gets the first device
+      // slot and starts the timer.
+      return {
+        entries: [buildSubscriptionNoticeEntry('activation-required')],
+        deviceState,
+        accessState: 'activation-pending',
+        subscriptionExpiryOverride: 0
+      };
+    }
+    await activateClientOnFirstDevice(clientRow);
+    expired = isClientExpired(clientRow);
+  }
+
+  if (Number(clientRow.activation_sync_pending) && !(await syncActivatedClient(clientRow))) {
+    res.status(503);
+    res.setHeader('Retry-After', '15');
+    return { entries: [], deviceState, accessState: 'activation-sync-pending', subscriptionExpiryOverride: 0 };
+  }
+
   // Expiry is the primary access state. Do not tell a supported app that the
   // HWID limit was exceeded when the only real reason for the service notice
   // is an expired subscription.
@@ -4023,6 +4154,7 @@ function remnawaveUserConflictError(node, username, current, client) {
 }
 
 async function ensureRemnawaveUserOnNode(node, client, opts = {}) {
+  if (isClientActivationPending(client)) opts = { ...opts, enabled: false, expiry_time: 0 };
   let map = opts.map || db.prepare('SELECT * FROM client_nodes WHERE client_id = ? AND node_id = ?').get(client.id, node.id);
   const requestedUsername = normalizeRemnawaveUsername(opts.email || client.login || map?.remote_email, client);
 
@@ -4755,6 +4887,7 @@ function h1CloudRemoteToImportRecord(node, remote) {
 }
 
 async function ensureH1CloudClientOnNode(node, client, opts = {}) {
+  if (isClientActivationPending(client)) opts = { ...opts, enabled: false, expiry_time: 0 };
   let map = db.prepare('SELECT * FROM client_nodes WHERE client_id = ? AND node_id = ?').get(client.id, node.id);
   const email = String(opts.email || client.login || map?.remote_email || '').trim();
   if (!email) throw new Error('H1Cloud: у клиента нет login/name.');
@@ -7812,18 +7945,21 @@ async function buildRemnawaveSubscriptionEntries(row, clientRow, includeOffline 
   if (!includeOffline && String(row?.last_status || '') === 'offline') return [];
 
   let subscriptionUrl = String(row?.remote_sub_url || '').trim();
-  if (!subscriptionUrl && row?.remote_uuid) {
+  // Refresh quota usage even when the subscription URL is already saved.
+  // Previously this branch ran only once, leaving names such as 0.3/50 GB stale.
+  if (row?.remote_uuid && (!subscriptionUrl || shouldRefreshSubscriptionUsage())) {
     try {
-      const user = await getRemnawaveUserByUuid(row, row.remote_uuid, Math.min(FETCH_TIMEOUT_MS, 8000));
-      subscriptionUrl = String(user?.subscriptionUrl || '').trim();
-      if (subscriptionUrl && row?.client_node_id) {
-        db.prepare('UPDATE client_nodes SET remote_sub_url = ?, used_bytes = ?, download_bytes = ? WHERE id = ?')
-          .run(
-            subscriptionUrl,
-            getRemnawaveUsedTrafficBytes(user, row?.used_bytes || 0),
-            getRemnawaveUsedTrafficBytes(user, row?.download_bytes || 0),
-            row.client_node_id
-          );
+      const user = await getRemnawaveUserByUuid(row, row.remote_uuid, SUBSCRIPTION_STATS_TIMEOUT_MS);
+      if (user) {
+        subscriptionUrl = normalizeRemnawaveSubscriptionUrl(row, user.subscriptionUrl || subscriptionUrl);
+        const usedBytes = getRemnawaveUsedTrafficBytes(user, row?.used_bytes || 0);
+        // Update this request's row as well as SQLite BEFORE building the remark.
+        // A legitimate remote reset to zero must not fall back to the old value.
+        Object.assign(row, { remote_sub_url: subscriptionUrl, upload_bytes: 0, download_bytes: usedBytes, used_bytes: usedBytes });
+        if (row?.client_node_id) {
+          db.prepare('UPDATE client_nodes SET remote_sub_url = ?, upload_bytes = 0, used_bytes = ?, download_bytes = ? WHERE id = ?')
+            .run(subscriptionUrl, usedBytes, usedBytes, row.client_node_id);
+        }
       }
     } catch (err) {
       console.error(`Remnawave user refresh failed (${row?.node_id || row?.id}):`, err.message || err);
@@ -7947,6 +8083,7 @@ async function buildSubscriptionEntryForRow(row, clientRow, includeOffline = tru
 }
 
 async function buildSubscriptionEntries(clientRow, includeOffline = true, options = {}) {
+  if (isClientActivationPending(clientRow)) return [];
   // Подписка/JSON должны открываться быстро: Happ может зависать, если ждать каждый узел последовательно.
   // Поэтому узлы собираются параллельно, а live-статистика имеет короткий timeout.
   const mappedRows = db.prepare(`
@@ -9482,11 +9619,11 @@ function buildSubscriptionPortalModel(entries, clientRow) {
     login: String(clientRow?.login || ''),
     displayName: String(clientRow?.display_name || clientRow?.login || ''),
     enabled,
-    statusText: enabled ? 'Активна' : (expired ? 'Срок истёк' : 'Отключена'),
+    statusText: isClientActivationPending(clientRow) ? 'Ждёт активации' : (enabled ? 'Активна' : (expired ? 'Срок истёк' : 'Отключена')),
     deviceLimitText: getClientDeviceUsageText(clientRow),
     expiryTimeMs: summary.expiryTimeMs,
-    expiryText: formatSubscriptionExpiry(summary.expiryTimeMs),
-    daysLeftText: getDaysLeftText(summary.expiryTimeMs),
+    expiryText: isClientActivationPending(clientRow) ? 'После привязки устройства' : formatSubscriptionExpiry(summary.expiryTimeMs),
+    daysLeftText: isClientActivationPending(clientRow) ? `${clientRow.duration_days} дн. после активации` : getDaysLeftText(summary.expiryTimeMs),
     uploadBytes: summary.uploadBytes,
     downloadBytes: summary.downloadBytes,
     usedBytes: summary.usedBytes,
@@ -10447,6 +10584,7 @@ async function updateH1Cloud3xuiProtectedClient(node, lookupEmail, payload) {
 }
 
 async function ensureH1Cloud3xuiClientOnNode(node, client, opts = {}) {
+  if (isClientActivationPending(client)) opts = { ...opts, enabled: false, expiry_time: 0 };
   let map = opts.map || db.prepare('SELECT * FROM client_nodes WHERE client_id = ? AND node_id = ?').get(client.id, node.id);
   const inbound = await getInbound(node);
   const email = String(opts.email || client.login || map?.remote_email || '').trim();
@@ -10589,6 +10727,7 @@ function updateLocalClientNodeState(node, map, values = {}) {
 }
 
 async function updateClientOnNode(node, map, client, opts = {}) {
+  if (isClientActivationPending(client)) opts = { ...opts, enabled: false, expiry_time: 0 };
   if (isRemnawaveNode(node)) return updateRemnawaveUserOnNode(node, map, client, opts);
   if (isH1CloudNode(node)) return updateH1CloudClientOnNode(node, map, client, opts);
   if (isH1Cloud3xuiNode(node)) return ensureH1Cloud3xuiClientOnNode(node, client, { ...opts, map, h1cloud_allow_client_update: true });
@@ -10661,16 +10800,19 @@ async function updateClientOnNode(node, map, client, opts = {}) {
 }
 
 async function updateClientEverywhere(client, opts = {}) {
+  let failed = 0;
   const mappings = db.prepare('SELECT * FROM client_nodes WHERE client_id = ?').all(client.id);
   for (const map of mappings) {
     try {
       const node = db.prepare('SELECT * FROM nodes WHERE id = ?').get(map.node_id);
       if (!node) continue;
-      await updateClientOnNode(node, map, client, opts);
+      await updateClientOnNode(node, map, client, { node_enabled: map.enabled !== 0, ...opts });
     } catch (err) {
+      failed++;
       console.error('Update remote client failed:', err.message);
     }
   }
+  return { failed };
 }
 
 function getClientNodeEffectiveLimitIp(map, client, fallback = 1) {
@@ -11225,6 +11367,7 @@ function buildTopClientPeriodUsageReport(period = 'week', limit = 500) {
 }
 
 async function ensureAggregatorClientOnNode(node, client, opts = {}) {
+  if (isClientActivationPending(client)) opts = { ...opts, enabled: false, expiry_time: 0 };
   if (isRemnawaveNode(node)) return ensureRemnawaveUserOnNode(node, client, opts);
   if (isH1CloudNode(node)) return ensureH1CloudClientOnNode(node, client, opts);
   if (isH1Cloud3xuiNode(node)) return ensureH1Cloud3xuiClientOnNode(node, client, opts);
@@ -15877,11 +16020,15 @@ app.post('/clients', requireAuth, async (req, res) => {
     const cleanLimitIp = Math.max(0, Number(limit_ip ?? 0));
     const cleanDeviceLimit = Math.max(0, Number(device_limit ?? 1));
     const cleanDurationDays = Math.max(0, Number(duration_days || 0));
+    if (!Number.isSafeInteger(cleanDurationDays) || cleanDurationDays > 36500) throw new Error('Срок должен быть целым числом от 0 до 36500 дней.');
     const cleanTrafficGb = Math.max(0, Number(traffic_gb || 0));
     const totalGbBytes = toTotalGbBytes(cleanTrafficGb);
     const groupId = normalizeClientGroupId(req.body.group_id);
+    const startOnActivation = req.body.start_on_activation === '1' && cleanDurationDays > 0 ? 1 : 0;
 
-    const expiryTime = cleanDurationDays > 0
+    const expiryTime = startOnActivation
+      ? 0
+      : cleanDurationDays > 0
       ? expiryAtMidnightAfterDays(cleanDurationDays)
       : 0;
 
@@ -15890,9 +16037,9 @@ app.post('/clients', requireAuth, async (req, res) => {
     const subSlug = sharedSubId;
 
     const clientInfo = db.prepare(`
-      INSERT INTO clients (login, display_name, uuid, sub_slug, duration_days, traffic_gb, limit_ip, device_limit, expiry_time, comment, group_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(cleanLogin, cleanDisplayName, uuid, subSlug, cleanDurationDays, cleanTrafficGb, cleanLimitIp, cleanDeviceLimit, expiryTime, cleanComment, groupId);
+      INSERT INTO clients (login, display_name, uuid, sub_slug, duration_days, traffic_gb, limit_ip, device_limit, expiry_time, start_on_activation, activation_started_at, comment, group_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+    `).run(cleanLogin, cleanDisplayName, uuid, subSlug, cleanDurationDays, cleanTrafficGb, cleanLimitIp, cleanDeviceLimit, expiryTime, startOnActivation, cleanComment, groupId);
 
     const clientId = clientInfo.lastInsertRowid;
     replaceClientTags(clientId, req.body.tag_ids);
@@ -15916,13 +16063,18 @@ app.post('/clients', requireAuth, async (req, res) => {
         limit_ip: cleanLimitIp,
         expiry_time: expiryTime,
         duration_days: cleanDurationDays,
-        enabled: true,
+        // Pending trial credentials exist on the selected nodes, but remain
+        // disabled until the subscription is requested by a HWID-capable app.
+        enabled: startOnActivation === 0,
         comment: cleanComment,
         node_enabled: true
       });
     }
 
-    res.redirect('/clients?message=' + encodeURIComponent('Клиент создан на выбранных узлах'));
+    const message = startOnActivation
+      ? 'Клиент создан. Срок начнётся после первого добавления подписки в приложение с поддержкой HWID.'
+      : 'Клиент создан на выбранных узлах';
+    res.redirect('/clients?message=' + encodeURIComponent(message));
   } catch (err) {
     res.redirect('/clients?error=' + encodeURIComponent(String(err.message || err)));
   }
@@ -16252,6 +16404,10 @@ app.get('/clients/:id/summary.json', requireAuth, async (req, res) => {
       statusKey = 'offline';
       statusLabel = 'Отключён';
       statusText = 'Клиент отключён и не может подключаться.';
+    } else if (isClientActivationPending(client)) {
+      statusKey = 'warning';
+      statusLabel = 'Ждёт активации';
+      statusText = `Период ${client.duration_days} дн. начнётся после привязки устройства.`;
     } else if (daysLeft === 0) {
       statusKey = 'expired';
       statusLabel = 'Срок истёк';
@@ -16343,7 +16499,7 @@ app.get('/clients/:id/summary.json', requireAuth, async (req, res) => {
         statusKey,
         statusLabel,
         statusText,
-        expiryText: expiryMs > 0 ? new Date(expiryMs).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '∞',
+        expiryText: isClientActivationPending(client) ? 'После активации устройства' : expiryMs > 0 ? new Date(expiryMs).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '∞',
         daysLeft: daysLeft === null ? '∞' : daysLeft,
         durationDays: client.duration_days || 0,
         trafficGb: client.traffic_gb || 0,
@@ -16420,15 +16576,12 @@ app.post('/clients/:id/edit', requireAuth, async (req, res) => {
     const deviceLimit = Math.max(0, Number(req.body.device_limit ?? client.device_limit ?? 1));
     const rawDurationDays = String(req.body.duration_days ?? '').trim();
     const durationWasChanged = rawDurationDays !== '';
-    const durationDays = durationWasChanged
-      ? Math.max(0, Number(rawDurationDays || 0))
-      : Math.max(0, Number(client.duration_days || 0));
+    const term = clientTermForEdit(client, req.body, countSubscriptionDevices(client.id));
+    const durationDays = term.days;
     const trafficGb = Math.max(0, Number(req.body.traffic_gb || 0));
     const comment = String(req.body.comment || "").trim();
     const groupId = normalizeClientGroupId(req.body.group_id);
-    const expiryTime = durationWasChanged
-      ? (durationDays > 0 ? expiryAtMidnightAfterDays(durationDays) : 0)
-      : Math.max(0, Number(client.expiry_time || 0));
+    const expiryTime = term.expiry;
 
     const h1BaseChangedFields = [];
     if (!sameText(login, client.login)) h1BaseChangedFields.push('email');
@@ -16443,9 +16596,9 @@ app.post('/clients/:id/edit', requireAuth, async (req, res) => {
 
     db.prepare(`
       UPDATE clients
-      SET login = ?, display_name = ?, limit_ip = ?, device_limit = ?, duration_days = ?, traffic_gb = ?, expiry_time = ?, comment = ?, group_id = ?
+      SET login = ?, display_name = ?, limit_ip = ?, device_limit = ?, duration_days = ?, traffic_gb = ?, expiry_time = ?, comment = ?, group_id = ?, start_on_activation = ?
       WHERE id = ?
-    `).run(login, displayName, limitIp, deviceLimit, durationDays, trafficGb, expiryTime, comment, groupId, clientId);
+    `).run(login, displayName, limitIp, deviceLimit, durationDays, trafficGb, expiryTime, comment, groupId, term.startOnActivation, clientId);
     replaceClientTags(clientId, req.body.tag_ids);
 
     const updatedClient = db.prepare('SELECT * FROM clients WHERE id = ?').get(clientId);
@@ -16527,8 +16680,8 @@ app.post('/clients/:id/extend', requireAuth, async (req, res) => {
     if (!client) throw new Error('Клиент не найден');
 
     const base = client.expiry_time && client.expiry_time > Date.now() ? client.expiry_time : Date.now();
-    const expiryTime = expiryAtMidnightAfterDays(days, base);
-    const durationDays = Math.max(0, Number(client.duration_days || days));
+    const expiryTime = isClientActivationPending(client) ? 0 : expiryAtMidnightAfterDays(days, base);
+    const durationDays = isClientActivationPending(client) ? Number(client.duration_days) + days : Math.max(0, Number(client.duration_days || days));
 
     db.prepare('UPDATE clients SET expiry_time = ?, duration_days = ? WHERE id = ?').run(expiryTime, durationDays, clientId);
 
@@ -19733,4 +19886,8 @@ app.listen(PORT, () => {
   startTelegramManagerBot();
   setTimeout(() => { enforceVpnClientExpirations().catch(err => console.error('VPN expiry sweep failed:', err)); }, 15000);
   setInterval(() => { enforceVpnClientExpirations().catch(err => console.error('VPN expiry sweep failed:', err)); }, 60000).unref();
+  setInterval(() => {
+    const rows = db.prepare('SELECT * FROM clients WHERE activation_sync_pending = 1 LIMIT 20').all();
+    for (const row of rows) syncActivatedClient(row).catch(err => console.error('Activation sync failed:', err.message));
+  }, 30000).unref();
 });

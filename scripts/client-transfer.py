@@ -274,6 +274,9 @@ def export_clients(db_path: Path) -> dict[str, Any]:
                 "limitIp": clamp_int(row_value(row, "limit_ip"), 0),
                 "deviceLimit": clamp_int(row_value(row, "device_limit"), 1),
                 "expiryTime": clamp_int(row_value(row, "expiry_time"), 0),
+                "startOnActivation": bool_int(row_value(row, "start_on_activation"), 0),
+                "activationStartedAt": clamp_int(row_value(row, "activation_started_at"), 0),
+                "activationSyncPending": bool_int(row_value(row, "activation_sync_pending"), 0),
                 "enabled": bool_int(row_value(row, "enabled"), 1),
                 "comment": clean_text(row_value(row, "comment"), "", 16_384),
                 "flow": clean_text(row_value(row, "flow"), "", 500),
@@ -473,6 +476,10 @@ def validate_document(document: dict[str, Any]) -> tuple[list[dict[str, Any]], d
             # limitIp keeps imports from the former unified format compatible.
             "deviceLimit": clamp_int(get_first(raw, "deviceLimit", "device_limit", "limitIp", "limit_ip"), 1),
             "expiryTime": clamp_int(get_first(raw, "expiryTime", "expiry_time"), 0),
+            "startOnActivation": bool_int(get_first(raw, "startOnActivation", "start_on_activation"), 0),
+            "activationStartedAt": clamp_int(get_first(raw, "activationStartedAt", "activation_started_at"), 0),
+            "activationSyncPending": bool_int(get_first(raw, "activationSyncPending", "activation_sync_pending"), 0),
+            "activationMetadataPresent": "startOnActivation" in raw or "start_on_activation" in raw,
             "enabled": bool_int(get_first(raw, "enabled"), 1),
             "comment": clean_text(get_first(raw, "comment"), "", 16_384),
             "flow": clean_text(get_first(raw, "flow"), "", 500),
@@ -552,6 +559,8 @@ def find_existing_clients(conn: sqlite3.Connection, client: dict[str, Any]) -> l
 
 
 def column_value_map(client: dict[str, Any], available: set[str]) -> dict[str, Any]:
+    if client.get("startOnActivation") and not {"start_on_activation", "activation_started_at"}.issubset(available):
+        raise TransferError("Сначала обновите целевую панель: она не поддерживает отложенную активацию клиента.")
     candidates = {
         "login": client["login"],
         "display_name": client["displayName"],
@@ -562,6 +571,9 @@ def column_value_map(client: dict[str, Any], available: set[str]) -> dict[str, A
         "limit_ip": client["limitIp"],
         "device_limit": client["deviceLimit"],
         "expiry_time": client["expiryTime"],
+        "start_on_activation": client["startOnActivation"],
+        "activation_started_at": client["activationStartedAt"],
+        "activation_sync_pending": client.get("activationSyncPending", 0),
         "enabled": client["enabled"],
         "comment": client["comment"],
         "flow": client["flow"],
@@ -584,6 +596,11 @@ def create_client(conn: sqlite3.Connection, client: dict[str, Any], columns: set
 
 def update_client(conn: sqlite3.Connection, client_id: int, client: dict[str, Any], columns: set[str]) -> None:
     values = column_value_map(client, columns)
+    if not client.get("activationMetadataPresent"):
+        existing = conn.execute("SELECT * FROM clients WHERE id = ?", (client_id,)).fetchone()
+        if row_value(existing, "start_on_activation", 0):
+            for key in ("start_on_activation", "activation_started_at", "activation_sync_pending", "expiry_time", "duration_days"):
+                values.pop(key, None)
     # Keep the target database's original creation time for existing clients.
     values.pop("created_at", None)
     names = list(values)

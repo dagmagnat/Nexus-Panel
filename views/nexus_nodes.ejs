@@ -1,0 +1,40 @@
+<%- include('partials_header', { pageTitle: 'Nexus Node', pageSubtitle: 'Безопасно присоединяйте собственные VPN-ноды через исходящее HTTPS-соединение', activePage: 'nexus_nodes' }) %>
+
+<% if (message) { %><div class="alert ok"><%= message %></div><% } %>
+<% if (error) { %><div class="alert err"><%= error %></div><% } %>
+
+<section class="card mobile-never-collapse">
+  <h2>Добавить ноду</h2>
+  <p class="muted">Создайте одноразовый код, затем запустите агент на VPS. Панель не открывает на ноде административный порт: агент сам подключается по HTTPS.</p>
+  <form method="post" action="/nexus-nodes/enrollments" class="stage11-panel-mini-form">
+    <label><span>Название</span><input name="name" required maxlength="100" placeholder="finland-01"></label>
+    <label><span>Срок кода</span><select name="expires_minutes"><option value="15">15 минут</option><option value="30">30 минут</option><option value="60">60 минут</option></select></label>
+    <button type="submit" class="btn-main">Создать код подключения</button>
+  </form>
+  <% if (enrollmentToken) { %>
+    <div class="alert ok" style="margin-top:16px"><strong>Одноразовый код для <%= enrollmentName || 'ноды' %>:</strong><br><code style="user-select:all;word-break:break-all"><%= enrollmentToken %></code><p>На VPS: <code>sudo node agent.js enroll --panel https://ваш-домен --token '…' --name '<%= enrollmentName %>'</code></p></div>
+  <% } %>
+</section>
+
+<section class="card mobile-never-collapse" style="margin-top:16px">
+  <h2>Подключённые ноды</h2>
+  <% if (!nodes.length) { %><p class="muted">Пока нет присоединённых Nexus Node.</p><% } else { %>
+    <div style="overflow:auto"><table class="table"><thead><tr><th>Нода</th><th>Статус</th><th>Агент</th><th>Последняя связь</th><th>Очередь</th><th></th></tr></thead><tbody>
+      <% nodes.forEach(node => { %><tr>
+        <td><strong><%= node.name %></strong><br><small class="muted"><%= node.id %></small></td>
+        <td><%= node.revoked ? 'Отозвана' : (node.online ? 'Онлайн' : 'Офлайн') %></td>
+        <td><%= node.agent_version || '—' %></td>
+        <td><%= node.last_seen_at_ms ? new Date(Number(node.last_seen_at_ms)).toLocaleString('ru-RU') : '—' %></td>
+        <td><%= node.pending_operations || 0 %></td>
+        <td><% if (!node.revoked) { %><form method="post" action="/nexus-nodes/<%= node.id %>/health-check" style="display:inline"><button class="btn-secondary" type="submit">Проверить</button></form> <form method="post" action="/nexus-nodes/<%= node.id %>/revoke" style="display:inline" onsubmit="return confirm('Отозвать ноду? Её агент больше не сможет подключиться.');"><button class="btn-danger" type="submit">Отозвать</button></form><% } %></td>
+      </tr><% }) %>
+    </tbody></table></div>
+  <% } %>
+</section>
+
+<section class="card mobile-never-collapse" style="margin-top:16px">
+  <h2>Что уже работает</h2>
+  <p class="muted">Одноразовое присоединение, HMAC-подпись каждого запроса, защита от повторной отправки, heartbeat, отзыв ноды и идемпотентная очередь. API может поставить <code>health.check</code>, <code>xray.test-config</code> или <code>xray.apply-config</code>; обычные 3x-ui и Remnawave-ноды не изменены.</p>
+</section>
+
+<%- include('partials_footer') %>

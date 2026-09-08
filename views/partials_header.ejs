@@ -57,11 +57,11 @@
     return '<svg class="nexus-icon' + (cls ? ' ' + cls : '') + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (NEXUS_ICONS[name] || '') + '</svg>';
   }
   const currentPath = typeof activePage !== 'undefined' ? activePage : '';
-  const moreNavActive = ['more', 'settings', 'redirects', 'diagnostics', 'telegram_bot'].includes(currentPath);
+  const moreNavActive = ['more', 'settings', 'redirects', 'diagnostics', 'telegram_bot', 'nexus_nodes'].includes(currentPath);
   const sectionLabels = {
     dashboard: 'Обзор', nodes: 'Инфраструктура', clients: 'Доступ',
     routing: 'Сеть', redirects: 'Сеть', diagnostics: 'Система', telegram_bot: 'Интеграции',
-    settings: 'Система', more: 'Nexus Panel'
+    settings: 'Система', nexus_nodes: 'Инфраструктура', more: 'Nexus Panel'
   };
 %>
 <body class="nexus-spectrum theme-classic page-<%= currentPath || 'app' %> clients-view-<%= typeof clientsViewMode !== 'undefined' ? clientsViewMode : 'modern' %> mobile-nav-<%= typeof panelMobileNavMode !== 'undefined' ? panelMobileNavMode : 'bottom' %> mobile-size-<%= typeof panelMobileUiScale !== 'undefined' ? panelMobileUiScale : 'compact' %>">
@@ -85,6 +85,7 @@
           <span class="spectrum-nav-label">Основное</span>
           <a href="/dashboard" class="<%= currentPath === 'dashboard' ? 'active' : '' %>"><span class="nav-icon"><%- nexusIcon('dashboard') %></span><span>Дашборд</span></a>
           <a href="/nodes" class="<%= currentPath === 'nodes' ? 'active' : '' %>"><span class="nav-icon"><%- nexusIcon('nodes') %></span><span>Узлы</span></a>
+          <% if (typeof nexusNodeEnabled !== 'undefined' && nexusNodeEnabled) { %><a href="/nexus-nodes" class="<%= currentPath === 'nexus_nodes' ? 'active' : '' %>"><span class="nav-icon"><%- nexusIcon('nodes') %></span><span>Nexus Node · эксперимент</span></a><% } %>
           <a href="/clients" class="<%= currentPath === 'clients' ? 'active' : '' %>"><span class="nav-icon"><%- nexusIcon('clients') %></span><span>Клиенты</span></a>
         </div>
         <div class="spectrum-nav-group">
