@@ -3380,3 +3380,29 @@ body.client-modal-open { overflow: hidden; overscroll-behavior: none; }
   #topUsageDetailModal .top-usage-node-list { padding-bottom: 12px; }
   .expiry-list .dashboard-client-card { min-height: 128px; }
 }
+.client-usage-readable { white-space: pre-line; overflow-wrap: anywhere; line-height: 1.4; }
+.is-limit-exhausted { color: var(--red, #ff527a) !important; }
+.quota-toolbar { flex-wrap: wrap; }
+.quota-toolbar > label { flex: 1 1 150px; min-width: 0; }
+.quota-client-row { display: grid; grid-template-columns: minmax(100px, 1fr) minmax(0, 2fr); gap: 12px; padding: 12px; border-bottom: 1px solid var(--line); color: inherit; text-decoration: none; }
+.quota-client-row span { white-space: pre-line; overflow-wrap: anywhere; }
+.page-clients .clients-modern-table td.client-usage-readable { white-space: pre-line !important; overflow: hidden; overflow-wrap: anywhere; }
+.page-dashboard .quota-toolbar { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: end; }
+.page-dashboard .quota-toolbar label { display: grid; gap: 5px; font-size: 12px; }
+.page-dashboard .quota-toolbar select, .page-dashboard .quota-toolbar input { width: 100%; min-width: 0; font-size: 12px; }
+@media (max-width: 900px) {
+  .page-clients #clientUsageRefreshStatus { grid-column: 1 / -1; white-space: nowrap; }
+  .page-dashboard .quota-toolbar { grid-template-columns: minmax(0, 1fr); }
+}
+@media (min-width: 901px) {
+  .page-clients .client-protocol-toolbar .clients-toolbar-actions { flex-wrap: wrap; }
+  .page-clients .client-protocol-toolbar .clients-toolbar-actions > * { font-size: 12px; }
+  .page-clients .client-directory-control > span { font-size: 11px; }
+  .page-clients .client-directory-control select { font-size: 12px; }
+  .page-clients .clients-modern-table td { font-size: 12px; }
+  .page-clients .clients-modern-table th { font-size: 10px; }
+  .page-clients .clients-modern-table .modern-online-state,
+  .page-clients .clients-modern-table .modern-comment-cell,
+  .page-clients .clients-modern-table .modern-term,
+  .page-clients .clients-modern-table .client-usage-readable { font-size: 12px; }
+}
