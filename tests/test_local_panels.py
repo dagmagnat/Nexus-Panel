@@ -1,5 +1,7 @@
 """Unit/dry-run tests: never start Docker, bind external ports, or edit /opt."""
 import copy
+import io
+import contextlib
 import importlib.util
 import json
 from pathlib import Path
@@ -76,6 +78,33 @@ class LocalPanelsTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "занят"): m.assert_ports_free([(8443, "udp")])
             factory.return_value.close.assert_called_once()
 
+    def test_enter_selects_default_free_xray_port(self):
+        with patch('builtins.input', return_value=''), patch.object(m, 'assert_ports_free') as check:
+            self.assertEqual(m.choose_ports('Xray', 8443, ('tcp', 'udp'), {3000}), [(8443, 'tcp'), (8443, 'udp')])
+            check.assert_called_once_with([(8443, 'tcp'), (8443, 'udp')])
+
+    def test_auto_skips_reserved_and_busy_ports(self):
+        with patch('builtins.input', return_value=''), patch.object(m, 'assert_ports_free', side_effect=[ValueError('busy'), None]) as check:
+            self.assertEqual(m.choose_ports('HTTPS', 2053, ('tcp',), {2053}), [(2055, 'tcp')])
+            self.assertEqual(check.call_args_list[0].args[0], [(2054, 'tcp')])
+
+    def test_bare_manual_vpn_port_expands_both_protocols(self):
+        with patch('builtins.input', return_value='32669'), patch.object(m, 'assert_ports_free'):
+            self.assertEqual(m.choose_ports('Xray', 8443, ('tcp', 'udp'), set()), [(32669, 'tcp'), (32669, 'udp')])
+
+    def test_invalid_and_reserved_manual_input_reprompts(self):
+        with patch('builtins.input', side_effect=['bad', '3000', '2053/udp', '']), patch.object(m, 'assert_ports_free'):
+            self.assertEqual(m.choose_ports('HTTPS', 2053, ('tcp',), {3000}), [(2053, 'tcp')])
+
+    def test_auto_exhaustion_allows_manual_retry(self):
+        with patch('builtins.input', side_effect=['', '32669']), patch.object(m, 'assert_ports_free'):
+            self.assertEqual(m.choose_ports('HTTPS', 2053, ('tcp',), set(range(2053, 2309))), [(32669, 'tcp')])
+
+    def test_port_prompt_eof_cancels(self):
+        with patch('builtins.input', side_effect=EOFError), patch.object(m, 'assert_ports_free') as check:
+            with self.assertRaises(EOFError): m.choose_ports('HTTPS', 2053, ('tcp',), set())
+            check.assert_not_called()
+
     def test_provider_networks_isolate_database_and_no_admin_public_ports(self):
         config = m.provider_compose(state(), self.root)
         self.assertEqual(config["name"], "nexus-local-test")
@@ -108,6 +137,162 @@ class LocalPanelsTests(unittest.TestCase):
         with self.assertRaises(ValueError): m.validate_names(s, self.args)
         s["providers"]["3xui"].update(mode="ip", host="192.0.2.1", port=3000)
         with self.assertRaises(ValueError): m.validate_names(s, self.args)
+
+    def test_default_sni_ip_ipv6_and_idempotent(self):
+        for host in ('192.0.2.1', '2001:db8::1'):
+            s = state(); s['providers']['3xui'].update(mode='ip', host=host, port=2053)
+            text = '{\n    email admin@example.com\n}\nnexus.example.com {\n}\n'
+            result = m.caddy_default_sni(text, s)
+            self.assertIn('default_sni ' + host, result)
+            self.assertEqual(result.count('default_sni '), 1)
+            self.assertEqual(m.caddy_default_sni(result, s), result)
+            self.assertIn('email admin@example.com', result)
+
+    def test_default_sni_supports_no_global_block_and_preserves_manual_fix(self):
+        s = state(); s['providers']['3xui'].update(mode='ip', host='192.0.2.1', port=2053)
+        result = m.caddy_default_sni('import /etc/caddy/nexus-local/*.caddy\n', s)
+        self.assertTrue(result.startswith('{\n    default_sni 192.0.2.1'))
+        manual = '{\n default_sni 192.0.2.1\n}\n'
+        self.assertEqual(m.caddy_default_sni(manual, s), manual)
+        with self.assertRaises(ValueError): m.caddy_default_sni('{\n default_sni other.example.com\n}\n', s)
+
+    def test_managed_sni_updates_when_ip_changes_and_domains_stay_unchanged(self):
+        s = state(); s['providers']['3xui'].update(mode='ip', host='192.0.2.1', port=2053)
+        rendered = m.caddy_default_sni('{\n email admin@example.com\n}\n', s)
+        s['providers']['3xui']['host'] = '192.0.2.2'
+        rendered = m.caddy_default_sni(rendered, s)
+        self.assertNotIn('192.0.2.1', rendered)
+        self.assertIn('default_sni 192.0.2.2', rendered)
+        self.assertNotIn('default_sni', m.caddy_default_sni(rendered, state()))
+        self.assertEqual(m.caddy_default_sni('example.com {\n}\n', state()), 'example.com {\n}\n')
+
+    def test_caddy_render_recreates_ip_fix_after_update(self):
+        s = state(); s['providers']['3xui'].update(mode='ip', host='192.0.2.1', port=2053)
+        self.save(s)
+        (self.app / 'docker-compose.yml').write_text('services:\n  caddy:\n    image: caddy:2\n')
+        original = '{\n auto_https disable_redirects\n}\nnexus.example.com {\n}\n'
+        for _ in range(2):
+            (self.app / 'Caddyfile').write_text(original)
+            m.render(self.args, self.root)
+            self.assertIn('default_sni 192.0.2.1', (self.app / 'Caddyfile').read_text())
+
+    def xui_fixture(self):
+        self.save()
+        m.private_write(self.root / '3xui/credentials.json', json.dumps({'username': 'user', 'password': 'old-secret', 'path': '/base/'}))
+        (self.root / '3xui/db').mkdir()
+        (self.root / '3xui/db/x-ui.db').write_text('test database')
+
+    def test_cli_aliases_are_installed_idempotently_and_native_command_is_preserved(self):
+        self.save()
+        bin_dir = Path(self.temp.name) / 'bin'; bin_dir.mkdir()
+        (bin_dir / 'x-ui').write_text('# native x-ui menu\n')
+        with patch.object(m, 'require_admin'), patch.object(m.shutil, 'which', return_value=None):
+            m.install_xui_cli(self.args, self.root, bin_dir)
+            m.install_xui_cli(self.args, self.root, bin_dir)
+        self.assertEqual((bin_dir / 'x-ui').read_text(), '# native x-ui menu\n')
+        self.assertIn('--xui-action "${1:-menu}"', (bin_dir / 'xui').read_text())
+        self.assertIn('Nexus managed x-ui CLI: test', (bin_dir / 'x-ui-test').read_text())
+
+    def test_cli_never_shadows_native_command_elsewhere_in_path(self):
+        self.save(); bin_dir = Path(self.temp.name) / 'bin'
+        with patch.object(m, 'require_admin'), patch.object(m.shutil, 'which', side_effect=lambda name: '/usr/bin/x-ui' if name == 'x-ui' else None):
+            m.install_xui_cli(self.args, self.root, bin_dir)
+        self.assertFalse((bin_dir / 'x-ui').exists())
+        self.assertTrue((bin_dir / 'x-ui-test').exists())
+
+    def test_menu_enter_exits_without_mutation(self):
+        self.save()
+        with patch.object(m, 'require_admin'), patch('builtins.input', return_value=''), patch.object(m, 'run') as run:
+            m.xui_action(self.args, self.root, 'menu')
+        run.assert_not_called()
+
+    def test_cli_requires_root_before_docker_or_secret_output(self):
+        with patch.object(m.os, 'geteuid', return_value=1000, create=True), patch.object(m, 'run') as run:
+            with self.assertRaises(ValueError): m.xui_action(self.args, self.root, 'credentials')
+        run.assert_not_called()
+
+    def test_remnawave_only_does_not_install_xui_commands(self):
+        s = state(); s['providers'].pop('3xui'); self.save(s)
+        bin_dir = Path(self.temp.name) / 'bin'
+        with patch.object(m, 'require_admin'):
+            m.install_xui_cli(self.args, self.root, bin_dir)
+        self.assertFalse(bin_dir.exists())
+
+    def test_rejected_stop_does_not_stop_any_service(self):
+        self.save()
+        with patch.object(m, 'require_admin'), patch.object(m, 'ask', return_value='НЕТ'), patch.object(m, 'run') as run:
+            m.xui_action(self.args, self.root, 'stop')
+        run.assert_not_called()
+
+    def test_cli_status_targets_only_xui(self):
+        self.save()
+        with patch.object(m, 'require_admin'), patch.object(m, 'run') as run:
+            m.xui_action(self.args, self.root, 'status')
+        command = run.call_args.args[0]
+        self.assertEqual(command[-3:], ['ps', '-a', 'local-3xui'])
+        self.assertNotIn('pull', command)
+
+    def test_credentials_no_tty_does_not_leak_or_generate_token(self):
+        self.xui_fixture()
+        output = io.StringIO()
+        with patch.object(m, 'require_admin'), patch('builtins.open', side_effect=OSError('no tty')), patch.object(m, 'run') as run, contextlib.redirect_stdout(output):
+            m.show_credentials(self.args, self.root)
+        self.assertNotIn('old-secret', output.getvalue())
+        run.assert_not_called()
+
+    def test_credentials_only_go_to_tty_and_status_does_not_leak(self):
+        self.xui_fixture()
+        class Terminal(io.StringIO):
+            def close(self): pass
+        terminal = Terminal(); output = io.StringIO()
+        with patch.object(m, 'require_admin'), patch('builtins.open', return_value=terminal), patch.object(m, 'run') as run, contextlib.redirect_stdout(output):
+            m.show_credentials(self.args, self.root)
+            m.status(self.args, self.root)
+        self.assertIn('old-secret', terminal.getvalue())
+        self.assertNotIn('old-secret', output.getvalue())
+        run.assert_not_called()
+
+    def test_password_change_backup_and_credentials_persist(self):
+        self.xui_fixture()
+        with patch.object(m, 'ask', side_effect=['new-user', 'ДА']), patch.object(m.getpass, 'getpass', return_value='new-password-123'), patch.object(m, 'show_credentials'), patch.object(m, 'run', side_effect=['container-id', '', 'Username and password updated successfully', '']) as run:
+            m.xui_change(self.args, self.root, 'password')
+        saved = json.loads((self.root / '3xui/credentials.json').read_text())
+        self.assertEqual(saved['password'], 'new-password-123')
+        self.assertEqual(saved['username'], 'new-user')
+        self.assertEqual(run.call_args_list[1].args[0][-2:], ['stop', 'local-3xui'])
+        self.assertEqual(run.call_args_list[-1].args[0][-2:], ['start', 'local-3xui'])
+        backups = list(self.root.glob('xui-settings-backup-*/db/x-ui.db'))
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(backups[0].read_text(), 'test database')
+
+    def test_failed_password_change_keeps_saved_secret_and_restarts(self):
+        self.xui_fixture()
+        with patch.object(m, 'ask', side_effect=['new-user', 'ДА']), patch.object(m.getpass, 'getpass', return_value='new-password-123'), patch.object(m, 'run', side_effect=['container-id', '', 'Failed to update username and password', '']) as run:
+            with self.assertRaises(ValueError): m.xui_change(self.args, self.root, 'password')
+        self.assertEqual(json.loads((self.root / '3xui/credentials.json').read_text())['password'], 'old-secret')
+        self.assertEqual(run.call_args_list[-1].args[0][-2:], ['start', 'local-3xui'])
+
+    def test_token_cancel_never_calls_docker(self):
+        self.xui_fixture()
+        with patch.object(m, 'ask', return_value='НЕТ'), patch.object(m, 'run') as run:
+            m.xui_change(self.args, self.root, 'token')
+        run.assert_not_called()
+
+    def test_token_generation_preserves_stopped_service(self):
+        self.xui_fixture()
+        with patch.object(m, 'ask', return_value='ДА'), patch.object(m, 'show_credentials'), patch.object(m, 'run', side_effect=['', 'apiToken: example-test-token\n']) as run:
+            m.xui_change(self.args, self.root, 'token')
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(json.loads((self.root / '3xui/credentials.json').read_text())['api_token'], 'example-test-token')
+
+    def test_initial_token_created_once_and_not_rotated_by_rerun(self):
+        self.xui_fixture()
+        item = state()['providers']['3xui']; item['supports_api_token'] = True
+        with patch.object(m, 'run', side_effect=['', 'hasDefaultCredential: false\nport: 2053\nwebBasePath: /base/\n', 'apiToken: first-token\n']) as run:
+            m.ensure_3xui_initialized(item, self.root)
+            m.ensure_3xui_initialized(item, self.root)
+        self.assertEqual(run.call_count, 3)
+        self.assertEqual(json.loads((self.root / '3xui/credentials.json').read_text())['api_token'], 'first-token')
 
     def test_render_idempotent_and_recreated_after_nexus_files_replaced(self):
         self.save()
@@ -190,6 +375,10 @@ class LocalPanelsTests(unittest.TestCase):
         self.assertNotIn("apply_providers", update)
         self.assertIn("local_panels_command render", source)
         self.assertIn('"local-panels"', source)
+        shortcuts = source.split('install_shortcut_command() {', 1)[1].split('\n}', 1)[0]
+        self.assertIn('local_panels_command install-cli', shortcuts)
+        result = source.split('print_result() {', 1)[1].split('\n}', 1)[0]
+        self.assertIn('local_panels_command credentials', result)
 
 
 if __name__ == "__main__":

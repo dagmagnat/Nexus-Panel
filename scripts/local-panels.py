@@ -9,12 +9,14 @@ import argparse
 import copy
 import ipaddress
 import hashlib
+import getpass
 import json
 import os
 from pathlib import Path
 import re
 import secrets
 import shutil
+import shlex
 import socket
 import subprocess
 import sys
@@ -151,6 +153,41 @@ def assert_ports_free(bindings):
                 sock.close()
 
 
+def choose_ports(prompt, preferred, protocols, reserved):
+    """Enter selects a free port; explicit input is validated without mutations."""
+    while True:
+        value = ask(prompt + " (Enter — подобрать свободный порт)", "авто").lower()
+        try:
+            if value in ("авто", "auto", ""):
+                # Bounded search; never stop an existing listener or change firewall.
+                for number in range(preferred, min(preferred + 256, 65536)):
+                    if number in reserved:
+                        continue
+                    bindings = [(number, proto) for proto in protocols]
+                    try:
+                        assert_ports_free(bindings)
+                    except ValueError:
+                        continue
+                    break
+                else:
+                    raise ValueError("Свободный порт в автоматическом диапазоне не найден; укажите другой вручную")
+            else:
+                # A bare number is convenient for the common TCP+UDP case.
+                bindings = ([(port(value), proto) for proto in protocols] if value.isdigit()
+                            else [(int(p.split('/')[0]), p.split('/')[1]) for p in vpn_ports(value)])
+                if not bindings or any(proto not in protocols for _, proto in bindings):
+                    raise ValueError("Укажите порт с допустимым протоколом: " + ", ".join(protocols))
+                if any(number in reserved for number, _ in bindings):
+                    raise ValueError("Этот порт зарезервирован для Nexus или другой панели")
+                if protocols == ("tcp",) and len(bindings) != 1:
+                    raise ValueError("Для HTTPS нужен один TCP-порт")
+                assert_ports_free(bindings)
+            print("Выбрано: " + ", ".join(f"{number}/{proto}" for number, proto in bindings))
+            return bindings
+        except ValueError as exc:
+            print(str(exc) + ". Повторите ввод или нажмите Enter для автоподбора.")
+
+
 def read_env(text):
     result = {}
     for line in text.splitlines():
@@ -255,6 +292,29 @@ def caddy_sites(state):
     return "\n\n".join(blocks) + "\n"
 
 
+def caddy_default_sni(text, state):
+    # Browsers omit SNI for IP URLs. Behind Docker NAT Caddy otherwise guesses
+    # its container IP instead of the public IP whose certificate it manages.
+    marker = "# nexus-local-panels default_sni"
+    text = re.sub(r"(?m)^\s*default_sni [^\n]+ " + re.escape(marker) + r"\n", "", text)
+    hosts = {str(ipaddress.ip_address(p["host"])) for p in state["providers"].values() if p["mode"] == "ip"}
+    if not hosts:
+        return text
+    if len(hosts) != 1:
+        raise ValueError("Для нескольких IP нужны отдельные TLS-политики; автоматический default_sni неоднозначен")
+    host = next(iter(hosts))
+    existing = re.search(r"(?m)^\s*default_sni\s+(\S+)", text)
+    if existing:
+        if existing[1] != host:
+            raise ValueError("В Caddyfile уже задан другой default_sni; пользовательская настройка не изменена")
+        return text
+    line = f"    default_sni {host} {marker}\n"
+    opening = re.match(r"(?:\s|#[^\n]*\n)*\{[^\S\n]*\n", text)
+    if opening:
+        return text[:opening.end()] + line + text[opening.end():]
+    return "{\n" + line + "}\n\n" + text
+
+
 def proxy_override(state, root, has_caddy, bind_ip=""):
     sites = {"type": "bind", "source": str(root / "sites"), "target": "/etc/caddy/nexus-local", "read_only": True}
     ports = []
@@ -314,6 +374,12 @@ def ensure_3xui_initialized(item, root):
     shown = run(base + ["-show", "true"], quiet=True)
     if "hasDefaultCredential: false" not in shown or not re.search(r"port:\s*2053\b", shown) or credentials["path"] not in shown:
         raise ValueError("Не подтверждена безопасная инициализация 3x-ui. Публичный запуск остановлен; проверьте совместимость выбранной версии.")
+    if item.get("supports_api_token") and not credentials.get("api_token"):
+        try:
+            credentials["api_token"] = parse_api_token(run(base + ["-getApiToken"], quiet=True))
+            private_write(folder / "credentials.json", json.dumps(credentials, indent=2) + "\n")
+        except (RuntimeError, ValueError):
+            print("API-токен не получен. Вход по логину/паролю доступен; создать токен можно через x-ui token или настройки 3x-ui.")
     private_write(marker, item["version"] + "\n")
 
 
@@ -334,7 +400,7 @@ def apply_providers(state, root):
 def wizard(args, root):
     state = load_state(root, args.instance)
     print("\nДополнительные панели на этом же VPS (существующие внешние панели не меняются)")
-    print("0 — только Nexus / оставить как есть (по умолчанию)\n1 — добавить 3x-ui\n2 — добавить Remnawave\n3 — добавить обе\nr — повторить незавершённый запуск без смены версий")
+    print("0 — только Nexus / оставить как есть (по умолчанию)\n1 — Nexus + 3x-ui\n2 — Nexus + Remnawave\n3 — Nexus + обе дополнительные панели (расширенный вариант)\nr — повторить незавершённый запуск без смены версий")
     choice = ask("Выбор", "0").lower()
     if choice == "0":
         return
@@ -360,17 +426,26 @@ def wizard(args, root):
             if not all('"' + flag + '"' in source for flag in ("listenIP", "webBasePath", "username", "password", "port")):
                 raise ValueError("CLI этой версии 3x-ui несовместим с безопасной инициализацией")
             item["image"] = "ghcr.io/mhsanaei/3x-ui:" + item["version"]
+            item["supports_api_token"] = '"getApiToken"' in source
             choice_mode = ask("3x-ui: 1 — отдельный домен HTTPS; 2 — IP + порт HTTPS (локальный сертификат)", "1")
             if choice_mode not in ("1", "2"):
                 raise ValueError("Неверный режим доступа")
             item["mode"] = "domain" if choice_mode == "1" else "ip"
+            reserved_ports = {args.app_port, 80, 443}
+            for existing in plan["providers"].values():
+                if existing.get("mode") == "ip":
+                    reserved_ports.add(existing["port"])
+                reserved_ports.update(int(p.split('/')[0]) for p in existing.get("vpn_ports", []))
             if item["mode"] == "ip":
                 item["host"] = str(ipaddress.ip_address(ask("Публичный IP сервера")))
-                item["port"] = port(ask("HTTPS-порт панели 3x-ui", "2053"))
+                item["port"] = choose_ports("HTTPS-порт панели 3x-ui", 2053, ("tcp",), reserved_ports)[0][0]
+                reserved_ports.add(item["port"])
                 print("Браузер предупредит о локальном сертификате. Для доверенного HTTPS выберите домен.")
             else:
                 item["host"] = domain(ask("Домен 3x-ui (например xui.example.com)"))
-            item["vpn_ports"] = vpn_ports(ask("Порты Xray для публикации, через запятую", "8443/tcp,8443/udp"))
+            item["vpn_ports"] = [f"{number}/{proto}" for number, proto in
+                                 choose_ports("Порты Xray", 8443, ("tcp", "udp"), reserved_ports)]
+            print("В inbound 3x-ui затем укажите выбранный порт Xray; публикация порта сама inbound не создаёт.")
         else:
             print("Remnawave: отдельный домен с HTTPS обязателен; БД, Redis и backend не публикуются наружу.")
             item.update(mode="domain", host=domain(ask("Домен Remnawave (например rw.example.com)")), image="remnawave/backend:" + item["version"].lstrip("v"))
@@ -398,6 +473,10 @@ def wizard(args, root):
     for kind in new:
         p = plan["providers"][kind]
         print(f"  {kind} {p['version']} — {p['host']} ({p['mode']})")
+        if p.get("mode") == "ip":
+            print(f"    HTTPS-порт панели: {p['port']}")
+        if p.get("vpn_ports"):
+            print("    Порты Xray: " + ", ".join(p["vpn_ports"]))
     print(f"Данные: {root}. Нужны свободные ресурсы VPS. DNS доменов должен указывать на этот сервер.")
     disk = shutil.disk_usage(root.parent if root.parent.exists() else "/opt").free // (1024 ** 3)
     print(f"CPU: {os.cpu_count() or '?'}; свободное место: {disk} ГБ. Для Remnawave: минимум 2 CPU / 2 ГБ RAM / 20 ГБ диска, плюс ресурсы Nexus и Xray.")
@@ -438,12 +517,13 @@ def render(args, root):
     has_caddy = bool(re.search(r"^  caddy:\s*$", base, re.M))
     private_write(root / "sites" / "panels.caddy", caddy_sites(state))
     import_line = "import /etc/caddy/nexus-local/*.caddy"
-    private_write(root / "Caddyfile", import_line + "\n")
+    private_write(root / "Caddyfile", caddy_default_sni(import_line + "\n", state))
     if has_caddy:
         caddyfile = app / "Caddyfile"
         text = caddyfile.read_text(encoding="utf-8")
         if import_line not in text:
-            private_write(caddyfile, text + "\n# nexus-local-panels managed import\n" + import_line + "\n")
+            text += "\n# nexus-local-panels managed import\n" + import_line + "\n"
+        private_write(caddyfile, caddy_default_sni(text, state))
     config = proxy_override(state, root, has_caddy, args.bind_ip)
     config["services"]["caddy"]["container_name"] = args.caddy_container
     private_write(override, json.dumps(config, indent=2) + "\n")
@@ -465,6 +545,8 @@ def status(args, root):
             path = json.loads(file.read_text())["path"]
             print("  Логин/пароль 3x-ui сохранены только в root-файле: " + str(file))
             print("  В Nexus: API/Panel URL http://local-3xui:2053 ; Panel Path " + path)
+            print(f"  Управление: x-ui-{args.instance} (или x-ui / xui, если имена свободны)")
+            print("  Данные входа: x-ui credentials; новый API-токен: x-ui token (с подтверждением)")
         print(f"  {kind} {item['version']}: https://{host}{path}")
     if "remnawave" in state["providers"]:
         print("  Remnawave: создайте администратора сразу при первом входе, затем API-токен и подключите Remnawave Node.")
@@ -472,9 +554,160 @@ def status(args, root):
     print("  Данные этих панелей не входят в обычный backup Nexus — копируйте их отдельно.")
 
 
+def require_admin():
+    if not hasattr(os, "geteuid") or os.geteuid() != 0:
+        raise ValueError("Запустите команду от root: sudo -i")
+
+
+def xui_context(args, root):
+    state = load_state(root, args.instance)
+    if "3xui" not in state["providers"]:
+        raise ValueError("В этом экземпляре нет управляемой Docker-панели 3x-ui")
+    return state["providers"]["3xui"], ["docker", "compose", "--project-directory", str(root), "-f", str(root / "docker-compose.yml")]
+
+
+def parse_api_token(output):
+    match = re.search(r"(?m)^apiToken:\s*([^\s]+)\s*$", output)
+    if not match:
+        raise ValueError("3x-ui не подтвердил выдачу API-токена; секреты не изменены в файле")
+    return match[1]
+
+
+def show_credentials(args, root):
+    require_admin()
+    item, _ = xui_context(args, root)
+    file = root / "3xui" / "credentials.json"
+    credentials = json.loads(file.read_text(encoding="utf-8"))
+    host = item["host"]
+    if item["mode"] == "ip":
+        host = (f"[{host}]" if ":" in host else host) + ":" + str(item["port"])
+    # Never duplicate passwords into installer tee/journald or redirected logs.
+    try:
+        terminal = open("/dev/tty", "w", encoding="utf-8")
+    except OSError:
+        print("Секреты не выведены без терминала. Откройте SSH с TTY и выполните x-ui credentials. Файл: " + str(file))
+        return
+    with terminal:
+        print("\n=== 3x-ui: сохранённые данные входа (не публикуйте этот блок) ===", file=terminal)
+        print(f"Адрес: https://{host}{credentials['path']}", file=terminal)
+        print("Логин: " + credentials["username"], file=terminal)
+        print("Пароль: " + credentials["password"], file=terminal)
+        print("API-токен: " + credentials.get("api_token", "не создан — x-ui token или настройки 3x-ui"), file=terminal)
+        print("Nexus / API Panel URL: http://local-3xui:2053", file=terminal)
+        print("Nexus / Panel Path: " + credentials["path"], file=terminal)
+        print("Авторизация Nexus: API Token, если токен создан; иначе логин/пароль.", file=terminal)
+        print("Порты Xray: " + ", ".join(item.get("vpn_ports", [])), file=terminal)
+        print("Inbound ID: укажите ID созданного вами inbound в 3x-ui.", file=terminal)
+        print("Если пароль/путь/токен меняли в веб-панели, сохранённые здесь значения могут устареть.", file=terminal)
+        print("Внутренний порт 2053 и HTTP оставьте без изменений: внешний HTTPS обслуживает Caddy.", file=terminal)
+
+
+def install_xui_cli(args, root, bin_dir=Path("/usr/local/bin")):
+    require_admin()
+    if "3xui" not in load_state(root, args.instance)["providers"]:
+        return
+    helper = Path(__file__).resolve()
+    marker = f"# Nexus managed x-ui CLI: {args.instance}"
+    script = ("#!/usr/bin/env bash\nset -euo pipefail\n" + marker + "\n"
+              + 'if [ "$#" -gt 1 ]; then echo "Usage: x-ui [menu|status|credentials|password|token|start|stop|restart|logs|settings]"; exit 2; fi\n'
+              + "exec python3 " + shlex.quote(str(helper)) + " xui --instance " + shlex.quote(args.instance)
+              + ' --xui-action "${1:-menu}"\n')
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    for name in (f"x-ui-{args.instance}", f"xui-{args.instance}", "x-ui", "xui"):
+        target = bin_dir / name
+        existing_command = shutil.which(name)
+        if target.is_symlink() or (target.exists() and marker not in target.read_text(encoding="utf-8", errors="replace").splitlines()):
+            print(f"Команда {name} уже существует, оставлена без изменений. Используйте x-ui-{args.instance}.")
+            continue
+        if not target.exists() and existing_command:
+            print(f"Команда {name} уже найдена в PATH, не перекрываю её: {existing_command}")
+            continue
+        private_write(target, script)
+        os.chmod(target, 0o755)
+
+
+def xui_change(args, root, action):
+    item, base = xui_context(args, root)
+    file = root / "3xui" / "credentials.json"
+    credentials = json.loads(file.read_text(encoding="utf-8"))
+    if action == "password":
+        username = ask("Новый логин", credentials["username"])
+        password = getpass.getpass("Новый пароль (не отображается): ")
+        if len(password) < 12 or len(password.encode("utf-8")) > 72 or password != getpass.getpass("Повторите пароль: "):
+            raise ValueError("Пароли должны совпадать: минимум 12 символов, максимум 72 байта")
+        if any(ord(c) < 32 for c in username + password):
+            raise ValueError("Управляющие символы недопустимы")
+        flags = ["-username", username, "-password", password]
+    else:
+        print("Будет создан/перевыпущен CLI API-токен. Прежний cli-fallback может перестать работать; обновите токен в Nexus.")
+        flags = ["-getApiToken"]
+    print("3x-ui и его VPN-соединения будут кратковременно остановлены. Nexus и Remnawave не останавливаются.")
+    if ask("Продолжить? Введите ДА", "НЕТ").upper() not in ("ДА", "YES"):
+        return
+    running = bool(run(base + ["ps", "--status", "running", "-q", "local-3xui"], quiet=True).strip())
+    if running:
+        run(base + ["stop", "local-3xui"])
+    try:
+        # Offline backup includes SQLite sidecars and belongs to root only.
+        backup = Path(tempfile.mkdtemp(prefix="xui-settings-backup-", dir=root))
+        os.chmod(backup, 0o700)
+        shutil.copytree(root / "3xui" / "db", backup / "db")
+        shutil.copy2(file, backup / "credentials.json")
+        print("Резервная копия перед изменением: " + str(backup))
+        cli = ["docker", "run", "--rm", "--network", "none", "-v", str(root / "3xui" / "db") + ":/etc/x-ui",
+               "--entrypoint", "/app/x-ui", item["image"], "setting"]
+        output = run(cli + flags, quiet=True)
+        if action == "password":
+            if "Username and password updated successfully" not in output:
+                raise ValueError("3x-ui не подтвердил смену пароля. Сохранённые данные не переписаны; резервная копия указана выше")
+            credentials.update(username=username, password=password)
+        else:
+            credentials["api_token"] = parse_api_token(output)
+        private_write(file, json.dumps(credentials, indent=2) + "\n")
+    finally:
+        if running:
+            run(base + ["start", "local-3xui"])
+    show_credentials(args, root)
+
+
+def xui_action(args, root, action):
+    require_admin()
+    _, base = xui_context(args, root)
+    if action == "credentials":
+        show_credentials(args, root)
+    elif action in ("password", "token"):
+        xui_change(args, root, action)
+    elif action == "status":
+        run(base + ["ps", "-a", "local-3xui"])
+    elif action == "logs":
+        run(base + ["logs", "--tail", "80", "local-3xui"])
+    elif action == "settings":
+        print(run(base + ["exec", "-T", "local-3xui", "/app/x-ui", "setting", "-show", "true"], quiet=True))
+        print("Внутренний HTTP без SSL — ожидаемо: внешний сертификат находится в Caddy.")
+    elif action in ("start", "stop", "restart"):
+        if action != "start" and ask("VPN-соединения 3x-ui прервутся. Продолжить? ДА", "НЕТ").upper() not in ("ДА", "YES"):
+            return
+        run(base + [action, "local-3xui"])
+    else:
+        choices = {"1": "status", "2": "credentials", "3": "password", "4": "token", "5": "start", "6": "stop", "7": "restart", "8": "logs", "9": "settings"}
+        while True:
+            print(f"\n3x-ui / Docker — экземпляр {args.instance}\n1 — Статус\n2 — Данные входа и подключения Nexus\n3 — Сменить логин/пароль\n4 — Создать/перевыпустить API-токен\n5 — Запустить\n6 — Остановить\n7 — Перезапустить\n8 — Журнал\n9 — Текущие настройки\n0 — Выход")
+            choice = ask("Выбор", "0")
+            if choice == "0":
+                return
+            if choice in choices:
+                try:
+                    xui_action(args, root, choices[choice])
+                except (RuntimeError, ValueError, OSError) as exc:
+                    print(str(exc))
+            else:
+                print("Выберите пункт 0–9")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("wizard", "render", "status", "validate", "needs-web", "releases"))
+    parser.add_argument("action", choices=("wizard", "render", "status", "validate", "needs-web", "releases", "install-cli", "credentials", "xui"))
+    parser.add_argument("--xui-action", choices=("menu", "status", "credentials", "password", "token", "start", "stop", "restart", "logs", "settings"), default="menu")
     parser.add_argument("--instance", default="default")
     parser.add_argument("--app-dir", default="/opt/3xui-aggregator")
     parser.add_argument("--panel-domain", default="")
@@ -498,6 +731,13 @@ def main():
         validate_names(load_state(root, args.instance), args)
     elif args.action == "status":
         status(args, root)
+    elif args.action == "credentials":
+        if "3xui" in load_state(root, args.instance)["providers"]:
+            show_credentials(args, root)
+    elif args.action == "install-cli":
+        install_xui_cli(args, root)
+    elif args.action == "xui":
+        xui_action(args, root, args.xui_action)
     else:
         if not hasattr(os, "geteuid") or os.geteuid() != 0:
             raise ValueError("Запустите установщик от root на Linux VPS")

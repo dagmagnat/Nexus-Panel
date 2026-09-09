@@ -6,15 +6,19 @@ APP_DIR="${APP_DIR:-/opt/3xui-aggregator}"
 REPO_URL_DEFAULT="https://github.com/dagmagnat/Nexus-Panel.git"
 BRANCH_DEFAULT="main"
 
-GREEN='\033[1;32m'
-YELLOW='\033[1;33m'
-RED='\033[1;31m'
-CYAN='\033[1;36m'
-BLUE='\033[1;34m'
-MAGENTA='\033[1;35m'
-BOLD='\033[1m'
-DIM='\033[2m'
-NC='\033[0m'
+# Store actual ESC characters: printf %s must not print literal "\033".
+GREEN=$'\033[1;32m'
+YELLOW=$'\033[1;33m'
+RED=$'\033[1;31m'
+CYAN=$'\033[1;36m'
+BLUE=$'\033[1;34m'
+MAGENTA=$'\033[1;35m'
+BOLD=$'\033[1m'
+DIM=$'\033[2m'
+NC=$'\033[0m'
+if [ "${NEXUS_INSTALLER_PLAIN:-0}" = "1" ] || [ -n "${NO_COLOR:-}" ] || [ "${TERM:-dumb}" = "dumb" ]; then
+  GREEN='' YELLOW='' RED='' CYAN='' BLUE='' MAGENTA='' BOLD='' DIM='' NC=''
+fi
 
 NEXUS_UI_ACTIVE=0
 NEXUS_UI_ANIMATE=0
@@ -61,7 +65,7 @@ ui_init() {
 
   # Даже если stdout направлен в tee, stdin и /dev/tty остаются терминалом.
   # Поэтому анимация видна пользователю, а обычный текст сохраняется в журнал.
-  if [ "${NEXUS_INSTALLER_PLAIN:-0}" != "1" ] && [ -t 0 ] && [ -w /dev/tty ]; then
+  if [ "${NEXUS_INSTALLER_PLAIN:-0}" != "1" ] && [ "${TERM:-dumb}" != "dumb" ] && [ -t 0 ] && [ -w /dev/tty ]; then
     # Редирект stderr должен действовать только на попытку открыть fd 9.
     # `exec 9>/dev/tty 2>/dev/null` без группы навсегда отправлял stderr всего
     # установщика в /dev/null: меню и приглашение ввода становились невидимыми.
@@ -71,19 +75,33 @@ ui_init() {
   fi
 }
 
+ui_terminal_columns() {
+  local columns="${COLUMNS:-}"
+  if [ -z "$columns" ]; then columns="$(tput cols 2>/dev/null || true)"; fi
+  case "$columns" in ''|*[!0-9]*) columns=80 ;; esac
+  if [ "${#columns}" -gt 4 ] || [ "$columns" -lt 20 ]; then columns=80; fi
+  printf '%s' "$columns"
+}
+
 ui_box_rule() {
   local left="$1" fill="$2" right="$3" width="$4"
+  # On narrow SSH windows omit the frame instead of wrapping its borders.
+  [ "$(ui_terminal_columns)" -ge $((width + 4)) ] || return 0
   local rule=''
   printf -v rule '%*s' "$width" ''
   rule="${rule// /$fill}"
-  printf "${CYAN}        %s%s%s${NC}\n" "$left" "$rule" "$right"
+  printf "${CYAN}  %s%s%s${NC}\n" "$left" "$rule" "$right"
 }
 
 ui_box_line() {
   local width="$1" visible="$2" styled="${3:-$2}" padding
+  if [ "$(ui_terminal_columns)" -lt $((width + 6)) ]; then
+    printf '  %s\n' "$styled"
+    return 0
+  fi
   padding=$((width - ${#visible}))
   [ "$padding" -lt 0 ] && padding=0
-  printf "${CYAN}        │${NC} %s%*s ${CYAN}│${NC}\n" "$styled" "$padding" ''
+  printf "${CYAN}  │${NC} %s%*s ${CYAN}│${NC}\n" "$styled" "$padding" ''
 }
 
 ui_banner() {
@@ -94,7 +112,7 @@ ui_banner() {
   ui_box_line "$width" '◆  N E X U S   P A N E L' "${MAGENTA}◆${NC}  ${BOLD}N E X U S   P A N E L${NC}"
   ui_box_line "$width" '   Spectrum installer · safe deploy' "   ${DIM}Spectrum installer · safe deploy${NC}"
   ui_box_rule '╰' '─' '╯' $((width + 2))
-  printf "${DIM}        Клиенты, UUID, ссылки и data сохраняются${NC}\n\n"
+  printf "${DIM}  Клиенты, UUID, ссылки и data сохраняются${NC}\n\n"
   printf 'Nexus Panel installer started: %s\n' "$(date -Is)" >> "$NEXUS_UI_LOG_FILE"
 }
 
@@ -106,7 +124,17 @@ ui_section() {
 
 ui_step_success() {
   local number="$1" label="$2" elapsed="$3"
-  printf "${GREEN}  ✓${NC} ${DIM}%02d${NC}  %-48s ${DIM}%ss${NC}\n" "$number" "$label" "$elapsed"
+  printf "${GREEN}  ✓${NC} ${DIM}%02d${NC}  %s ${DIM}· %ss${NC}\n" "$number" "$label" "$elapsed"
+}
+
+ui_step_progress() {
+  local frame="$1" number="$2" label="$3" elapsed="$4" limit
+  # A wrapped spinner leaves stale lines: keep the animated line shorter
+  # than the viewport and print the full label in the final result below.
+  limit=$(( $(ui_terminal_columns) - 24 ))
+  [ "$limit" -ge 1 ] || limit=1
+  if [ "${#label}" -gt "$limit" ]; then label="${label:0:$limit}…"; fi
+  printf '\r\033[2K%s  %s %02d  %s · %ss%s' "$CYAN" "$frame" "$number" "$label" "$elapsed" "$NC"
 }
 
 ui_error_hint() {
@@ -175,7 +203,7 @@ ui_run() {
     while kill -0 "$pid" 2>/dev/null; do
       now="$(date +%s)"
       elapsed=$((now - start))
-      printf '\r\033[2K%s  %s %02d  %s · %ss%s' "$CYAN" "${frames[$frame_index]}" "$number" "$label" "$elapsed" "$NC" >&9
+      ui_step_progress "${frames[$frame_index]}" "$number" "$label" "$elapsed" >&9
       frame_index=$(((frame_index + 1) % ${#frames[@]}))
       sleep 0.12
     done
@@ -1364,12 +1392,13 @@ local_panels_command() {
 
 local_panels_flow() {
   ui_section "Панели 3x-ui / Remnawave на этом сервере"
-  local_panels_command wizard
+  local_panels_command wizard || return $?
   if local_panels_configured; then
     # Only Nexus and its proxy are recreated here. Provider containers use an
     # independent project and are never stopped by a Nexus update/uninstall.
     prepare_config_and_run
     local_panels_command status
+    local_panels_command credentials
   fi
 }
 
@@ -1633,6 +1662,7 @@ stop_existing_aggregator_stack() {
 }
 
 install_shortcut_command() {
+  if local_panels_configured; then local_panels_command install-cli; fi
   save_source_config
 
   local instance_shortcut="/usr/local/bin/agg-${INSTANCE_NAME}"
@@ -2302,13 +2332,16 @@ fresh_install_flow() {
   load_existing_config
   ui_section "Параметры панели"
   first_install_wizard
-  local_panels_command wizard
+  local_panels_command wizard || return $?
   prepare_config_and_run
   install_shortcut_command
 }
 
 print_result() {
-  if local_panels_configured; then local_panels_command status; fi
+  if local_panels_configured; then
+    local_panels_command status
+    local_panels_command credentials
+  fi
   printf '\n'
   printf "${GREEN}  ╭────────────────────────────────────────────────────────────╮${NC}\n"
   printf "${GREEN}  │  ✓  NEXUS PANEL УСТАНОВЛЕНА                              │${NC}\n"
