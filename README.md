@@ -31,8 +31,7 @@ Nexus Panel объединяет узлы **3x-ui** и **Remnawave** в одно
 Нужен Linux VPS с root-доступом. Для автоматического HTTPS домен должен указывать на сервер, а порты `80` и `443` должны быть свободны.
 
 ```bash
-sudo -i
-curl -fsSL https://raw.githubusercontent.com/dagmagnat/Nexus-Panel/main/bootstrap.sh | bash
+sudo -i curl -fsSL https://raw.githubusercontent.com/dagmagnat/Nexus-Panel/main/bootstrap.sh | bash
 ```
 
 Если приглашение уже выглядит как `root@server:~#`, повторять `sudo -i` не нужно. Короткий bootstrap сам скачивает и проверяет основной установщик, исправляет CRLF и сохраняет интерактивный ввод. Журналы находятся в `/var/log/nexus-panel/`.
