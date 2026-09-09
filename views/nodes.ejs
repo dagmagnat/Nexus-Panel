@@ -324,6 +324,7 @@
       </label>
 
       <div class="actions node-actions add-node-actions">
+        <label class="switch-row compact js-node-not-auto-select"><input type="checkbox" name="expired_support" value="1" /><span><strong>Только для истёкших подписок</strong><small>Служебный доступ на 3/7 дней из настроек. Назначается всем клиентам в фоне, у активных скрыт и выключен. Нужна отдельная панель 3x-ui / Remnawave, не общая с обычными узлами. Настройте маршрутизацию отдельно.</small></span></label>
         <button type="submit" class="btn-main add-node-submit" data-node-submit-label>Добавить узел</button>
       </div>
     </form>
@@ -649,6 +650,10 @@
                   <button type="submit" class="btn-main">Проверить</button>
                 </form>
                 <a href="/nodes/<%= node.id %>/edit" class="link-btn secondary node-detail-action-link" onclick="event.stopPropagation()">Изменить</a>
+                <% if (typeof expiredSupportNodeIds !== 'undefined' && expiredSupportNodeIds.includes(Number(node.id))) { %>
+                  <div class="hint">Служебный узел: только после окончания подписки. Синхронизация в фоне. Ошибок клиентов: <%= (supportSyncErrors.find(row => Number(row.node_id) === Number(node.id)) || {}).count || 0 %>.</div>
+                  <form method="post" action="/nodes/<%= node.id %>/renew-support" class="inline-form" onsubmit="return confirm('Возобновить доступ на <%= expiredSupportDays %> дней всем истёкшим клиентам, у которых закончился служебный срок? Основная подписка не изменится.');"><button type="submit" class="btn-secondary">Продлить служебный срок</button></form>
+                <% } %>
                 <form method="post" action="/nodes/<%= node.id %>/clone" class="inline-form" onsubmit="return confirm('Создать выключенную копию сохранённых настроек подключения без клиентов и статистики?')"><button type="submit" class="btn-secondary">Клонировать</button></form>
                 <form method="post" action="/nodes/<%= node.id %>/create-missing-clients" class="inline-form node-detail-action-form js-long-action" data-loading-title="Добавляю отсутствующих клиентов" data-loading-text="На этот узел будут созданы только отсутствующие клиенты. Уже существующие записи не обновляются." onclick="event.stopPropagation()" onsubmit="return confirm('<%= isRemnawave ? 'Создать в Remnawave только отсутствующих пользователей Aggregator и назначить им настроенный Internal Squad?' : 'Создать на выбранном узле только отсутствующих клиентов агрегатора? Уже существующие клиенты будут пропущены.' %>')">
                   <button type="submit" class="secondary">Создать отсутствующих</button>
@@ -1377,6 +1382,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setNodeTypeGroup(form, '.js-node-3xui-only', is3xuiType);
     setNodeTypeGroup(form, '.js-node-remnawave-only', isRemnawave);
     setNodeTypeGroup(form, '.js-node-client-sync-only', !isAutoSelect);
+    setNodeTypeGroup(form, '.js-node-not-auto-select', !isAutoSelect);
     setNodeTypeGroup(form, '.js-node-3xui-editable-only', is3xuiType);
     updateNodeTypeText(form, type);
     const authSelect = form.querySelector('.js-api-auth-mode');

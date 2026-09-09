@@ -1026,6 +1026,21 @@
     <form id="applySelectedForm" method="post" action="/clients/apply-to-node" class="js-long-action" data-loading-title="Применяю изменения" data-loading-text="Обновляю выбранных клиентов, их группу, метки и при необходимости выбранный узел." onsubmit="return prepareApplySelectedSubmit(event)">
       <div class="form-grid clean-form bulk-apply-grid">
         <div class="field">
+          <label>Служебный доступ после окончания подписки</label>
+          <select name="support_mode" onchange="toggleSupportBulkMode(this)">
+            <option value="">Не менять — обычное массовое действие</option>
+            <option value="renew">Возобновить на стандартные 3/7 дней</option>
+            <option value="custom">Назначить своё число дней</option>
+            <option value="unlimited">Без ограничения срока после истечения подписки</option>
+            <option value="reset">Убрать индивидуальный срок — по общим настройкам</option>
+          </select>
+          <div data-support-options hidden>
+            <label>Служебный узел<select name="support_node_id"><option value="">Все служебные узлы</option><% nodes.filter(node => typeof expiredSupportNodeIds !== 'undefined' && expiredSupportNodeIds.includes(Number(node.id))).forEach(node => { %><option value="<%= node.id %>"><%= nodeName(node) %></option><% }) %></select></label>
+            <label data-support-custom>Количество дней для ручного назначения<input name="support_days" type="number" min="1" max="36500" step="1" placeholder="Например, 30" /></label>
+            <small class="hint">Меняется только служебный доступ выбранных клиентов. При назначении дней у истёкших отсчёт идёт от сегодняшнего дня; у активных — после окончания подписки. Возврат общих настроек восстанавливает отсчёт от даты истечения. Основной VPN не продлевается.</small>
+          </div>
+        </div>
+        <div class="field">
           <label>Узел</label>
           <select name="node_id">
             <option value="">Узел не выбран — не менять узлы</option>
@@ -1108,6 +1123,9 @@
         <button type="button" class="modal-close" onclick="event.preventDefault(); event.stopPropagation(); hideClientEditor(<%= client.id %>); return false;">×</button>
       </div>
       <div class="client-detail-summary client-editor-summary">
+        <% if (typeof supportAccessSummary === 'function') { supportAccessSummary(client).forEach(state => { %>
+          <div><span>Служебный: <%= state.name %></span><strong><%= state.active ? 'Доступен' : 'Не активен' %> · <%= state.unlimited ? 'без срока' : state.days + ' дн.' %></strong><small><%= state.individual ? 'Индивидуальное назначение' : 'По общим настройкам' %><% if (!state.unlimited && state.expiryTime > 0) { %> · до <%= new Date(state.expiryTime).toLocaleString('ru-RU') %><% } %></small></div>
+        <% }); } %>
         <div class="client-summary-id"><span>ID</span><strong><%= client.id %></strong></div>
         <div><span>Статус</span><strong class="badge <%= clientStatusMeta(client).key %>"><%= clientStatusMeta(client).label %></strong></div>
         <div><span>Срок</span><strong><%= termShort(client) %> дн.</strong><small><% if (Number(client.start_on_activation) === 1 && Number(client.activation_started_at || 0) <= 0) { %>ожидает активации устройства<% } else { %>до <%= expiryDateTime(client.expiry_time) %><% } %></small></div>
@@ -1889,6 +1907,27 @@ function openApplySelectedModal() {
   openModalById('applyAllModal');
   return false;
 }
+function toggleSupportBulkMode(select) {
+  const form = select.form;
+  const setHidden = (element, hidden) => { element.hidden = hidden; element.classList.toggle('hidden', hidden); };
+  setHidden(form.querySelector('[data-support-options]'), !select.value);
+  setHidden(form.querySelector('[data-support-custom]'), select.value !== 'custom');
+  for (const field of form.querySelectorAll('.bulk-apply-grid > .field')) {
+    if (field.contains(select)) continue;
+    setHidden(field, Boolean(select.value));
+    for (const input of field.querySelectorAll('input, select, textarea')) {
+      if (select.value) {
+        if (input.dataset.supportWasDisabled === undefined) input.dataset.supportWasDisabled = String(input.disabled);
+        input.disabled = true;
+      } else if (input.dataset.supportWasDisabled !== undefined) {
+        input.disabled = input.dataset.supportWasDisabled === 'true';
+        delete input.dataset.supportWasDisabled;
+      }
+    }
+  }
+  // Hidden number inputs must not prevent submitting unrelated operations.
+  form.querySelector('[name="support_days"]').disabled = select.value !== 'custom';
+}
 function prepareApplySelectedSubmit(event) {
   const selected = getUniqueClientSelection();
   if (!selected.size) {
@@ -1899,6 +1938,11 @@ function prepareApplySelectedSubmit(event) {
   const form = event?.currentTarget || document.getElementById('applySelectedForm');
   fillApplySelectedClientIds(form, selected);
   const nodeSelect = form?.querySelector('select[name="node_id"]');
+  const supportMode = form?.querySelector('[name="support_mode"]')?.value;
+  if (supportMode) {
+    if (supportMode === 'custom' && !/^[1-9]\d*$/.test(form.querySelector('[name="support_days"]').value)) { event.preventDefault(); showToast('Укажите положительное число дней'); return false; }
+    return window.confirm(`Изменить только служебный доступ для ${selected.size} выбранных клиентов? Основная подписка не изменится.`);
+  }
   const groupSelect = form?.querySelector('select[name="group_id"]');
   const selectedTags = Array.from(form?.querySelectorAll('input[name="tag_ids"]:checked') || []);
   const hasNode = Boolean(nodeSelect?.value);

@@ -477,6 +477,14 @@ check_domain_ports_if_needed() {
   if [ "${PANEL_MODE}" = "domain" ] || [ "${SUB_MODE}" = "domain" ]; then
     need_80_443="1"
   fi
+  if local_panels_configured && local_panels_command needs-web; then
+    # Switching only Nexus to IP cannot free the domains of companion panels.
+    if port_in_use 80 || port_in_use 443; then
+      err "Локальным панелям нужны 80/443 для общего Caddy. Порты заняты чужим сервисом; он не будет остановлен."
+      return 1
+    fi
+    return 0
+  fi
 
   if [ "$need_80_443" != "1" ]; then
     return
@@ -1328,6 +1336,41 @@ write_runtime_files() {
   else
     write_compose_ip_only
   fi
+  if local_panels_configured; then local_panels_command render; fi
+}
+
+local_panels_configured() {
+  [ -f "/opt/nexus-local-panels/${INSTANCE_NAME}/state.json" ]
+}
+
+local_panels_command() {
+  local action="$1" helper="$APP_DIR/scripts/local-panels.py"
+  if [ ! -f "$helper" ]; then
+    err "Мастер локальных панелей не найден. Обнови Nexus из полного архива 2.7.5 или новее."
+    return 1
+  fi
+  local -a args=("$action" --instance "$INSTANCE_NAME" --app-dir "$APP_DIR"
+    --panel-domain "${PANEL_DOMAIN:-}" --sub-domain "${SUB_DOMAIN:-}"
+    --app-port "${APP_PORT:-3000}" --bind-ip "${BIND_IP:-}"
+    --caddy-container "$CADDY_CONTAINER_NAME")
+  # Only a running proxy owned by this Nexus instance may already own 443.
+  if [ "$(docker inspect --format '{{.State.Running}}' "$CADDY_CONTAINER_NAME" 2>/dev/null || true)" = "true" ] \
+    && [ "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$CADDY_CONTAINER_NAME" 2>/dev/null || true)" = "$COMPOSE_PROJECT_NAME" ] \
+    && docker port "$CADDY_CONTAINER_NAME" 443/tcp >/dev/null 2>&1; then
+    args+=(--has-web-proxy)
+  fi
+  python3 "$helper" "${args[@]}"
+}
+
+local_panels_flow() {
+  ui_section "Панели 3x-ui / Remnawave на этом сервере"
+  local_panels_command wizard
+  if local_panels_configured; then
+    # Only Nexus and its proxy are recreated here. Provider containers use an
+    # independent project and are never stopped by a Nexus update/uninstall.
+    prepare_config_and_run
+    local_panels_command status
+  fi
 }
 
 install_forwarder_service() {
@@ -1683,6 +1726,9 @@ EOF
 }
 
 create_backup() {
+  if local_panels_configured; then
+    warn "Этот backup НЕ включает /opt/nexus-local-panels/${INSTANCE_NAME}. Базы 3x-ui/Remnawave резервируйте отдельно."
+  fi
   ui_section "Резервная копия"
   mkdir -p "$BACKUP_DIR"
 
@@ -2056,6 +2102,7 @@ normalize_modes_after_port_choice() {
 
 prepare_config_and_run() {
   ui_section "Применение конфигурации"
+  if local_panels_configured; then local_panels_command validate; fi
   local server_ip
   server_ip="$(get_public_server_ip)"
 
@@ -2244,15 +2291,24 @@ fresh_install_flow() {
   ui_section "Новая установка"
   prompt_instance_for_new_install
   load_source_config
-  clone_or_update_repo "$REPO_URL" "$BRANCH"
+  local local_src
+  local_src="$(script_source_dir)"
+  if can_update_from_local_bundle "$local_src"; then
+    # A fresh install from this release must not silently fetch an older main.
+    copy_project_files_from_local_bundle "$local_src"
+  else
+    clone_or_update_repo "$REPO_URL" "$BRANCH"
+  fi
   load_existing_config
   ui_section "Параметры панели"
   first_install_wizard
+  local_panels_command wizard
   prepare_config_and_run
   install_shortcut_command
 }
 
 print_result() {
+  if local_panels_configured; then local_panels_command status; fi
   printf '\n'
   printf "${GREEN}  ╭────────────────────────────────────────────────────────────╮${NC}\n"
   printf "${GREEN}  │  ✓  NEXUS PANEL УСТАНОВЛЕНА                              │${NC}\n"
@@ -2286,6 +2342,9 @@ print_result() {
 
 
 delete_project() {
+  if local_panels_configured; then
+    warn "Дополнительные 3x-ui/Remnawave и их базы останутся. Веб-доступ через Caddy Nexus пропадёт, VPN-контейнеры продолжат работать."
+  fi
   warn "Удаляю Nexus Panel..."
 
   if [ -d "$APP_DIR" ]; then
@@ -2632,12 +2691,13 @@ main_menu() {
     ui_box_line "$menu_width" '6  Восстановить из копии' >&2
     ui_box_line "$menu_width" '7  Удалить проект' >&2
     ui_box_line "$menu_width" '8  Диагностика и автоматическое восстановление' >&2
+    ui_box_line "$menu_width" '9  Установить 3x-ui / Remnawave на этот VPS' >&2
     ui_box_line "$menu_width" '0  Выход' >&2
     ui_box_rule '╰' '─' '╯' $((menu_width + 2)) >&2
     choice="$(ask 'Выбери действие (Enter ничего не запускает)' '')"
     choice="$(trim "$choice")"
     case "$choice" in
-      0|1|2|3|4|5|6|7|8) printf '%s\n' "$choice"; return 0 ;;
+      0|1|2|3|4|5|6|7|8|9) printf '%s\n' "$choice"; return 0 ;;
       '') warn "Действие не выбрано. Ничего не изменено." >&2 ;;
       *) err "Нет такого пункта: $choice" >&2 ;;
     esac
@@ -2715,6 +2775,10 @@ main() {
         run_diagnostics_and_repair
         exit 0
         ;;
+      9)
+        prepare_server_for_deploy
+        local_panels_flow
+        ;;
       0)
         say "Выход."
         exit 0
@@ -2782,6 +2846,20 @@ if [ "${1:-}" = "menu" ]; then
   shift || true
   main "$@"
   exit $?
+fi
+
+if [ "${1:-}" = "local-panels" ]; then
+  require_root
+  ui_init
+  ui_install_error_trap
+  refresh_runtime_paths
+  load_source_config
+  refresh_runtime_paths
+  load_existing_config
+  if [ ! -f "$ENV_FILE" ]; then err "Сначала установи Nexus Panel."; exit 1; fi
+  install_docker_if_needed
+  local_panels_flow
+  exit 0
 fi
 
 if [ "${1:-}" = "update" ] || [ "${1:-}" = "--update-files-only" ]; then

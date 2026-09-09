@@ -137,6 +137,7 @@ test('edit preserves waiting period, unchecking starts it, active trials cannot 
 test('provider entry points force pending credentials disabled even when called with enabled true', async t => {
   const h = harness(t);
   const provider = vm.createContext({
+    supportOptionsForNode: (node, client, opts) => opts,
     isClientActivationPending: h.ctx.isClientActivationPending,
     isRemnawaveNode: () => true,
     ensureRemnawaveUserOnNode: async (n, c, opts) => opts,

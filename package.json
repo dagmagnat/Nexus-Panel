@@ -1,6 +1,6 @@
 {
   "name": "nexus-panel",
-  "version": "2.7.3",
+  "version": "2.7.5",
   "description": "Nexus Panel — 3x-ui and Remnawave aggregation panel with exact inbound sync, subscriptions and traffic monitoring",
   "homepage": "https://github.com/dagmagnat/Nexus-Panel#readme",
   "bugs": {
@@ -22,6 +22,7 @@
     "check:spectrum": "npm run predev && node scripts/http-check-spectrum.js",
     "check:views": "node scripts/check-views.js",
     "test": "node --test tests/*.test.js",
+    "test:local-panels": "python3 -B -m unittest discover -s tests -p test_local_panels.py",
     "test:bulk-remove-node": "node --test tests/bulk-remove-node.test.js",
     "test:panel-access": "node --test tests/panel-access-key.test.js",
     "test:client-transfer": "node --test tests/client-transfer.test.js",

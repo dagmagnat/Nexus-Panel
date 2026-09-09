@@ -22,6 +22,7 @@ const dns = require('dns').promises;
 const { encrypt, decrypt } = require('./lib_crypto');
 const { createVpnManager } = require('./lib_vpn_manager');
 const { nodeCloneValues } = require('./lib_node_clone');
+const { supportAccess, parseSupportDays, initSupportSchema } = require('./lib_expired_support');
 const { initNexusNodeControlSchema, attachNexusNodeControl } = require('./lib_nexus_node_control');
 
 const COUNTRIES = [
@@ -1642,6 +1643,7 @@ function migrateSubscriptionDeviceLimitsOnce() {
 }
 
 initDb();
+initSupportSchema(db);
 initNexusNodeControlSchema(db);
 const vpnManager = createVpnManager({ db, appSecret: APP_SECRET, encrypt, decrypt, dataDir: DATA_DIR });
 ensureMissingAppSettings();
@@ -1875,6 +1877,12 @@ function render(res, view, params = {}) {
     ...params,
     isDevelopment: !IS_PRODUCTION,
     nexusNodeEnabled: NEXUS_NODE_ENABLED,
+    expiredSupportNodeIds: getSubscriptionExpiredGraceNodeIds(),
+    expiredSupportDays: getSubscriptionExpiredGraceDays(),
+    supportSyncErrors: db.prepare("SELECT node_id, COUNT(*) AS count FROM client_support_sync WHERE error != '' GROUP BY node_id").all(),
+    supportAccessSummary: client => getExpiredGraceState(client).states.map(state => ({ ...state,
+      name: getNodeDisplayName(db.prepare('SELECT * FROM nodes WHERE id = ?').get(state.nodeId)),
+      individual: Boolean(db.prepare('SELECT 1 FROM client_support_grants WHERE client_id=? AND node_id=?').get(client.id, state.nodeId)) })),
     currentAdminUsername,
     currentPath: res.req.path,
     panelInterfaceTheme: getPanelInterfaceTheme(),
@@ -2357,16 +2365,15 @@ function isClientEffectivelyEnabled(clientRow, expiryOverride = undefined) {
 async function enforceExpiredClientRemoteState(clientRow, options = {}) {
   if (!clientRow || !isClientExpired(clientRow)) return;
 
-  const graceNodeIds = new Set((options.graceNodeIds || []).map(Number).filter(id => id > 0));
-  const graceExpiryTime = Math.max(0, Number(options.graceExpiryTime || 0));
-  const graceActive = graceExpiryTime > Date.now() && graceNodeIds.size > 0;
+  const grace = getExpiredGraceState(clientRow);
   const mappings = db.prepare('SELECT * FROM client_nodes WHERE client_id = ?').all(clientRow.id);
 
   const results = await runWithConcurrency(mappings, 4, async map => {
     const node = db.prepare('SELECT * FROM nodes WHERE id = ?').get(map.node_id);
     if (!node) return;
 
-    const keepGraceAccess = graceActive && graceNodeIds.has(Number(map.node_id));
+    const state = grace.states.find(item => Number(item.nodeId) === Number(map.node_id));
+    const keepGraceAccess = Boolean(state?.active && Number(node.enabled) !== 0);
     await updateClientOnNode(node, map, clientRow, {
       enabled: keepGraceAccess,
       node_enabled: keepGraceAccess ? true : map.enabled !== 0,
@@ -2376,7 +2383,7 @@ async function enforceExpiredClientRemoteState(clientRow, options = {}) {
       ...(keepGraceAccess ? { limit_ip: 0, traffic_gb: 0 } : {}),
       // On a dedicated grace node we intentionally extend only the REMOTE
       // expiry to the grace deadline. The Nexus client itself remains expired.
-      expiry_time: keepGraceAccess ? graceExpiryTime : clientRow.expiry_time
+      expiry_time: keepGraceAccess ? state.expiryTime : clientRow.expiry_time
     });
   });
 
@@ -2835,7 +2842,8 @@ function getSubscriptionExpiredGraceNodeIds() {
 }
 
 function getSubscriptionDeviceLimitNodeIds() {
-  return getSubscriptionPolicyNodeIds('subscription_device_limit_node_ids');
+  const expiryOnly = new Set(getSubscriptionExpiredGraceNodeIds());
+  return getSubscriptionPolicyNodeIds('subscription_device_limit_node_ids').filter(id => !expiryOnly.has(id));
 }
 
 function getSubscriptionReservedNodeIds() {
@@ -2846,16 +2854,143 @@ function getSubscriptionReservedNodeIds() {
 }
 
 function getExpiredGraceState(clientRow, nowMs = Date.now()) {
-  const expiryMs = normalizeEpochMillis(clientRow?.expiry_time || 0);
   const days = getSubscriptionExpiredGraceDays();
   const nodeIds = getSubscriptionExpiredGraceNodeIds();
-  const graceExpiryTime = expiryMs > 0 ? expiryMs + days * 24 * 60 * 60 * 1000 : 0;
+  const states = nodeIds.flatMap(nodeId => {
+    const node = db.prepare('SELECT * FROM nodes WHERE id = ?').get(nodeId);
+    if (!node) return [];
+    const state = supportAccess(clientRow,
+      db.prepare('SELECT * FROM client_support_grants WHERE client_id = ? AND node_id = ?').get(clientRow.id, nodeId), days, nowMs);
+    return [{ nodeId, ...state, active: state.active && Number(node.enabled) !== 0 }];
+  });
+  const activeStates = states.filter(state => state.active);
+  const graceExpiryTime = activeStates.some(state => state.unlimited) ? 0 : Math.max(0, ...activeStates.map(state => state.expiryTime));
   return {
     days,
-    nodeIds,
+    nodeIds: activeStates.map(state => state.nodeId),
+    states,
     graceExpiryTime,
-    active: Boolean(expiryMs > 0 && expiryMs <= nowMs && graceExpiryTime > nowMs && nodeIds.length)
+    active: activeStates.length > 0
   };
+}
+
+function validateSupportIsolation(node) {
+  const base = value => {
+    const text = String(value || '').trim().replace(/\/+$/, '');
+    try { return new URL(text).origin.toLowerCase(); } catch { return text.toLowerCase(); }
+  };
+  const peers = db.prepare('SELECT * FROM nodes WHERE id != ?').all(Number(node.id || 0));
+  const role = getSubscriptionExpiredGraceNodeIds().includes(Number(node.id));
+  for (const other of peers) {
+    if (!role && !node.expired_support && !getSubscriptionExpiredGraceNodeIds().includes(Number(other.id))) continue;
+    if (base(node.panel_url) !== base(other.panel_url)) continue;
+    // A fresh disabled clone has no accounts yet and must not break its source.
+    // Any later provisioning or enabling of that clone is validated separately.
+    if (Number(other.enabled) === 0 && !getSubscriptionExpiredGraceNodeIds().includes(Number(other.id)) &&
+        !db.prepare('SELECT 1 FROM client_nodes WHERE node_id = ? LIMIT 1').get(other.id)) continue;
+    // Both Remnawave and 3x-ui's new API can update a user globally.
+    // A different inbound/squad alone does not isolate expiry or enable state.
+    throw new Error('Служебному узлу нужна отдельная панель 3x-ui или Remnawave, не используемая другими узлами Nexus. Другого inbound или Squad недостаточно: общая удалённая учётная запись может открыть обычный VPN.');
+  }
+}
+
+function setExpiredSupportNode(node, enabled) {
+  if (enabled) {
+    validateSupportIsolation({ ...node, expired_support: true });
+    if (getSubscriptionDeviceLimitNodeIds().includes(Number(node.id))) throw new Error('Узел уже используется для превышения лимита устройств. Выберите отдельный узел для истёкших подписок.');
+  }
+  const ids = new Set(getSubscriptionExpiredGraceNodeIds());
+  if (enabled) ids.add(Number(node.id)); else ids.delete(Number(node.id));
+  setSetting('subscription_expired_grace_node_ids', JSON.stringify([...ids]));
+  if (enabled) db.prepare('UPDATE client_nodes SET subscription_policy_only = 1 WHERE node_id = ?').run(node.id);
+  // Reconciliation runs out of band, persists failures and retries after restart.
+  scheduleSupportReconcile();
+}
+
+function supportOptionsForNode(node, client, opts = {}) {
+  const nodeId = Number(node.id || node.node_id || 0);
+  if (client?.id && getSubscriptionExpiredGraceNodeIds().length) validateSupportIsolation(node);
+  if (!client?.id || !getSubscriptionExpiredGraceNodeIds().includes(nodeId)) return opts;
+  const current = db.prepare('SELECT * FROM clients WHERE id = ?').get(client.id) || client;
+  const grant = db.prepare('SELECT * FROM client_support_grants WHERE client_id = ? AND node_id = ?').get(client.id, nodeId);
+  const state = supportAccess(current, grant, getSubscriptionExpiredGraceDays());
+  return { ...opts, enabled: state.active && Number(node.enabled) !== 0, node_enabled: true,
+    expiry_time: state.expiryTime, traffic_gb: 0, limit_ip: 0 };
+}
+
+let supportReconcilePending = null;
+function scheduleSupportReconcile() {
+  if (!supportReconcilePending) supportReconcilePending = reconcileSupportNodes().catch(err => console.error('Support sync:', err.message)).finally(() => { supportReconcilePending = null; });
+  return supportReconcilePending;
+}
+
+const supportPairPending = new Map();
+function syncSupportPair(node, client, reserved) {
+  const key = `${node.id}:${client.id}`;
+  if (supportPairPending.has(key)) return supportPairPending.get(key);
+  const pending = performSupportPairSync(node, client, reserved).finally(() => supportPairPending.delete(key));
+  supportPairPending.set(key, pending);
+  return pending;
+}
+
+async function performSupportPairSync(node, client, reserved) {
+  const grant = db.prepare('SELECT * FROM client_support_grants WHERE client_id = ? AND node_id = ?').get(client.id, node.id);
+  const state = supportAccess(client, grant, getSubscriptionExpiredGraceDays());
+  const active = reserved && Number(node.enabled) !== 0 && state.active;
+  const map = db.prepare('SELECT * FROM client_nodes WHERE client_id = ? AND node_id = ?').get(client.id, node.id);
+  const signature = createHash('sha256').update(JSON.stringify([active, state.expiryTime, reserved, node.enabled, node.panel_url, node.panel_path, node.inbound_id, node.api_token_enc, node.password_enc, node.api_auth_mode, node.username, node.remnawave_internal_squad_uuid, node.remnawave_node_uuid, client.uuid, client.login, map?.id || 0, map?.enabled])).digest('hex');
+  const old = db.prepare('SELECT * FROM client_support_sync WHERE client_id = ? AND node_id = ?').get(client.id, node.id);
+  if (old?.signature === signature && !old.error) return;
+  let error = '';
+  try {
+    if (reserved) {
+      validateSupportIsolation(node);
+      const options = { enabled: active, node_enabled: true, expiry_time: state.expiryTime, traffic_gb: 0, limit_ip: 0 };
+      if (map) await updateClientOnNode(node, map, client, options);
+      else await ensureAggregatorClientOnNode(node, client, options);
+      db.prepare('UPDATE client_nodes SET subscription_policy_only = 1 WHERE client_id = ? AND node_id = ?').run(client.id, node.id);
+    } else if (map && Number(map.subscription_policy_only) === 1) {
+      await updateClientOnNode(node, map, client, { enabled: false, node_enabled: false, expiry_time: client.expiry_time });
+    }
+  } catch (err) { error = String(err.message || err).slice(0, 1000); }
+  db.prepare(`INSERT INTO client_support_sync(client_id,node_id,signature,updated_at,error) VALUES(?,?,?,?,?)
+    ON CONFLICT(client_id,node_id) DO UPDATE SET signature=excluded.signature,updated_at=excluded.updated_at,error=excluded.error`)
+    .run(client.id, node.id, signature, Date.now(), error);
+  if (error) throw new Error(error);
+}
+
+async function reconcileSupportNodes() {
+  const reserved = new Set(getSubscriptionExpiredGraceNodeIds());
+  const previous = db.prepare('SELECT DISTINCT node_id FROM client_support_sync').all().map(row => Number(row.node_id));
+  const wanted = new Set([...reserved, ...previous]);
+  const nodes = db.prepare('SELECT * FROM nodes').all().filter(node => wanted.has(Number(node.id)));
+  const clients = db.prepare('SELECT * FROM clients').all();
+  for (const node of nodes) {
+    await runWithConcurrency(clients, 3, client => syncSupportPair(node, client, reserved.has(Number(node.id))));
+  }
+}
+
+function assignSupportDays(ids, nodeIds, mode, value) {
+  const days = parseSupportDays(mode, value, getSubscriptionExpiredGraceDays());
+  const allowed = new Set(getSubscriptionExpiredGraceNodeIds());
+  if (!nodeIds.length || nodeIds.some(id => !allowed.has(Number(id)))) throw new Error('Выберите служебный узел для истёкших подписок');
+  const clients = ids.map(id => db.prepare('SELECT * FROM clients WHERE id = ?').get(id)).filter(Boolean);
+  if (!clients.length) throw new Error('Клиенты не выбраны');
+  db.transaction(() => {
+    for (const client of clients) for (const nodeId of nodeIds) {
+      if (days === null) db.prepare('DELETE FROM client_support_grants WHERE client_id = ? AND node_id = ?').run(client.id, nodeId);
+      else {
+        const base = Number(client.expiry_time || 0);
+        const until = days === 0 ? 0 : Math.max(Date.now(), base) + days * 86400000;
+        db.prepare(`INSERT INTO client_support_grants(client_id,node_id,days,until_ms,base_expiry) VALUES(?,?,?,?,?)
+          ON CONFLICT(client_id,node_id) DO UPDATE SET days=excluded.days,until_ms=excluded.until_ms,base_expiry=excluded.base_expiry`)
+          .run(client.id, nodeId, days, until, base);
+      }
+      db.prepare('DELETE FROM client_support_sync WHERE client_id = ? AND node_id = ?').run(client.id, nodeId);
+    }
+  })();
+  scheduleSupportReconcile();
+  return clients.length;
 }
 
 function sanitizeSubscriptionPolicyNodeIdsFromBody(value) {
@@ -2974,30 +3109,28 @@ async function buildSubscriptionEntriesForRequest(req, res, clientRow, options =
   // is an expired subscription.
   applySubscriptionDeviceHeaders(res, expired ? { ...deviceState, allowed: true, reason: '' } : deviceState);
 
-  if (expired && isExpiredSubscriptionNoticeEnabled()) {
+  if (expired && (isExpiredSubscriptionNoticeEnabled() || getSubscriptionExpiredGraceNodeIds().length)) {
     const grace = getExpiredGraceState(clientRow);
     if (grace.active) {
       // A policy node is global: the client does not need to have been manually
       // assigned to it beforehand. Provision a missing remote account lazily on
       // the first expired refresh, then keep only these nodes enabled until the
       // grace deadline.
-      await ensureSubscriptionPolicyNodesForClient(clientRow, grace.nodeIds, {
-        enabled: true,
-        expiryTime: grace.graceExpiryTime,
-        limitIp: 0,
-        trafficGb: 0,
-        forceRemoteState: true
-      });
+      for (const node of getSubscriptionPolicyNodesByIds(grace.nodeIds)) {
+        try { await syncSupportPair(node, clientRow, true); }
+        catch (err) { console.error('Support provision:', err.message); }
+      }
     }
     await enforceExpiredClientRemoteState(clientRow, grace.active ? {
       graceNodeIds: grace.nodeIds,
       graceExpiryTime: grace.graceExpiryTime
     } : {});
 
-    const graceEntries = grace.active
-      ? await buildSubscriptionEntries(clientRow, true, {
+    const readyGraceNodeIds = grace.nodeIds.filter(id => !db.prepare('SELECT error FROM client_support_sync WHERE client_id = ? AND node_id = ?').get(clientRow.id, id)?.error);
+    const graceEntries = grace.active && readyGraceNodeIds.length
+      ? await buildSubscriptionEntries({ ...clientRow, expiry_time: grace.graceExpiryTime, traffic_gb: 0 }, true, {
           ...options,
-          onlyNodeIds: grace.nodeIds,
+          onlyNodeIds: readyGraceNodeIds,
           excludeNodeIds: []
         })
       : [];
@@ -3006,7 +3139,7 @@ async function buildSubscriptionEntriesForRequest(req, res, clientRow, options =
       entries: [buildSubscriptionNoticeEntry('expired'), ...graceEntries],
       deviceState,
       accessState: grace.active ? 'expired-grace' : 'expired',
-      subscriptionExpiryOverride: grace.active ? grace.graceExpiryTime : 0
+      subscriptionExpiryOverride: grace.active ? (grace.graceExpiryTime || -1) : 0
     };
   }
 
@@ -9649,8 +9782,8 @@ function buildSubscriptionUserInfo(entries, clientRow, options = {}) {
   // disable the whole profile before the Telegram/WhatsApp support node can be
   // used. Override only the emitted Subscription-Userinfo timestamp.
   const expiryOverride = Math.max(0, Number(options.expiryTime || 0));
-  const effectiveClientRow = expiryOverride > 0
-    ? { ...clientRow, expiry_time: expiryOverride }
+  const effectiveClientRow = Number(options.expiryTime) === -1 ? { ...clientRow, expiry_time: 0, traffic_gb: 0 } : expiryOverride > 0
+    ? { ...clientRow, expiry_time: expiryOverride, traffic_gb: 0 }
     : clientRow;
   const summary = buildSubscriptionUsageSummary(entries, effectiveClientRow);
   const parts = [
@@ -9659,7 +9792,7 @@ function buildSubscriptionUserInfo(entries, clientRow, options = {}) {
   ];
 
   if (summary.totalBytes > 0) parts.push(`total=${summary.totalBytes}`);
-  if (summary.expiryTimeMs > 0) parts.push(`expire=${toEpochSeconds(summary.expiryTimeMs)}`);
+  if (summary.expiryTimeMs > 0 && Number(options.expiryTime) !== -1) parts.push(`expire=${toEpochSeconds(summary.expiryTimeMs)}`);
 
   return parts.join('; ');
 }
@@ -9778,6 +9911,10 @@ function buildClientPayloadForImport(node, inbound, rc, clientRow, oldRemote) {
 }
 
 async function ensureImportedClientOnNode(node, clientRow, rc) {
+  if (getSubscriptionExpiredGraceNodeIds().length) validateSupportIsolation(node);
+  if (getSubscriptionExpiredGraceNodeIds().includes(Number(node.id))) {
+    return ensureAggregatorClientOnNode(node, clientRow);
+  }
   if (isRemnawaveNode(node)) {
     return ensureRemnawaveUserOnNode(node, clientRow, {
       uuid: clientRow.uuid,
@@ -10728,6 +10865,7 @@ function updateLocalClientNodeState(node, map, values = {}) {
 }
 
 async function updateClientOnNode(node, map, client, opts = {}) {
+  opts = supportOptionsForNode(node, client, opts);
   if (isClientActivationPending(client)) opts = { ...opts, enabled: false, expiry_time: 0 };
   if (isRemnawaveNode(node)) return updateRemnawaveUserOnNode(node, map, client, opts);
   if (isH1CloudNode(node)) return updateH1CloudClientOnNode(node, map, client, opts);
@@ -11368,6 +11506,7 @@ function buildTopClientPeriodUsageReport(period = 'week', limit = 500) {
 }
 
 async function ensureAggregatorClientOnNode(node, client, opts = {}) {
+  opts = supportOptionsForNode(node, client, opts);
   if (isClientActivationPending(client)) opts = { ...opts, enabled: false, expiry_time: 0 };
   if (isRemnawaveNode(node)) return ensureRemnawaveUserOnNode(node, client, opts);
   if (isH1CloudNode(node)) return ensureH1CloudClientOnNode(node, client, opts);
@@ -14440,9 +14579,11 @@ app.post('/settings/happ-control', requireAuth, (req, res) => {
 
     const graceDays = Number(req.body.subscription_expired_grace_days) === 3 ? 3 : 7;
     const expiredGraceNodeIds = sanitizeSubscriptionPolicyNodeIdsFromBody(req.body.subscription_expired_grace_node_ids);
+    for (const id of expiredGraceNodeIds) validateSupportIsolation({ ...db.prepare('SELECT * FROM nodes WHERE id = ?').get(id), expired_support: true });
     const deviceLimitNodeIds = sanitizeSubscriptionPolicyNodeIdsFromBody(req.body.subscription_device_limit_node_ids);
     setSetting('subscription_expired_grace_days', String(graceDays));
     setSetting('subscription_expired_grace_node_ids', JSON.stringify(expiredGraceNodeIds));
+    scheduleSupportReconcile();
     setSetting('subscription_device_limit_node_ids', JSON.stringify(deviceLimitNodeIds));
 
     const jsonMuxEnabled = req.body.json_mux_enabled === '1';
@@ -14802,7 +14943,7 @@ app.post('/settings/telegram-test', requireAuth, async (req, res) => {
 });
 
 function exportBackupPayload(req = null) {
-  const tables = ['app_users', 'app_settings', 'nodes', 'auto_select_profiles', 'client_groups', 'client_tags', 'clients', 'subscription_devices', 'client_tag_assignments', 'client_nodes', 'node_inbound_cache', 'sni_profiles', 'telegram_users', 'telegram_orders', 'telegram_tickets', 'telegram_ticket_messages', 'telegram_announcements', 'vpn_hosts', 'vpn_services', 'vpn_clients', 'vpn_jobs'];
+const tables = ['client_support_grants', 'client_support_sync', 'app_users', 'app_settings', 'nodes', 'auto_select_profiles', 'client_groups', 'client_tags', 'clients', 'subscription_devices', 'client_tag_assignments', 'client_nodes', 'node_inbound_cache', 'sni_profiles', 'telegram_users', 'telegram_orders', 'telegram_tickets', 'telegram_ticket_messages', 'telegram_announcements', 'vpn_hosts', 'vpn_services', 'vpn_clients', 'vpn_jobs'];
   const data = {};
   for (const table of tables) data[table] = db.prepare(`SELECT * FROM ${table}`).all();
   return {
@@ -14828,8 +14969,8 @@ function ensureAdminUserExists() {
 
 function restoreBackupPayload(payload) {
   if (!payload || payload.app !== '3xui-aggregator' || !payload.data) throw new Error('Неверный файл резервной копии');
-  const deleteTables = ['vpn_jobs', 'vpn_clients', 'vpn_services', 'vpn_hosts', 'telegram_ticket_messages', 'telegram_tickets', 'telegram_orders', 'telegram_announcements', 'telegram_users', 'sni_profiles', 'node_inbound_cache', 'client_nodes', 'client_tag_assignments', 'subscription_devices', 'clients', 'client_tags', 'client_groups', 'auto_select_profiles', 'nodes', 'app_settings', 'app_users'];
-  const restoreTables = ['app_users', 'app_settings', 'nodes', 'auto_select_profiles', 'client_groups', 'client_tags', 'clients', 'subscription_devices', 'client_tag_assignments', 'client_nodes', 'node_inbound_cache', 'sni_profiles', 'telegram_users', 'telegram_orders', 'telegram_tickets', 'telegram_ticket_messages', 'telegram_announcements', 'vpn_hosts', 'vpn_services', 'vpn_clients', 'vpn_jobs'];
+  const deleteTables = ['client_support_grants', 'client_support_sync', 'vpn_jobs', 'vpn_clients', 'vpn_services', 'vpn_hosts', 'telegram_ticket_messages', 'telegram_tickets', 'telegram_orders', 'telegram_announcements', 'telegram_users', 'sni_profiles', 'node_inbound_cache', 'client_nodes', 'client_tag_assignments', 'subscription_devices', 'clients', 'client_tags', 'client_groups', 'auto_select_profiles', 'nodes', 'app_settings', 'app_users'];
+  const restoreTables = ['client_support_grants', 'client_support_sync', 'app_users', 'app_settings', 'nodes', 'auto_select_profiles', 'client_groups', 'client_tags', 'clients', 'subscription_devices', 'client_tag_assignments', 'client_nodes', 'node_inbound_cache', 'sni_profiles', 'telegram_users', 'telegram_orders', 'telegram_tickets', 'telegram_ticket_messages', 'telegram_announcements', 'vpn_hosts', 'vpn_services', 'vpn_clients', 'vpn_jobs'];
   const columnCache = new Map();
   const tx = db.transaction(() => {
     for (const table of deleteTables) db.prepare(`DELETE FROM ${table}`).run();
@@ -15144,6 +15285,7 @@ app.post('/nodes', requireAuth, async (req, res) => {
               ? normalizeH1Cloud3xuiSubBaseUrl({ panel_url, sub_base_url: h1cloud_3xui_sub_base_url, h1cloud_3xui_sub_port: h1cloud3xuiSubPort })
               : ''));
 
+    validateSupportIsolation({ id: 0, expired_support: req.body.expired_support === '1', panel_url: storedPanelUrl, panel_path: storedPanelPath, inbound_id, node_type: normalizedNodeType });
     const storedPasswordEnc = encrypt(apiMode === 'password' ? String(password || '').trim() : '', APP_SECRET);
     const storedApiTokenEnc = apiMode === 'token' ? encrypt(String(api_token || '').trim(), APP_SECRET) : '';
     let importedInbound = null;
@@ -15259,6 +15401,7 @@ app.post('/nodes', requireAuth, async (req, res) => {
     );
 
     const node = db.prepare('SELECT * FROM nodes WHERE id = ?').get(info.lastInsertRowid);
+    setExpiredSupportNode(node, req.body.expired_support === '1');
     if (importedInbound) saveInboundCache(node, importedInbound);
     let sniApplyMessage = '';
     let sniApplyError = '';
@@ -15413,8 +15556,9 @@ app.post('/nodes/:id/toggle', requireAuth, (req, res) => {
     }
 
     const nextEnabled = Number(node.enabled) === 1 ? 0 : 1;
-
+    if (nextEnabled) validateSupportIsolation({ ...node, enabled: 1 });
     db.prepare('UPDATE nodes SET enabled = ? WHERE id = ?').run(nextEnabled, nodeId);
+    if (getSubscriptionExpiredGraceNodeIds().includes(nodeId)) scheduleSupportReconcile();
 
     const msg = isRemnawaveNode(node)
       ? (nextEnabled ? 'Remnawave включён и снова будет попадать в SUB/JSON клиентов.' : 'Remnawave отключён и исключён из SUB/JSON клиентов.')
@@ -15601,6 +15745,7 @@ app.post('/nodes/:id/edit', requireAuth, async (req, res) => {
               ? normalizeH1Cloud3xuiSubBaseUrl({ panel_url, sub_base_url: h1cloud_3xui_sub_base_url, h1cloud_3xui_sub_port: h1cloud3xuiSubPort })
               : ''));
 
+    validateSupportIsolation({ ...existingNode, expired_support: req.body.expired_support === '1', panel_url: storedPanelUrl, panel_path: storedPanelPath, inbound_id, node_type: normalizedNodeType });
     let preflightInbound = null;
     let refreshedSubSource = {
       mux: String(existingNode.source_sub_json_mux || ''),
@@ -15720,6 +15865,7 @@ app.post('/nodes/:id/edit', requireAuth, async (req, res) => {
       if (String(key).startsWith(`${nodeId}:`)) remnawaveHostDescriptorCache.delete(key);
     }
     const updatedNode = db.prepare('SELECT * FROM nodes WHERE id = ?').get(nodeId);
+    setExpiredSupportNode(updatedNode, req.body.expired_support === '1');
     if (preflightInbound) saveInboundCache(updatedNode, preflightInbound);
     else if (normalizedNodeType !== NODE_TYPE_3XUI) db.prepare('DELETE FROM node_inbound_cache WHERE node_id = ?').run(nodeId);
     let inboundPortWarning = '';
@@ -15752,6 +15898,18 @@ app.post('/nodes/:id/edit', requireAuth, async (req, res) => {
   } catch (err) {
     res.redirect('/nodes/' + req.params.id + '/edit?error=' + encodeURIComponent(String(err.message || err)));
   }
+});
+
+app.post('/nodes/:id/renew-support', requireAuth, (req, res) => {
+  try {
+    const nodeId = Number(req.params.id);
+    if (!getSubscriptionExpiredGraceNodeIds().includes(nodeId)) throw new Error('Узел не является служебным');
+    const clients = db.prepare('SELECT * FROM clients WHERE enabled = 1 AND expiry_time > 0 AND expiry_time <= ?').all(Date.now());
+    const ids = clients.filter(client => !isClientActivationPending(client) && !supportAccess(client,
+      db.prepare('SELECT * FROM client_support_grants WHERE client_id=? AND node_id=?').get(client.id, nodeId), getSubscriptionExpiredGraceDays()).active).map(client => client.id);
+    const count = ids.length ? assignSupportDays(ids, [nodeId], 'renew') : 0;
+    res.redirect('/nodes?tab=list&message=' + encodeURIComponent(`Продлён служебный доступ ${count} клиентам на ${getSubscriptionExpiredGraceDays()} дней от текущего времени. Действующие и бессрочные назначения сохранены. Синхронизация выполняется в фоне.`));
+  } catch (err) { res.redirect('/nodes?error=' + encodeURIComponent(err.message)); }
 });
 
 app.post('/nodes/:id/h1cloud-transport', requireAuth, (req, res) => {
@@ -16197,6 +16355,11 @@ app.post('/clients/apply-to-node', requireAuth, async (req, res) => {
     if (!Array.isArray(ids)) ids = [ids];
     ids = uniqueList(ids.map(Number).filter(id => Number.isInteger(id) && id > 0));
     if (!ids.length) throw new Error('Сначала выберите хотя бы одного клиента. Массовое применение ко всем без явного выбора отключено.');
+    if (String(req.body.support_mode || '')) {
+      const supportIds = req.body.support_node_id ? [Number(req.body.support_node_id)] : getSubscriptionExpiredGraceNodeIds();
+      const count = assignSupportDays(ids, supportIds, String(req.body.support_mode), req.body.support_days);
+      return res.redirect('/clients?message=' + encodeURIComponent(`Служебный доступ назначен ${count} клиентам. Основная подписка не изменена. Изменения отправляются на узлы в фоне; ошибки доступны в списке узлов.`));
+    }
 
     const nodeId = Number(req.body.node_id || 0);
     const node = nodeId > 0 ? db.prepare('SELECT * FROM nodes WHERE id = ?').get(nodeId) : null;
@@ -18491,7 +18654,7 @@ app.get('/json/:slug', async (req, res) => {
       // Virtual auto-select profiles are intentionally JSON-only: a plain
       // vless:// link cannot carry an Xray balancer or an observatory. Put the
       // single easy-to-use profile before the individual regions in Happ.
-      const resultConfigs = buildAutoSelectJsonConfigs(client, vlessEntries, subscriptionName);
+      const resultConfigs = isClientExpired(client) ? [] : buildAutoSelectJsonConfigs(client, vlessEntries, subscriptionName);
       const nativeJsonCache = new Map();
       for (let index = 0; index < vlessEntries.length; index += 1) {
         const entry = vlessEntries[index];
@@ -19944,6 +20107,8 @@ app.use((err, req, res, next) => {
 app.listen(PORT, () => {
   console.log(`3xui-aggregator started on :${PORT}`);
   startTelegramManagerBot();
+  setTimeout(scheduleSupportReconcile, 2000).unref();
+  setInterval(scheduleSupportReconcile, 60000).unref();
   setTimeout(() => { enforceVpnClientExpirations().catch(err => console.error('VPN expiry sweep failed:', err)); }, 15000);
   setInterval(() => { enforceVpnClientExpirations().catch(err => console.error('VPN expiry sweep failed:', err)); }, 60000).unref();
   setInterval(() => {

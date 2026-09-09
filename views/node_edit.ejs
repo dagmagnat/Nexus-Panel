@@ -356,6 +356,10 @@
         <div class="alert ok">Нажми «Загрузить параметры из 3x-ui», чтобы увидеть порт, REALITY/SNI/Short ID и sniffing текущего inbound.</div>
       <% } %>
 
+      <label class="switch-row compact">
+        <input type="checkbox" name="expired_support" value="1" <%= (typeof expiredSupportNodeIds !== 'undefined' && expiredSupportNodeIds.includes(Number(node.id))) ? 'checked' : '' %> />
+        <span><strong>Использовать только для истёкших подписок</strong><small>Создаётся у всех клиентов в фоне, но скрыт и выключен до окончания основной подписки. По умолчанию — 3/7 дней из настроек. Индивидуальные сроки: Клиенты → Применить к выбранным → Служебный доступ. Нужна отдельная панель 3x-ui / Remnawave, не общая с обычными узлами; маршрутизацию Telegram настройте отдельно.</small></span>
+      </label>
     </form>
 
     <div class="node-edit-final-actions">
