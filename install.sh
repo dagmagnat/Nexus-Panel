@@ -1824,6 +1824,8 @@ restore_from_backup() {
   install_forwarder_service
 
   say "Восстановление завершено."
+  load_existing_config
+  print_result
 }
 
 get_public_server_ip() {
@@ -2337,7 +2339,22 @@ fresh_install_flow() {
   install_shortcut_command
 }
 
+print_nexus_credentials() {
+  # Secrets go directly to the interactive terminal, never to tee/log output.
+  if { exec 8>/dev/tty; } 2>/dev/null; then
+    printf '\n=== Nexus: сохранённые данные входа (не публикуйте) ===\n' >&8
+    printf 'Адрес: %s/login\nЛогин из .env: %s\nПароль из .env: %s\n' \
+      "${PANEL_PUBLIC_URL%/}" "$ADMIN_USER" "${ADMIN_PASS:-не сохранён}" >&8
+    printf 'Если данные меняли в веб-панели, значения из .env могут устареть. Обновление не сбрасывает пароль из базы.\n' >&8
+    exec 8>&-
+  else
+    printf 'Для просмотра сохранённых логина/пароля Nexus нужен SSH-терминал. Они находятся в .env экземпляра.\n'
+  fi
+}
+
 print_result() {
+  load_existing_config
+  print_nexus_credentials
   if local_panels_configured; then
     local_panels_command status
     local_panels_command credentials

@@ -132,6 +132,53 @@ class LocalPanelsTests(unittest.TestCase):
         self.assertIn("https://[2001:db8::1]:2053", m.caddy_sites(s))
         self.assertIn("tls internal", m.caddy_sites(s))
 
+    def test_public_ip_certificate_uses_http_challenge_and_capable_caddy(self):
+        s = state(); s['providers'].pop('remnawave')
+        s['providers']['3xui'].update(mode='ip', host='8.8.8.8', port=2053, certificate='public')
+        text = m.caddy_sites(s)
+        self.assertIn('profile shortlived', text)
+        self.assertIn('disable_tlsalpn_challenge', text)
+        self.assertIn('http://8.8.8.8', text)
+        self.assertNotIn('tls internal', text)
+        config = m.proxy_override(s, self.root, True)
+        self.assertEqual(config['services']['caddy']['image'], 'caddy:2.11.0')
+        self.assertEqual([p['target'] for p in config['services']['caddy']['ports']], [80, 2053])
+
+    def test_private_ip_cannot_request_public_certificate(self):
+        s = state(); s['providers']['3xui'].update(mode='ip', host='192.168.1.2', port=2053, certificate='public')
+        with self.assertRaises(ValueError): m.caddy_sites(s)
+
+    def certificate_fixture(self):
+        self.xui_fixture()
+        (self.app / '.env').write_text('PORT=3000\nPANEL_PUBLIC_URL=https://nexus.example.com\nSUB_PUBLIC_URL=https://sub.example.com\n')
+        (self.app / 'docker-compose.yml').write_text('services:\n  caddy:\n    image: caddy:2\n')
+        (self.app / 'Caddyfile').write_text('nexus.example.com {\n reverse_proxy aggregator:3000\n}\n')
+        m.render(self.args, self.root)
+
+    def test_certificate_cancel_preserves_state(self):
+        self.certificate_fixture()
+        before = (self.root / 'state.json').read_bytes()
+        with patch.object(m, 'ask', side_effect=['1', 'new.example.com', 'НЕТ']), patch.object(m, 'run', return_value='{"services":{"caddy":{"ports":[{"published":"80"},{"published":"443"}]}}}') as run:
+            m.configure_certificate(self.args, self.root)
+        self.assertEqual((self.root / 'state.json').read_bytes(), before)
+        self.assertEqual(run.call_count, 1)
+
+    def test_certificate_failed_pull_restores_all_configs_without_stopping_nexus(self):
+        self.certificate_fixture()
+        targets = [self.root / 'state.json', self.app / 'Caddyfile', self.app / 'docker-compose.override.yml', self.root / 'override-managed', self.root / 'sites/panels.caddy']
+        before = {p: p.read_bytes() for p in targets}
+        with patch.object(m, 'ask', side_effect=['1', 'new.example.com', 'ДА']), patch.object(m, 'run', side_effect=['{"services":{"caddy":{"ports":[{"published":"80"},{"published":"443"}]}}}', '', RuntimeError('pull failed')]) as run:
+            with self.assertRaises(RuntimeError): m.configure_certificate(self.args, self.root)
+        self.assertEqual(before, {p: p.read_bytes() for p in targets})
+        self.assertFalse(any('stop' in c.args[0] or 'down' in c.args[0] for c in run.call_args_list))
+
+    def test_certificate_success_recreates_only_caddy(self):
+        self.certificate_fixture()
+        with patch.object(m, 'ask', side_effect=['1', 'new.example.com', 'ДА']), patch.object(m, 'show_credentials'), patch.object(m, 'run', side_effect=['{"services":{"caddy":{"ports":[{"published":"80"},{"published":"443"}]}}}', '', '', '{}', '']) as run:
+            m.configure_certificate(self.args, self.root)
+        self.assertEqual(run.call_args_list[-1].args[0][-5:], ['up', '-d', '--no-deps', '--force-recreate', 'caddy'])
+        self.assertEqual(json.loads((self.root / 'state.json').read_text())['providers']['3xui']['host'], 'new.example.com')
+
     def test_duplicate_panel_domains_and_nexus_ports_fail(self):
         s = state(); s["providers"]["3xui"]["host"] = self.args.panel_domain
         with self.assertRaises(ValueError): m.validate_names(s, self.args)

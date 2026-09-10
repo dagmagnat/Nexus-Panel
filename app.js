@@ -3577,12 +3577,7 @@ function syncDeploymentPublicUrlSettings() {
 }
 
 function normalizeRootUrl(panelUrl, panelPath) {
-  let url = String(panelUrl || '').trim().replace(/\/+$/, '');
-  let path = String(panelPath || '').trim();
-
-  if (path && !path.startsWith('/')) path = `/${path}`;
-
-  return `${url}${path}`.replace(/\/+$/, '');
+  return require('./lib_node_api_address').normalizePanelRoot(panelUrl, panelPath);
 }
 
 const NODE_TYPE_3XUI = '3xui';
@@ -5187,6 +5182,8 @@ async function buildNodeApiAuth(node, timeoutMs = FETCH_TIMEOUT_MS) {
 }
 
 function explainNodeApiAuthError(node, response, data, path) {
+  const connectionHint = require('./lib_node_api_address').connectionHint(response.status, data);
+  if (connectionHint) return connectionHint;
   const mode = getNodeApiAuthMode(node);
   const msg = data?.msg || data?.message || '';
   if (response.status === 401 || response.status === 403 || response.status === 404) {
@@ -5410,7 +5407,7 @@ async function apiGet(node, path, timeoutMs = NODE_API_TIMEOUT_MS) {
 
   const data = await safeJson(response);
 
-  if (!response.ok) {
+  if (!response.ok || data?.success === false || data?.raw !== undefined) {
     const apiErr = new Error(explainNodeApiAuthError(node, response, data, `GET ${path}`));
     apiErr.status = response.status;
     apiErr.path = path;

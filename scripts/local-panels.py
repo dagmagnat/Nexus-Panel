@@ -23,6 +23,7 @@ import sys
 import tempfile
 import urllib.error
 import urllib.request
+import urllib.parse
 
 REPOS = {"3xui": "MHSanaei/3x-ui", "remnawave": "remnawave/backend"}
 TAG = re.compile(r"v?\d+\.\d+\.\d+(?:\.\d+)?\Z")
@@ -288,7 +289,14 @@ def caddy_sites(state):
         else:
             host = ipaddress.ip_address(item["host"])
             address = f"[{host}]" if host.version == 6 else str(host)
-            blocks.append(f"https://{address}:{port(item['port'])} {{\n    tls internal\n    reverse_proxy {internal}\n}}")
+            tls = "tls internal"
+            if item.get("certificate") == "public":
+                if not host.is_global:
+                    raise ValueError("Публичный сертификат требует публичный IP")
+                tls = "tls {\n        issuer acme https://acme-v02.api.letsencrypt.org/directory {\n            profile shortlived\n            disable_tlsalpn_challenge\n        }\n    }"
+                # Caddy's ACME HTTP handler answers challenges before site routes.
+                blocks.append(f"http://{address} {{\n    respond 404\n}}")
+            blocks.append(f"https://{address}:{port(item['port'])} {{\n    {tls}\n    reverse_proxy {internal}\n}}")
     return "\n\n".join(blocks) + "\n"
 
 
@@ -320,6 +328,9 @@ def proxy_override(state, root, has_caddy, bind_ip=""):
     ports = []
     if any(p["mode"] == "domain" for p in state["providers"].values()):
         ports += [80, 443]
+    public_ip = any(p["mode"] == "ip" and p.get("certificate") == "public" for p in state["providers"].values())
+    if public_ip:
+        ports.append(80)
     ports += [p["port"] for p in state["providers"].values() if p["mode"] == "ip"]
     published = [{"target": n, "published": str(n), "protocol": "tcp", **({"host_ip": bind_ip} if bind_ip else {})} for n in sorted(set(ports))]
     caddy = {"networks": ["default", "nexus-local"], "volumes": [sites], "ports": published}
@@ -328,6 +339,9 @@ def proxy_override(state, root, has_caddy, bind_ip=""):
         caddy.update(common_service("caddy:2"))
         caddy["volumes"] += [str(root / "Caddyfile") + ":/etc/caddy/Caddyfile:ro", "nexus_local_tls:/data", "nexus_local_caddy_config:/config"]
         volumes = {"nexus_local_tls": {}, "nexus_local_caddy_config": {}}
+    if public_ip:
+        # 2.11 includes CertMagic 0.25.2 with Let's Encrypt IP issuance support.
+        caddy["image"] = "caddy:2.11.0"
     return {"services": {"aggregator": {"networks": ["default", "nexus-local"]}, "caddy": caddy},
             "networks": {"nexus-local": {"external": True, "name": "nexus-local-" + state["instance"] + "-front"}}, "volumes": volumes}
 
@@ -440,7 +454,13 @@ def wizard(args, root):
                 item["host"] = str(ipaddress.ip_address(ask("Публичный IP сервера")))
                 item["port"] = choose_ports("HTTPS-порт панели 3x-ui", 2053, ("tcp",), reserved_ports)[0][0]
                 reserved_ports.add(item["port"])
-                print("Браузер предупредит о локальном сертификате. Для доверенного HTTPS выберите домен.")
+                choice = ask("Сертификат IP: 1 — публичный Let's Encrypt (нужен доступ к TCP 80); 2 — локальный", "1")
+                if choice not in ("1", "2"):
+                    raise ValueError("Выберите сертификат 1 или 2")
+                item["certificate"] = "public" if choice == "1" else "internal"
+                if item["certificate"] == "public" and not ipaddress.ip_address(item["host"]).is_global:
+                    raise ValueError("Для публичного сертификата нужен публичный IP")
+                print("Сертификат и продление обслуживает Caddy; Nexus не нужно останавливать для проверки CA.")
             else:
                 item["host"] = domain(ask("Домен 3x-ui (например xui.example.com)"))
             item["vpn_ports"] = [f"{number}/{proto}" for number, proto in
@@ -467,8 +487,9 @@ def wizard(args, root):
         raise ValueError("Порты панелей и Xray пересекаются")
     assert_ports_free(bindings)
     needs_web = any(p["mode"] == "domain" for p in plan["providers"].values())
-    if needs_web and not args.has_web_proxy:
-        assert_ports_free([(80, "tcp"), (443, "tcp")])
+    needs_ip_acme = any(p.get("certificate") == "public" for p in plan["providers"].values())
+    if (needs_web or needs_ip_acme) and not args.has_web_proxy:
+        assert_ports_free([(80, "tcp")] + ([(443, "tcp")] if needs_web else []))
     print("\nБудет установлено:")
     for kind in new:
         p = plan["providers"][kind]
@@ -609,8 +630,9 @@ def install_xui_cli(args, root, bin_dir=Path("/usr/local/bin")):
     helper = Path(__file__).resolve()
     marker = f"# Nexus managed x-ui CLI: {args.instance}"
     script = ("#!/usr/bin/env bash\nset -euo pipefail\n" + marker + "\n"
-              + 'if [ "$#" -gt 1 ]; then echo "Usage: x-ui [menu|status|credentials|password|token|start|stop|restart|logs|settings]"; exit 2; fi\n'
+              + 'if [ "$#" -gt 1 ]; then echo "Usage: x-ui [menu|status|credentials|password|token|start|stop|restart|logs|settings|certificate]"; exit 2; fi\n'
               + "exec python3 " + shlex.quote(str(helper)) + " xui --instance " + shlex.quote(args.instance)
+              + " --app-dir " + shlex.quote(str(helper.parent.parent))
               + ' --xui-action "${1:-menu}"\n')
     bin_dir.mkdir(parents=True, exist_ok=True)
     for name in (f"x-ui-{args.instance}", f"xui-{args.instance}", "x-ui", "xui"):
@@ -670,11 +692,90 @@ def xui_change(args, root, action):
     show_credentials(args, root)
 
 
+def configure_certificate(args, root):
+    state = load_state(root, args.instance)
+    plan = copy.deepcopy(state)
+    item = plan["providers"]["3xui"]
+    app = Path(args.app_dir)
+    # Discover only Nexus-generated values; do not execute shell configuration.
+    env = read_env((app / ".env").read_text(encoding="utf-8"))
+    args.app_port = int(env.get("PORT", 3000))
+    args.bind_ip = env.get("INSTALL_BIND_IP", "")
+    for attr, key in (("panel_domain", "PANEL_PUBLIC_URL"), ("sub_domain", "SUB_PUBLIC_URL")):
+        host = urllib.parse.urlsplit(env.get(key, "")).hostname or ""
+        try:
+            ipaddress.ip_address(host)
+            host = ""
+        except ValueError:
+            pass
+        setattr(args, attr, host)
+    args.caddy_container = "3xui-aggregator-caddy" if args.instance == "default" else f"3xui-aggregator-{args.instance}-caddy"
+    choice = ask("HTTPS 3x-ui: 1 — домен; 2 — публичный сертификат IP; 3 — локальный сертификат IP", "1")
+    if choice == "1":
+        item.update(mode="domain", host=domain(ask("Отдельный домен 3x-ui")))
+        item.pop("certificate", None)
+        print("DNS A/AAAA домена должен указывать на этот VPS. TCP 80/443 должны быть доступны снаружи.")
+    elif choice in ("2", "3"):
+        host = str(ipaddress.ip_address(ask("Публичный IP", item["host"] if item["mode"] == "ip" else "")))
+        if choice == "2" and not ipaddress.ip_address(host).is_global:
+            raise ValueError("Нужен публичный IP для сертификата Let's Encrypt")
+        number = item.get("port") if item["mode"] == "ip" else None
+        if not number:
+            reserved = {args.app_port, 80, 443} | {int(p.split('/')[0]) for p in item.get("vpn_ports", [])}
+            number = choose_ports("HTTPS-порт", 2053, ("tcp",), reserved)[0][0]
+        item.update(mode="ip", host=host, port=number, certificate="public" if choice == "2" else "internal")
+        print("Для публичного IP-сертификата нужен доступ к TCP 80. Продление короткоживущего сертификата выполняет Caddy.")
+    else:
+        raise ValueError("Нет такого пункта")
+    validate_names(plan, args)
+    caddy_sites(plan)  # Validate before persisting anything.
+    base = ["docker", "compose", "--project-directory", str(app)]
+    current = json.loads(run(base + ["config", "--format", "json"], quiet=True))
+    current_ports = {int(p.get("published", 0)) for p in current.get("services", {}).get("caddy", {}).get("ports", [])}
+    needed = ({80, 443} if item["mode"] == "domain" else {item["port"]} | ({80} if choice == "2" else set()))
+    assert_ports_free([(n, "tcp") for n in needed - current_ports])
+    print("Меняется только внешний доступ 3x-ui через Caddy. Выпуск/продление не отбирают порты у Nexus.")
+    print("При применении настроек Caddy кратковременно перезапустится; VPN-контейнер 3x-ui не останавливается.")
+    if ask("Применить? ДА", "НЕТ").upper() not in ("ДА", "YES"):
+        return
+    targets = [root / "state.json", root / "sites/panels.caddy", root / "Caddyfile", root / "override-managed", app / "Caddyfile", app / "docker-compose.override.yml"]
+    previous = {p: p.read_bytes() if p.exists() else None for p in targets}
+    backup = Path(tempfile.mkdtemp(prefix="certificate-backup-", dir=root))
+    os.chmod(backup, 0o700)
+    for index, (file, content) in enumerate(previous.items()):
+        if content is not None:
+            private_write(backup / f"{index}-{file.name}", content.decode("utf-8"))
+    recreated = False
+    try:
+        private_write(root / "state.json", json.dumps(plan, indent=2) + "\n")
+        render(args, root)
+        run(base + ["config", "--quiet"])
+        run(base + ["pull", "caddy"])
+        run(base + ["run", "--rm", "--no-deps", "--entrypoint", "caddy", "caddy", "adapt", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"], quiet=True)
+        recreated = True
+        run(base + ["up", "-d", "--no-deps", "--force-recreate", "caddy"])
+    except (ValueError, RuntimeError, OSError, KeyboardInterrupt):
+        for file, content in previous.items():
+            if content is None:
+                file.unlink(missing_ok=True)
+            else:
+                private_write(file, content.decode("utf-8"))
+        if recreated:
+            run(base + ["up", "-d", "--no-deps", "--force-recreate", "caddy"])
+        raise
+    print("Конфигурация применена. Выдача сертификата идёт асинхронно — это ещё не подтверждение его получения.")
+    print("Проверка: docker logs --tail 80 " + args.caddy_container)
+    print("Резервная копия: " + str(backup))
+    show_credentials(args, root)
+
+
 def xui_action(args, root, action):
     require_admin()
     _, base = xui_context(args, root)
     if action == "credentials":
         show_credentials(args, root)
+    elif action == "certificate":
+        configure_certificate(args, root)
     elif action in ("password", "token"):
         xui_change(args, root, action)
     elif action == "status":
@@ -689,9 +790,9 @@ def xui_action(args, root, action):
             return
         run(base + [action, "local-3xui"])
     else:
-        choices = {"1": "status", "2": "credentials", "3": "password", "4": "token", "5": "start", "6": "stop", "7": "restart", "8": "logs", "9": "settings"}
+        choices = {"1": "status", "2": "credentials", "3": "password", "4": "token", "5": "start", "6": "stop", "7": "restart", "8": "logs", "9": "settings", "10": "certificate"}
         while True:
-            print(f"\n3x-ui / Docker — экземпляр {args.instance}\n1 — Статус\n2 — Данные входа и подключения Nexus\n3 — Сменить логин/пароль\n4 — Создать/перевыпустить API-токен\n5 — Запустить\n6 — Остановить\n7 — Перезапустить\n8 — Журнал\n9 — Текущие настройки\n0 — Выход")
+            print(f"\n3x-ui / Docker — экземпляр {args.instance}\n1 — Статус\n2 — Данные входа и подключения Nexus\n3 — Сменить логин/пароль\n4 — Создать/перевыпустить API-токен\n5 — Запустить\n6 — Остановить\n7 — Перезапустить\n8 — Журнал\n9 — Текущие настройки\n10 — Домен / IP и сертификат HTTPS\n0 — Выход")
             choice = ask("Выбор", "0")
             if choice == "0":
                 return
@@ -701,13 +802,13 @@ def xui_action(args, root, action):
                 except (RuntimeError, ValueError, OSError) as exc:
                     print(str(exc))
             else:
-                print("Выберите пункт 0–9")
+                print("Выберите пункт 0–10")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("wizard", "render", "status", "validate", "needs-web", "releases", "install-cli", "credentials", "xui"))
-    parser.add_argument("--xui-action", choices=("menu", "status", "credentials", "password", "token", "start", "stop", "restart", "logs", "settings"), default="menu")
+    parser.add_argument("--xui-action", choices=("menu", "status", "credentials", "password", "token", "start", "stop", "restart", "logs", "settings", "certificate"), default="menu")
     parser.add_argument("--instance", default="default")
     parser.add_argument("--app-dir", default="/opt/3xui-aggregator")
     parser.add_argument("--panel-domain", default="")
