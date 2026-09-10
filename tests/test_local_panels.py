@@ -36,6 +36,49 @@ class LocalPanelsTests(unittest.TestCase):
     def save(self, s=None):
         m.private_write(self.root / "state.json", json.dumps(s or state()))
 
+    def prepare_ports(self):
+        self.save()
+        m.private_write(self.root / "docker-compose.yml", json.dumps(m.provider_compose(state(), self.root)))
+        override = self.app / "docker-compose.override.yml"
+        m.private_write(override, json.dumps(m.proxy_override(state(), self.root, True)))
+        m.private_write(self.root / "override-managed", m.hashlib.sha256(override.read_bytes()).hexdigest())
+
+    def test_publish_inbound_port_preserves_old_ports_and_updates_nexus(self):
+        self.prepare_ports()
+        with patch.object(m, "ask", side_effect=["28140/tcp", "ДА"]), patch.object(m, "assert_ports_free") as free, patch.object(m, "run", return_value="") as run:
+            m.configure_vpn_ports(self.args, self.root)
+        free.assert_called_once_with([(28140, "tcp")])
+        item = m.load_state(self.root, "test")["providers"]["3xui"]
+        self.assertEqual(item["vpn_ports"], ["8443/tcp", "8443/udp", "28140/tcp"])
+        config = json.loads((self.app / "docker-compose.override.yml").read_text())
+        self.assertIn("28140/tcp", config["services"]["aggregator"]["environment"]["NEXUS_LOCAL_XUI_VPN_PORTS"])
+        self.assertTrue(any(call.args[0][-1] == "local-3xui" for call in run.call_args_list))
+        self.assertFalse(any("caddy" in call.args[0] or "remnawave" in call.args[0] for call in run.call_args_list))
+
+    def test_publish_ports_rolls_back_on_docker_failure(self):
+        self.prepare_ports()
+        paths = [self.root / "state.json", self.root / "docker-compose.yml", self.app / "docker-compose.override.yml", self.root / "override-managed"]
+        before = {p: p.read_bytes() for p in paths}
+        with patch.object(m, "ask", side_effect=["28140/tcp", "ДА"]), patch.object(m, "assert_ports_free"), patch.object(m, "run", side_effect=["", "", RuntimeError("failed"), "", ""]):
+            with self.assertRaises(RuntimeError):
+                m.configure_vpn_ports(self.args, self.root)
+        self.assertEqual(before, {p: p.read_bytes() for p in paths})
+
+    def test_publish_ports_enter_does_not_generate_a_random_port(self):
+        self.prepare_ports()
+        with patch.object(m, "ask", return_value=""), patch.object(m, "run") as run:
+            m.configure_vpn_ports(self.args, self.root)
+        run.assert_not_called()
+
+    def test_publish_ports_rejects_occupied_port(self):
+        self.prepare_ports()
+        before = (self.root / "state.json").read_bytes()
+        with patch.object(m, "ask", return_value="2053/tcp"), patch.object(m, "assert_ports_free", side_effect=ValueError("busy")), patch.object(m, "run") as run:
+            with self.assertRaises(ValueError):
+                m.configure_vpn_ports(self.args, self.root)
+        run.assert_not_called()
+        self.assertEqual(before, (self.root / "state.json").read_bytes())
+
     def test_releases_filter_dev_drafts_and_take_five(self):
         rows = [{"tag_name": "dev-latest", "prerelease": True}, {"tag_name": "v9.0.0", "draft": True}] + [{"tag_name": "v3.7." + str(i)} for i in range(6)]
         with patch.object(m, "fetch", return_value=json.dumps(rows)):

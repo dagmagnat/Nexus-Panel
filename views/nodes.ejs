@@ -269,7 +269,7 @@
         <div class="field half js-node-3xui-only">
           <label>Inbound ID</label>
           <input name="inbound_id" type="number" min="1" placeholder="1" required />
-          <small class="hint">Перед сохранением Aggregator проверит этот ID, загрузит полный inbound и перенесёт его Protocol, Transport, Security, порт, путь и режим. Если ID не найден, узел не будет добавлен.</small>
+          <small class="hint">Параметры и порт берутся из выбранного inbound 3x-ui, а не создаются случайно. Если ID не найден, узел не будет добавлен. Для локальной Docker-панели также проверяется публикация VPN-порта; добавить её можно на сервере командой x-ui ports.</small>
         </div>
 
         <div class="field full js-node-3xui-only source-subscription-controls">

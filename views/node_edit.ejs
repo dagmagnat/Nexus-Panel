@@ -173,7 +173,7 @@
         <div class="field half js-node-3xui-only <%= is3xuiFamily ? '' : 'hidden' %>" <%= is3xuiFamily ? '' : 'hidden style="display:none!important"' %>>
           <label>Inbound ID</label>
           <input name="inbound_id" type="number" min="1" value="<%= node.inbound_id || 1 %>" <%= is3xuiFamily ? 'required' : '' %> />
-          <small class="hint">При сохранении панель проверит этот ID и заново загрузит только его полный набор параметров.</small>
+          <small class="hint">При сохранении панель проверит этот ID и загрузит параметры и порт выбранного inbound. Для локальной Docker-панели порт должен быть опубликован: команда на сервере x-ui ports. Случайный порт не назначается.</small>
         </div>
 
         <div class="field full js-node-3xui-only source-subscription-controls <%= is3xuiFamily ? '' : 'hidden' %>" <%= is3xuiFamily ? '' : 'hidden style="display:none!important"' %>>

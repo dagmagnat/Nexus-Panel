@@ -346,7 +346,8 @@ def proxy_override(state, root, has_caddy, bind_ip=""):
     local_xui = state["providers"].get("3xui")
     if local_xui:
         # Public transport endpoint is distinct from the internal API DNS name.
-        aggregator["environment"] = {"NEXUS_LOCAL_XUI_PUBLIC_HOST": local_xui.get("vpn_host") or local_xui["host"]}
+        aggregator["environment"] = {"NEXUS_LOCAL_XUI_PUBLIC_HOST": local_xui.get("vpn_host") or local_xui["host"],
+                                     "NEXUS_LOCAL_XUI_VPN_PORTS": ",".join(local_xui.get("vpn_ports", []))}
     return {"services": {"aggregator": aggregator, "caddy": caddy},
             "networks": {"nexus-local": {"external": True, "name": "nexus-local-" + state["instance"] + "-front"}}, "volumes": volumes}
 
@@ -784,6 +785,62 @@ def configure_certificate(args, root):
     show_credentials(args, root)
 
 
+def configure_vpn_ports(args, root):
+    item, base = xui_context(args, root)
+    print("Опубликовать порт существующего inbound 3x-ui. Порт не генерируется и inbound не меняется.")
+    print("Уже опубликованы: " + ", ".join(item.get("vpn_ports", [])))
+    value = ask("Добавить порты, например 28140/tcp (Enter — без изменений)", "")
+    if not value.strip():
+        return
+    additions = sorted(set(vpn_ports(value)) - set(item.get("vpn_ports", [])))
+    if not additions:
+        return
+    assert_ports_free([(int(p.split('/')[0]), p.split('/')[1]) for p in additions])
+    app = Path(args.app_dir)
+    override = app / "docker-compose.override.yml"
+    ownership = root / "override-managed"
+    if not override.exists() or not ownership.exists() or ownership.read_text().strip() != hashlib.sha256(override.read_bytes()).hexdigest():
+        raise ValueError("Compose override изменён вручную; автоматическая замена запрещена")
+    config = json.loads(override.read_text(encoding="utf-8"))
+    plan = load_state(root, args.instance)
+    plan["providers"]["3xui"]["vpn_ports"] = item.get("vpn_ports", []) + additions
+    config["services"]["aggregator"].setdefault("environment", {})["NEXUS_LOCAL_XUI_VPN_PORTS"] = ",".join(plan["providers"]["3xui"]["vpn_ports"])
+    print("Добавятся: " + ", ".join(additions) + ". Старые порты сохранятся. 3x-ui и Nexus кратковременно перезапустятся.")
+    if ask("Применить? ДА", "НЕТ").upper() not in ("ДА", "YES"):
+        return
+    targets = [root / "state.json", root / "docker-compose.yml", override, ownership]
+    previous = {p: p.read_bytes() if p.exists() else None for p in targets}
+    backup = Path(tempfile.mkdtemp(prefix="vpn-ports-backup-", dir=root))
+    os.chmod(backup, 0o700)
+    for index, (file, content) in enumerate(previous.items()):
+        if content is not None:
+            private_write(backup / f"{index}-{file.name}", content.decode("utf-8"))
+    nexus = ["docker", "compose", "--project-directory", str(app)]
+    started = False
+    try:
+        private_write(root / "state.json", json.dumps(plan, indent=2) + "\n")
+        private_write(root / "docker-compose.yml", json.dumps(provider_compose(plan, root), indent=2) + "\n")
+        private_write(override, json.dumps(config, indent=2) + "\n")
+        private_write(ownership, hashlib.sha256(override.read_bytes()).hexdigest() + "\n")
+        run(base + ["config", "--quiet"])
+        run(nexus + ["config", "--quiet"])
+        started = True
+        run(base + ["up", "-d", "--no-deps", "--wait", "--wait-timeout", "90", "local-3xui"])
+        run(nexus + ["up", "-d", "--no-deps", "--wait", "--wait-timeout", "90", "aggregator"])
+    except (ValueError, RuntimeError, OSError, KeyboardInterrupt):
+        for file, content in previous.items():
+            if content is None:
+                file.unlink(missing_ok=True)
+            else:
+                private_write(file, content.decode("utf-8"))
+        if started:
+            run(base + ["up", "-d", "--no-deps", "local-3xui"])
+            run(nexus + ["up", "-d", "--no-deps", "aggregator"])
+        raise
+    print("Публикация применена. Повторите добавление узла в Nexus. Firewall провайдера проверяется отдельно.")
+    print("Резервная копия: " + str(backup))
+
+
 def xui_action(args, root, action):
     require_admin()
     _, base = xui_context(args, root)
@@ -791,6 +848,8 @@ def xui_action(args, root, action):
         show_credentials(args, root)
     elif action == "certificate":
         configure_certificate(args, root)
+    elif action == "ports":
+        configure_vpn_ports(args, root)
     elif action in ("password", "token"):
         xui_change(args, root, action)
     elif action == "status":
@@ -805,9 +864,10 @@ def xui_action(args, root, action):
             return
         run(base + [action, "local-3xui"])
     else:
-        choices = {"1": "status", "2": "credentials", "3": "password", "4": "token", "5": "start", "6": "stop", "7": "restart", "8": "logs", "9": "settings", "10": "certificate"}
+        choices = {"1": "status", "2": "credentials", "3": "password", "4": "token", "5": "start", "6": "stop", "7": "restart", "8": "logs", "9": "settings", "10": "certificate", "11": "ports"}
         while True:
             print(f"\n3x-ui / Docker — экземпляр {args.instance}\n1 — Статус\n2 — Данные входа и подключения Nexus\n3 — Сменить логин/пароль\n4 — Создать/перевыпустить API-токен\n5 — Запустить\n6 — Остановить\n7 — Перезапустить\n8 — Журнал\n9 — Текущие настройки\n10 — Домен / IP и сертификат HTTPS\n0 — Выход")
+            print("11 — Опубликовать VPN-порты существующего inbound")
             choice = ask("Выбор", "0")
             if choice == "0":
                 return
@@ -817,13 +877,13 @@ def xui_action(args, root, action):
                 except (RuntimeError, ValueError, OSError) as exc:
                     print(str(exc))
             else:
-                print("Выберите пункт 0–10")
+                print("Выберите пункт 0–11")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("wizard", "render", "status", "validate", "needs-web", "releases", "install-cli", "credentials", "xui"))
-    parser.add_argument("--xui-action", choices=("menu", "status", "credentials", "password", "token", "start", "stop", "restart", "logs", "settings", "certificate"), default="menu")
+    parser.add_argument("--xui-action", choices=("menu", "status", "credentials", "password", "token", "start", "stop", "restart", "logs", "settings", "certificate", "ports"), default="menu")
     parser.add_argument("--instance", default="default")
     parser.add_argument("--app-dir", default="/opt/3xui-aggregator")
     parser.add_argument("--panel-domain", default="")

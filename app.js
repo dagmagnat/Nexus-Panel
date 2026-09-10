@@ -15296,6 +15296,7 @@ app.post('/nodes', requireAuth, async (req, res) => {
       const statusData = await apiGet(pendingNode, '/panel/api/server/status', NODE_API_TIMEOUT_MS);
       importedPanelVersion = extract3xuiPanelVersion(statusData);
       importedInbound = await fetchSelectedInboundExact(pendingNode, NODE_API_TIMEOUT_MS);
+      require('./lib_local_inbound_port').validateLocalInboundPort(pendingNode, importedInbound);
       importedSubSource = await fetch3xuiSubscriptionSource(pendingNode, NODE_API_TIMEOUT_MS);
       if (!['tls', 'reality'].includes(getInboundTransportInfo(importedInbound).security)) {
         normalizedSniMode = 'inbound';
@@ -15755,6 +15756,7 @@ app.post('/nodes/:id/edit', requireAuth, async (req, res) => {
       };
       await apiGet(pendingNode, '/panel/api/server/status', NODE_API_TIMEOUT_MS);
       preflightInbound = await fetchSelectedInboundExact(pendingNode, NODE_API_TIMEOUT_MS);
+      require('./lib_local_inbound_port').validateLocalInboundPort(pendingNode, preflightInbound);
       const fetchedSubSource = await fetch3xuiSubscriptionSource(pendingNode, NODE_API_TIMEOUT_MS);
       refreshedSubSource = fetchedSubSource.error && !credentialsContextChanged
         ? { ...refreshedSubSource, error: fetchedSubSource.error }
