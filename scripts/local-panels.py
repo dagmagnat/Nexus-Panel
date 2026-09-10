@@ -342,7 +342,12 @@ def proxy_override(state, root, has_caddy, bind_ip=""):
     if public_ip:
         # 2.11 includes CertMagic 0.25.2 with Let's Encrypt IP issuance support.
         caddy["image"] = "caddy:2.11.0"
-    return {"services": {"aggregator": {"networks": ["default", "nexus-local"]}, "caddy": caddy},
+    aggregator = {"networks": ["default", "nexus-local"]}
+    local_xui = state["providers"].get("3xui")
+    if local_xui:
+        # Public transport endpoint is distinct from the internal API DNS name.
+        aggregator["environment"] = {"NEXUS_LOCAL_XUI_PUBLIC_HOST": local_xui.get("vpn_host") or local_xui["host"]}
+    return {"services": {"aggregator": aggregator, "caddy": caddy},
             "networks": {"nexus-local": {"external": True, "name": "nexus-local-" + state["instance"] + "-front"}}, "volumes": volumes}
 
 
@@ -463,6 +468,13 @@ def wizard(args, root):
                 print("Сертификат и продление обслуживает Caddy; Nexus не нужно останавливать для проверки CA.")
             else:
                 item["host"] = domain(ask("Домен 3x-ui (например xui.example.com)"))
+            item["vpn_host"] = item["host"]
+            if item["mode"] == "domain":
+                value = ask("Публичный IP или прямой DNS-адрес для VPN (не Docker-имя и не CDN)", item["host"])
+                try:
+                    item["vpn_host"] = str(ipaddress.ip_address(value))
+                except ValueError:
+                    item["vpn_host"] = domain(value)
             item["vpn_ports"] = [f"{number}/{proto}" for number, proto in
                                  choose_ports("Порты Xray", 8443, ("tcp", "udp"), reserved_ports)]
             print("В inbound 3x-ui затем укажите выбранный порт Xray; публикация порта сама inbound не создаёт.")
@@ -618,6 +630,7 @@ def show_credentials(args, root):
         print("Nexus / Panel Path: " + credentials["path"], file=terminal)
         print("Авторизация Nexus: API Token, если токен создан; иначе логин/пароль.", file=terminal)
         print("Порты Xray: " + ", ".join(item.get("vpn_ports", [])), file=terminal)
+        print("Публичный VPN-адрес клиентов: " + (item.get("vpn_host") or item["host"]), file=terminal)
         print("Inbound ID: укажите ID созданного вами inbound в 3x-ui.", file=terminal)
         print("Если пароль/путь/токен меняли в веб-панели, сохранённые здесь значения могут устареть.", file=terminal)
         print("Внутренний порт 2053 и HTTP оставьте без изменений: внешний HTTPS обслуживает Caddy.", file=terminal)
@@ -696,6 +709,8 @@ def configure_certificate(args, root):
     state = load_state(root, args.instance)
     plan = copy.deepcopy(state)
     item = plan["providers"]["3xui"]
+    # Changing the admin certificate/domain must not change the VPN endpoint.
+    item.setdefault("vpn_host", item["host"])
     app = Path(args.app_dir)
     # Discover only Nexus-generated values; do not execute shell configuration.
     env = read_env((app / ".env").read_text(encoding="utf-8"))

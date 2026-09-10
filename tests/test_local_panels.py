@@ -131,6 +131,14 @@ class LocalPanelsTests(unittest.TestCase):
         self.assertEqual(result["services"]["caddy"]["image"], "caddy:2")
         self.assertIn("https://[2001:db8::1]:2053", m.caddy_sites(s))
         self.assertIn("tls internal", m.caddy_sites(s))
+        self.assertEqual(result['services']['aggregator']['environment']['NEXUS_LOCAL_XUI_PUBLIC_HOST'], '2001:db8::1')
+
+    def test_vpn_endpoint_is_distinct_from_panel_domain(self):
+        s = state(); s['providers']['3xui']['vpn_host'] = '203.0.113.50'
+        config = m.proxy_override(s, self.root, True)
+        self.assertEqual(config['services']['aggregator']['environment']['NEXUS_LOCAL_XUI_PUBLIC_HOST'], '203.0.113.50')
+        self.assertIn('xui.example.com', m.caddy_sites(s))
+        self.assertNotIn('203.0.113.50', m.caddy_sites(s))
 
     def test_public_ip_certificate_uses_http_challenge_and_capable_caddy(self):
         s = state(); s['providers'].pop('remnawave')
@@ -178,6 +186,7 @@ class LocalPanelsTests(unittest.TestCase):
             m.configure_certificate(self.args, self.root)
         self.assertEqual(run.call_args_list[-1].args[0][-5:], ['up', '-d', '--no-deps', '--force-recreate', 'caddy'])
         self.assertEqual(json.loads((self.root / 'state.json').read_text())['providers']['3xui']['host'], 'new.example.com')
+        self.assertEqual(json.loads((self.root / 'state.json').read_text())['providers']['3xui']['vpn_host'], 'xui.example.com')
 
     def test_duplicate_panel_domains_and_nexus_ports_fail(self):
         s = state(); s["providers"]["3xui"]["host"] = self.args.panel_domain

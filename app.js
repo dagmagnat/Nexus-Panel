@@ -8332,17 +8332,7 @@ function getInboundExternalProxyEntries(inbound) {
 }
 
 function getInboundShareHost(node, inbound) {
-  let fallbackHost = '';
-  try { fallbackHost = new URL(node.panel_url).hostname; } catch (_) {}
-
-  const strategy = String(inbound?.shareAddrStrategy || inbound?.share_addr_strategy || 'node').trim().toLowerCase();
-  const customHost = String(inbound?.shareAddr || inbound?.share_addr || '').trim();
-  const listenHost = String(inbound?.listen || '').trim();
-  const isWildcard = value => ['', '0.0.0.0', '::', '[::]', '*'].includes(String(value || '').trim());
-
-  if (strategy === 'custom' && customHost) return customHost;
-  if (strategy === 'listen' && !isWildcard(listenHost)) return listenHost.replace(/^\[|\]$/g, '');
-  return fallbackHost;
+  return require('./lib_node_share_host').shareHost(node, inbound);
 }
 
 function buildVlessExternalProxyLinks(node, inbound, uuid, displayName, nodeName, email = '') {
