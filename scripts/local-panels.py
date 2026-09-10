@@ -341,7 +341,7 @@ def proxy_override(state, root, has_caddy, bind_ip=""):
         volumes = {"nexus_local_tls": {}, "nexus_local_caddy_config": {}}
     if public_ip:
         # 2.11 includes CertMagic 0.25.2 with Let's Encrypt IP issuance support.
-        caddy["image"] = "caddy:2.11.0"
+        caddy["image"] = "caddy:2.11.4"
     aggregator = {"networks": ["default", "nexus-local"]}
     local_xui = state["providers"].get("3xui")
     if local_xui:

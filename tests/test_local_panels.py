@@ -192,7 +192,7 @@ class LocalPanelsTests(unittest.TestCase):
         self.assertIn('http://8.8.8.8', text)
         self.assertNotIn('tls internal', text)
         config = m.proxy_override(s, self.root, True)
-        self.assertEqual(config['services']['caddy']['image'], 'caddy:2.11.0')
+        self.assertEqual(config['services']['caddy']['image'], 'caddy:2.11.4')
         self.assertEqual([p['target'] for p in config['services']['caddy']['ports']], [80, 2053])
 
     def test_private_ip_cannot_request_public_certificate(self):
