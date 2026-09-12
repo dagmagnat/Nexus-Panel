@@ -88,7 +88,7 @@ test('Nexus Node enrolls once, verifies signed requests and completes a queued h
   const csrf = csrfFrom(await response.text());
 
   response = await fetch(`${base}/api/nexus-nodes/enrollments`, {
-    method: 'POST', headers: { cookie, 'x-csrf-token': csrf, 'content-type': 'application/json' },
+    method: 'POST', headers: { cookie, 'x-csrf-token': csrf, 'x-nexus-workspace': 'main', 'content-type': 'application/json' },
     body: JSON.stringify({ name: 'test-node', expiresMinutes: 15 })
   });
   assert.equal(response.status, 201);
@@ -112,7 +112,7 @@ test('Nexus Node enrolls once, verifies signed requests and completes a queued h
   assert.equal(response.status, 409, 'the same signed request cannot be replayed');
 
   response = await fetch(`${base}/api/nexus-nodes/${node.nodeId}/operations`, {
-    method: 'POST', headers: { cookie, 'x-csrf-token': csrf, 'content-type': 'application/json' },
+    method: 'POST', headers: { cookie, 'x-csrf-token': csrf, 'x-nexus-workspace': 'main', 'content-type': 'application/json' },
     body: JSON.stringify({ kind: 'health.check', payload: {} })
   });
   assert.equal(response.status, 201);

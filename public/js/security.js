@@ -3,6 +3,7 @@
 
   const meta = document.querySelector('meta[name="csrf-token"]');
   const token = meta ? String(meta.getAttribute('content') || '') : '';
+  const workspace = document.querySelector('meta[name="nexus-workspace"]')?.content || 'main';
   if (!token) return;
 
   function isUnsafeMethod(method) {
@@ -26,6 +27,7 @@
     if (isUnsafeMethod(requestMethod) && isSameOrigin(input)) {
       const headers = new Headers(options.headers || (input && input.headers) || undefined);
       if (!headers.has('X-CSRF-Token')) headers.set('X-CSRF-Token', token);
+      headers.set('X-Nexus-Workspace', workspace);
       options.headers = headers;
     }
 
@@ -49,6 +51,14 @@
       form.appendChild(field);
     }
     field.value = token;
+    let workspaceField = form.querySelector('input[name="_workspace"]');
+    if (!workspaceField) {
+      workspaceField = document.createElement('input');
+      workspaceField.type = 'hidden';
+      workspaceField.name = '_workspace';
+      form.appendChild(workspaceField);
+    }
+    workspaceField.value = workspace;
   }
 
   document.addEventListener('submit', function (event) {

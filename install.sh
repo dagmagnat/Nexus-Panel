@@ -1095,7 +1095,7 @@ write_caddyfile_single_or_dual() {
       echo "http://${d} {"
       if uses_normal_cert_domain "$d"; then
         if [ "${PANEL_MODE}" = "domain_port" ] && [ "${PANEL_DOMAIN}" = "$d" ]; then
-          echo "    @public_sub path /sub/* /json/* /happ/* /happ-routing/* /happ-routing-json/* /open/* /qr /healthz /css/* /js/* /img/* /favicon.ico"
+          echo "    @public_sub path /s/* /sub/* /sub-plain/* /json/* /happ/* /hiddify/* /happ-routing/* /happ-routing-json/* /open/* /qr /healthz /css/* /js/* /img/* /favicon.ico"
           echo "    redir @public_sub https://${d}{uri} permanent"
           echo "    redir https://${d}:${APP_PORT}{uri} permanent"
         else
@@ -1140,7 +1140,7 @@ write_caddyfile_single_or_dual() {
       if [ "${PANEL_MODE}" = "domain" ] && [ "$PANEL_DOMAIN" = "$d" ]; then
         echo "    reverse_proxy aggregator:${APP_PORT}"
       else
-        echo "    @public_sub path /sub/* /json/* /happ/* /happ-routing/* /happ-routing-json/* /open/* /qr /healthz /css/* /js/* /img/* /favicon.ico"
+        echo "    @public_sub path /s/* /sub/* /sub-plain/* /json/* /happ/* /hiddify/* /happ-routing/* /happ-routing-json/* /open/* /qr /healthz /css/* /js/* /img/* /favicon.ico"
         echo "    reverse_proxy @public_sub aggregator:${APP_PORT}"
         echo "    respond 404"
       fi

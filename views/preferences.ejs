@@ -1,0 +1,54 @@
+<%- include('partials_header', { pageTitle: 'Профиль настроек', pageSubtitle: 'Перенос переключателей и значений по умолчанию без данных клиентов', activePage: 'settings' }) %>
+<section class="card" style="margin-bottom:16px"><h2>Название VPN этого пространства</h2><p class="muted">Не включается в переносимый профиль и не меняется при его загрузке.</p>
+<form action="/preferences/name" method="post" class="form-grid"><input name="subscription_name" value="<%= vpnName %>" maxlength="100" required><button class="btn" type="submit">Сохранить название</button></form></section>
+<section class="card"><h2>Значения для новых клиентов</h2>
+<p class="muted">Эти значения заполняют форму создания. Уже существующие клиенты не меняются.</p>
+<form action="/preferences/defaults" method="post" class="form-grid">
+<% const labels = {client_default_duration_days:'Срок, дней (0 — без срока)', client_default_limit_ip:'Лимит IP (0 — без лимита)', client_default_device_limit:'Лимит устройств (0 — без лимита)', client_default_traffic_gb:'Трафик, ГБ (0 — без лимита)' }; Object.entries(labels).forEach(([key,label]) => { %>
+<label><%= label %><input name="<%= key %>" type="number" min="0" max="<%= rules[key].max %>" step="<%= rules[key].decimal ? 'any' : '1' %>" value="<%= profile.settings[key] %>" required></label><% }) %>
+<label><input type="checkbox" name="client_default_start_on_activation" value="1" <%= profile.settings.client_default_start_on_activation === '1' ? 'checked' : '' %>> Начинать срок с активации</label>
+<button type="submit" class="btn">Сохранить значения</button></form></section>
+<section class="card" style="margin-top:16px"><details><summary>Переключатели и интервалы этого пространства</summary>
+<p class="muted">Изменяются только параметры выбранной базы. Системная безопасность и управление сервером настраиваются владельцем в Основном пространстве.</p>
+<form action="/preferences/options" method="post" class="form-grid">
+<% Object.entries(rules).filter(([key]) => !key.startsWith('client_default_')).forEach(([key,rule]) => { const value = profile.settings[key] ?? rule.fallback; %>
+<label><%= preferenceLabels[key] || key %>
+<% if (rule.values) { %><select name="<%= key %>"><% rule.values.forEach(option => { %><option value="<%= option %>" <%= value === option ? 'selected' : '' %>><%= rule.values.length === 2 && rule.values[0] === '0' ? (option === '1' ? 'Включено' : 'Выключено') : option %></option><% }) %></select>
+<% } else { %><input type="number" name="<%= key %>" min="<%= rule.min %>" max="<%= rule.max %>" step="1" value="<%= value %>" required><% } %></label><% }) %>
+<button class="btn" type="submit">Сохранить переключатели</button></form></details></section>
+<section class="card" style="margin-top:16px"><h2>Передать только настройки</h2>
+<p>В файл попадут поддерживаемые переключатели, интервалы и значения по умолчанию для клиентов. Не попадут название VPN, узлы, клиенты, ссылки, UUID, пароли, токены, адреса и привязки к узлам.</p>
+<p class="muted">Полный перенос настроек старого формата — другая функция. Здесь принимается только .nxpreferences. Профиль не зашифрован: он не содержит секретов.</p>
+<a class="btn" href="/preferences/export">Скачать профиль настроек</a>
+<label style="display:block;margin:16px 0">Загрузить профиль<input id="profileFile" type="file" accept=".nxpreferences,application/json"></label>
+<div id="profileStatus" role="status"></div><pre id="profilePreview" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre>
+<button class="btn" id="profileApply" disabled>Применить показанные изменения</button>
+</section>
+<script>
+let profileBundle = null;
+const fileInput = document.getElementById('profileFile'), applyButton = document.getElementById('profileApply');
+const status = document.getElementById('profileStatus'), preview = document.getElementById('profilePreview');
+fileInput.addEventListener('change', async () => {
+  profileBundle = null; applyButton.disabled = true; preview.textContent = ''; status.textContent = '';
+  try {
+    const file = fileInput.files[0]; if (!file) return;
+    if (file.size > 65536) throw new Error('Файл превышает 64 КБ');
+    const candidate = JSON.parse(await file.text());
+    const response = await fetch('/preferences/inspect', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(candidate)});
+    const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Ошибка проверки');
+    preview.textContent = data.changes.map(row => row.key + ': ' + row.before + ' → ' + row.after).join('\n');
+    profileBundle = candidate; applyButton.disabled = false;
+  } catch (err) { status.textContent = err.message; }
+});
+applyButton.addEventListener('click', async () => {
+  if (!profileBundle || !confirm('Применить профиль? Значения будут заменены. Клиенты и узлы не изменятся.')) return;
+  applyButton.disabled = true;
+  try {
+    const response = await fetch('/preferences/import', {method:'POST',headers:{'Content-Type':'application/json','X-Confirm-Import':'yes'},body:JSON.stringify(profileBundle)});
+    const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Ошибка применения');
+    status.textContent = 'Сохранено параметров: ' + data.updated + '. Резервная копия прежних значений: ' + data.backup;
+    const rollbackLink = document.createElement('a'); rollbackLink.href = '/preferences/backups/' + encodeURIComponent(data.backup); rollbackLink.textContent = ' Скачать прежний профиль'; status.appendChild(rollbackLink);
+  } catch (err) { status.textContent = err.message; applyButton.disabled = false; }
+});
+</script>
+<%- include('partials_footer') %>

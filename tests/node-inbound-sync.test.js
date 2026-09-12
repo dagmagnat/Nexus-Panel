@@ -165,6 +165,7 @@ function updateCookieJar(jar, response) {
 
 async function fetchWithJar(jar, url, options = {}) {
   const headers = new Headers(options.headers || {});
+  headers.set('X-Nexus-Workspace', 'main');
   if (jar.size) headers.set('Cookie', Array.from(jar, ([key, value]) => `${key}=${value}`).join('; '));
   const response = await fetch(url, { ...options, headers });
   updateCookieJar(jar, response);
