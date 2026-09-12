@@ -159,6 +159,7 @@ test('actual create form handler defaults to immediate expiry and saves checked 
     ensureAggregatorClientOnNode: async (node, client, opts) => { h.calls.push({ client, opts }); }
   });
   const start = source.indexOf("app.post('/clients', requireAuth");
+  vm.runInContext(['getClientNodeEffectiveTrafficGb', 'clientNodeTrafficGbFromForm', 'validateClientQuotaForm'].map(extract).join('\n'), h.ctx);
   vm.runInContext(source.slice(start, source.indexOf('\n});', start) + 4), h.ctx);
   for (const waiting of [false, true]) {
     let location;

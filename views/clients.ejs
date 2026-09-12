@@ -768,30 +768,30 @@
         </div>
         <div class="field half">
           <label>Срок в днях</label>
-          <input name="duration_days" type="number" min="0" value="30" />
+          <input name="duration_days" type="number" min="0" value="<%= typeof clientDefaults !== 'undefined' ? clientDefaults.client_default_duration_days : 30 %>" />
           <small class="hint">0 = без срока.</small>
         </div>
         <div class="field half">
           <label>Запуск срока</label>
           <label class="switch-row compact">
-            <input type="checkbox" name="start_on_activation" value="1" />
+            <input type="checkbox" name="start_on_activation" value="1" <%= typeof clientDefaults !== 'undefined' && clientDefaults.client_default_start_on_activation === '1' ? 'checked' : '' %> />
             <span><strong>Начать после активации</strong><small>Срок начнётся, когда клиент добавит подписку в приложение, передающее HWID устройства. Открытие ссылки в браузере срок не запускает.</small></span>
           </label>
           <small class="hint">До активации доступ на узлах отключён. Для срока 0 эта настройка не применяется.</small>
         </div>
         <div class="field half">
           <label>Общий лимит, ГБ</label>
-          <input name="traffic_gb" type="number" min="0" step="1" value="0" />
+          <input name="traffic_gb" type="number" min="0" step="any" value="<%= typeof clientDefaults !== 'undefined' ? clientDefaults.client_default_traffic_gb : 0 %>" />
           <small class="hint">0 = без лимита.</small>
         </div>
         <div class="field half">
           <label>Лимит IP</label>
-          <input name="limit_ip" type="number" min="0" value="0" required />
+          <input name="limit_ip" type="number" min="0" value="<%= typeof clientDefaults !== 'undefined' ? clientDefaults.client_default_limit_ip : 0 %>" required />
           <small class="hint">Ограничение одновременных IP на узлах. 0 = без лимита.</small>
         </div>
         <div class="field half">
           <label>Лимит устройств</label>
-          <input name="device_limit" type="number" min="0" value="1" required />
+          <input name="device_limit" type="number" min="0" value="<%= typeof clientDefaults !== 'undefined' ? clientDefaults.client_default_device_limit : 1 %>" required />
           <small class="hint">Количество HWID-устройств в подписке. 0 = без лимита.</small>
         </div>
       </div>
@@ -799,7 +799,7 @@
       <div class="nodes-head node-bulk-head">
         <div>
           <label>Узлы клиента</label>
-          <small class="hint">Поле ГБ возле узла задаёт лимит только для этого региона. Для Remnawave лимит IP передаётся как лимит устройств, а выбранный Internal Squad добавляет его Hosts в общую подписку.</small>
+          <small class="hint">ГБ возле узла: число — лимит, 0 — безлимит, пусто — общий лимит. В Remnawave квота действует на пользователя всей удалённой панели, а не отдельно на каждый её Host или Squad. Лимит устройств передаётся отдельно от лимита IP.</small>
         </div>
         <div class="node-select-actions" aria-label="Быстрый выбор узлов">
           <button type="button" class="btn-secondary node-select-btn" data-node-check-set="all" aria-pressed="false" onclick="event.stopPropagation(); return setClientNodeSelection(this, true)">Выбрать все</button>
@@ -815,7 +815,7 @@
               <strong><%- flagIcon(node.country_code, node.country_flag, node.country_name_ru || node.name, node.node_type) %><span><%= nodeName(node) %></span></strong>
               <small><%= nodeEndpointLabel(node) %></small>
             </span>
-            <input class="node-gb-input" name="node_traffic_gb_<%= node.id %>" type="number" min="0" step="1" placeholder="ГБ" />
+            <input class="node-gb-input" name="node_traffic_gb_<%= node.id %>" type="number" min="0" step="any" placeholder="ГБ; 0 = ∞" />
           </label>
         <% }) %>
       </div>
@@ -1214,7 +1214,7 @@
         <div class="nodes-head node-bulk-head edit-node-bulk-head">
           <div>
             <h3>Узлы клиента</h3>
-            <p class="muted">Снимите галочку, чтобы отключить клиенту конкретный узел. Поле ГБ задаёт лимит только для этого региона; пусто = общий лимит.</p>
+            <p class="muted">Снимите галочку, чтобы отключить узел. ГБ: число — лимит, 0 — безлимит, пусто — общий лимит. В одной Remnawave-панели квота общая для пользователя и всех его Squads.</p>
           </div>
           <div class="node-select-actions" aria-label="Быстрый выбор узлов клиента">
             <button type="button" class="btn-secondary node-select-btn" data-node-check-set="all" aria-pressed="false" onclick="event.stopPropagation(); return setClientNodeSelection(this, true)">Выбрать все</button>
@@ -1228,7 +1228,7 @@
             <label class="node-item node-edit-row">
               <input class="inline" type="checkbox" name="node_enabled_<%= row.node_id %>" value="1" <%= row.client_node_id && row.enabled !== 0 ? 'checked' : '' %> />
               <span class="node-info"><strong><%- flagIcon(row.country_code, row.country_flag, row.country_name_ru || row.node_name || row.name, row.node_type) %><span><%= nodeLabel %></span><% if (Number(row.subscription_policy_only || 0) === 1) { %><em class="transport-chip">служебный</em><% } %></strong><small><%= row.client_node_id ? (Number(row.subscription_policy_only || 0) === 1 ? 'создан Nexus для grace/лимита; скрыт из обычной подписки' : (row.enabled !== 0 ? 'узел включён' : 'узел отключён для клиента')) : 'узел не назначен' %></small></span>
-              <input class="node-gb-input" name="node_traffic_gb_<%= row.node_id %>" type="number" min="0" step="1" value="<%= row.traffic_gb || '' %>" placeholder="ГБ" />
+              <input class="node-gb-input" name="node_traffic_gb_<%= row.node_id %>" type="number" min="0" step="any" value="<%= row.traffic_gb ?? '' %>" placeholder="Общий лимит" />
             </label>
           <% }) %>
         </div>

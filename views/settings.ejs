@@ -239,6 +239,20 @@
             <div class="field happ-help-source" data-help-title="Шаблон инфо-блока" data-help-text="Можно использовать {login}, {display_name}, {device_usage}, {device_count}, {device_limit}, {limit_ip}, {traffic_usage}, {days_left}, {expiry_date}, {support_note}. Старый {ip_usage} сохранён как синоним {device_usage}.">
               <label>Шаблон инфо-блока</label>
               <textarea name="subscription_happ_info_template" rows="4" placeholder="👤 Логин: {login}&#10;📱 Устройства: {device_usage}&#10;📊 Трафик: {traffic_usage}&#10;{support_note}"><%= subscriptionHappInfoTemplate || '' %></textarea>
+              <details class="happ-template-tokens">
+                <summary>Доступные подстановки — нажмите, чтобы вставить</summary>
+                <p class="muted">Это переменные шаблона, не команды. Подставляются данные клиента. Инфо-блок ограничен 200 символами после подстановки.</p>
+                <% [['login','Логин'],['display_name','Имя клиента'],['device_usage','Устройства: использовано / лимит'],['device_count','Количество устройств'],['device_limit','Лимит устройств'],['ip_usage','Синоним device_usage, не число IP'],['limit_ip','Лимит IP'],['traffic_usage','Использованный трафик / лимит'],['days_left','Осталось дней'],['expiry_date','Дата окончания'],['support_note','Текст поддержки']].forEach(([key,label]) => { %>
+                  <button type="button" class="btn-secondary" data-happ-info-token="{<%= key %>}" style="margin:4px"><code>{<%= key %>}</code> — <%= label %></button>
+                <% }) %>
+              </details>
+              <script>
+              document.querySelectorAll('[data-happ-info-token]').forEach(button => button.addEventListener('click', () => {
+                const field = document.querySelector('textarea[name="subscription_happ_info_template"]');
+                field.focus(); field.setRangeText(button.dataset.happInfoToken, field.selectionStart, field.selectionEnd, 'end');
+                field.dispatchEvent(new Event('input', {bubbles:true}));
+              }));
+              </script>
             </div>
 
             <div class="field half happ-help-source" data-help-title="Цвет инфо-блока" data-help-text="Цвет карточки sub-info в Happ, если версия приложения поддерживает расширенный инфо-блок.">

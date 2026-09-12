@@ -293,9 +293,18 @@ function getClientAutoRefreshSeconds() {
 }
 
 const DATA_DIR = path.resolve(__dirname, process.env.DATA_DIR || 'data');
+const WORKSPACE_ID = process.env.NEXUS_WORKSPACE_ID || 'main';
+const CONTROL_DIR = path.resolve(process.env.NEXUS_CONTROL_DIR || DATA_DIR);
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const app = express();
+if (WORKSPACE_ID !== 'main') {
+  if (!/^[a-f0-9]{24}$/.test(WORKSPACE_ID) || !process.env.NEXUS_WORKSPACE_TOKEN) throw new Error('Invalid workspace runtime');
+  app.use((req, res, next) => {
+    if (!safeTokenEquals(req.headers['x-nexus-internal'], process.env.NEXUS_WORKSPACE_TOKEN)) return res.sendStatus(403);
+    next();
+  });
+}
 const db = new Database(path.join(DATA_DIR, 'app.db'));
 
 
@@ -859,7 +868,7 @@ app.use((req, res, next) => {
   if (SESSION_SECURE) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   next();
 });
-app.use(bodyParser.urlencoded({ extended: true, limit: '2mb' }));
+app.use(bodyParser.urlencoded({ extended: true, limit: '2mb', verify: (req, res, buffer) => { req.rawFormBody = buffer; } }));
 app.use(['/css/spectrum-clear.css', '/site.webmanifest'], (req, res, next) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
   res.setHeader('Pragma', 'no-cache');
@@ -869,7 +878,7 @@ app.use(['/css/spectrum-clear.css', '/site.webmanifest'], (req, res, next) => {
 });
 app.use(express.static('public'));
 app.use(session({
-  store: new SQLiteStore({ db: 'sessions.sqlite', dir: DATA_DIR }),
+  store: new SQLiteStore({ db: 'sessions.sqlite', dir: CONTROL_DIR }),
   secret: SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
@@ -893,11 +902,16 @@ app.use((req, res, next) => {
   if (NEXUS_NODE_ENABLED && req.path.startsWith('/api/nexus-node/v1/')) return next();
   const token = ensureCsrfToken(req);
   res.locals.csrfToken = token;
+  res.locals.workspaceId = req.session.workspaceId || 'main';
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
 
   const provided = String(req.body?._csrf || req.headers['x-csrf-token'] || '').trim();
   if (!safeTokenEquals(provided, token)) {
     return res.status(403).send('Недействительный CSRF-токен. Обновите страницу и повторите действие.');
+  }
+  if (req.session.userId && req.path !== '/login') {
+    const boundWorkspace = String(req.body?._workspace || req.headers['x-nexus-workspace'] || '');
+    if (boundWorkspace !== String(req.session.workspaceId || 'main')) return res.status(409).send('Пространство изменилось или форма устарела. Обновите страницу.');
   }
   next();
 });
@@ -1643,6 +1657,17 @@ function migrateSubscriptionDeviceLimitsOnce() {
 }
 
 initDb();
+const access = require('./lib_access').createAccess({ rootDir: CONTROL_DIR, localDb: db, legacyUsername: ADMIN_USERNAME, workspaceId: WORKSPACE_ID });
+const workspaceRuntime = WORKSPACE_ID === 'main' ? require('./lib_workspace_runtime').createRuntime(access) : null;
+if (workspaceRuntime) app.use((req, res, next) => {
+  if (access.sessionUser(req) && !validateAdminSession(req, res)) return;
+  workspaceRuntime.middleware(req, res, next);
+});
+require('./lib_access_routes').attachAccessRoutes({ app, access, runtime: workspaceRuntime, render, db, dataDir: DATA_DIR, requireAuth });
+if (WORKSPACE_ID === 'main' && process.env.NEXUS_LOCAL_XUI_PUBLIC_HOST) access.claimRemote('http://local-3xui:2053');
+for (const existingNode of db.prepare('SELECT panel_url FROM nodes').all()) {
+  try { access.claimRemote(existingNode.panel_url); } catch (err) { console.error('Workspace node ownership:', err.message); }
+}
 initSupportSchema(db);
 initNexusNodeControlSchema(db);
 const vpnManager = createVpnManager({ db, appSecret: APP_SECRET, encrypt, decrypt, dataDir: DATA_DIR });
@@ -1702,28 +1727,37 @@ function getLoginFailure(req, username) {
 }
 
 function requireAuth(req, res, next) {
+  if (!access.authorize(req, res)) return;
+  if (!validateAdminSession(req, res)) return;
+  next();
+}
+
+function validateAdminSession(req, res) {
   if (!isAdminIpAllowed(req)) {
-    return req.session.destroy(() => res.status(403).send('Access denied: this IP is not allowed for admin panel.'));
+    req.session.destroy(() => res.status(403).send('Access denied: this IP is not allowed for admin panel.'));
+    return false;
   }
 
-  if (!req.session.userId) return res.redirect(buildLoginRedirectPath());
+  if (!req.session.userId) { res.redirect(buildLoginRedirectPath()); return false; }
   const now = Date.now();
   const currentIp = getClientIp(req);
   const lastActivity = Number(req.session.lastActivity || 0);
   const loginIp = String(req.session.loginIp || '');
 
   if (isAdminSessionIpBindEnabled() && loginIp && currentIp && loginIp !== currentIp) {
-    return req.session.destroy(() => res.redirect(buildLoginRedirectPath()));
+    req.session.destroy(() => res.redirect(buildLoginRedirectPath()));
+    return false;
   }
 
   const idleTimeoutMs = getAdminIdleTimeoutMinutes() * 60 * 1000;
   if (lastActivity && idleTimeoutMs > 0 && now - lastActivity > idleTimeoutMs) {
-    return req.session.destroy(() => res.redirect(buildLoginRedirectPath()));
+    req.session.destroy(() => res.redirect(buildLoginRedirectPath()));
+    return false;
   }
 
   req.session.loginIp = currentIp;
   req.session.lastActivity = now;
-  next();
+  return true;
 }
 
 function htmlEscape(value) {
@@ -1871,7 +1905,7 @@ function renderClientsFallbackPage(res, params, err) {
 function render(res, view, params = {}) {
   let currentAdminUsername = '';
   try {
-    currentAdminUsername = db.prepare('SELECT username FROM app_users WHERE id = ?').get(res.req?.session?.userId)?.username || '';
+    currentAdminUsername = access.user(res.req?.session?.userId)?.username || '';
   } catch (_) {}
   const data = {
     ...params,
@@ -1884,6 +1918,8 @@ function render(res, view, params = {}) {
       name: getNodeDisplayName(db.prepare('SELECT * FROM nodes WHERE id = ?').get(state.nodeId)),
       individual: Boolean(db.prepare('SELECT 1 FROM client_support_grants WHERE client_id=? AND node_id=?').get(client.id, state.nodeId)) })),
     currentAdminUsername,
+    workspaceName: access.control.prepare('SELECT name FROM workspaces WHERE id=?').get(res.locals.workspaceId || WORKSPACE_ID)?.name || 'Основное',
+    clientDefaults: Object.fromEntries(Object.entries(require('./lib_settings_profile').rules).filter(([key]) => key.startsWith('client_default_')).map(([key, rule]) => [key, getSetting(key, rule.fallback)])),
     currentPath: res.req.path,
     panelInterfaceTheme: getPanelInterfaceTheme(),
     clientsViewMode: getClientsViewMode(),
@@ -2159,7 +2195,7 @@ async function requestSafeCancel(){
   var btn=document.getElementById('cancelBtn');
   if(btn){btn.disabled=true;btn.textContent='Запрашиваю отмену…';}
   try{
-    var r=await fetch('/operations/'+encodeURIComponent(window.__operationId)+'/cancel',{method:'POST',headers:{'Accept':'application/json','X-CSRF-Token':${JSON.stringify(csrfToken)}}});
+    var r=await fetch('/operations/'+encodeURIComponent(window.__operationId)+'/cancel',{method:'POST',headers:{'Accept':'application/json','X-CSRF-Token':${JSON.stringify(csrfToken)},'X-Nexus-Workspace':${JSON.stringify(req.session.workspaceId || 'main')}}});
     var data=await r.json().catch(function(){return {};});
     if(!r.ok||data.ok===false)throw new Error(data.error||'Не удалось отменить операцию');
     if(btn)btn.textContent='Отмена запрошена';
@@ -3829,6 +3865,7 @@ function explainRemnawaveApiError(response, data, endpoint) {
 }
 
 async function remnawaveApiRequest(node, method, endpoint, body = undefined, timeoutMs = NODE_API_TIMEOUT_MS, options = {}) {
+  access.claimRemote(node.panel_url);
   const baseUrl = normalizeRemnawaveBaseUrl(node?.panel_url);
   if (!baseUrl) throw new Error('Не указан URL панели Remnawave.');
   const headers = getRemnawaveApiHeaders(node);
@@ -4285,6 +4322,13 @@ function remnawaveUserConflictError(node, username, current, client) {
 async function ensureRemnawaveUserOnNode(node, client, opts = {}) {
   if (isClientActivationPending(client)) opts = { ...opts, enabled: false, expiry_time: 0 };
   let map = opts.map || db.prepare('SELECT * FROM client_nodes WHERE client_id = ? AND node_id = ?').get(client.id, node.id);
+  // Sync, extend and activation often omit quota fields. Keep this mapping's
+  // quota (including an explicit zero), not the client's global default.
+  opts = { ...opts,
+    traffic_gb: opts.traffic_gb ?? getClientNodeEffectiveTrafficGb(map, client, 0),
+    limit_ip: opts.limit_ip ?? map?.limit_ip ?? client.limit_ip ?? 0,
+    node_enabled: opts.node_enabled ?? (map ? map.enabled !== 0 : true)
+  };
   const requestedUsername = normalizeRemnawaveUsername(opts.email || client.login || map?.remote_email, client);
 
   let current = null;
@@ -4364,6 +4408,11 @@ async function ensureRemnawaveUserOnNode(node, client, opts = {}) {
     remoteId = getRemnawaveUserRemoteId(current) || remoteId;
   }
 
+  if (existedBefore && opts.skip_existing === true) {
+    // A create-missing operation must not overwrite a saved local quota with
+    // a global default, even though it does not PATCH the remote quota.
+    opts = { ...opts, traffic_gb: map ? getClientNodeEffectiveTrafficGb(map, client, 0) : trafficGbFromRemoteValue(current?.trafficLimitBytes || 0) };
+  }
   const target = buildRemnawaveUserPayload(node, client, { ...opts, remote_uuid: remoteId }, current, 'update');
   const usageBytes = getRemnawaveUsedTrafficBytes(current, map?.used_bytes || 0);
   const remoteUsername = String(current?.username || target.desiredUsername || requestedUsername).trim();
@@ -5159,6 +5208,7 @@ async function deleteH1CloudClient(node, uuid, email, timeoutMs = CLIENT_DELETE_
 }
 
 async function buildNodeApiAuth(node, timeoutMs = FETCH_TIMEOUT_MS) {
+  access.claimRemote(node.panel_url);
   const rootUrl = normalizeRootUrl(node.panel_url, node.panel_path);
   const mode = getNodeApiAuthMode(node);
   if (mode === 'token') {
@@ -5261,9 +5311,8 @@ function getSubscriptionUrlMode() {
 
 function getPublicSubBaseUrl() {
   const mode = getSubscriptionUrlMode();
-  if (mode === 'panel') return getPanelPublicUrl();
-  if (mode === 'panel_without_port') return stripPortFromPublicUrl(getPanelPublicUrl());
-  return normalizePublicUrl(getSetting('sub_public_url', process.env.SUB_PUBLIC_URL || BASE_URL), process.env.SUB_PUBLIC_URL || BASE_URL);
+  const base = mode === 'panel' ? getPanelPublicUrl() : mode === 'panel_without_port' ? stripPortFromPublicUrl(getPanelPublicUrl()) : normalizePublicUrl(getSetting('sub_public_url', process.env.SUB_PUBLIC_URL || BASE_URL), process.env.SUB_PUBLIC_URL || BASE_URL);
+  return base + (WORKSPACE_ID === 'main' ? '' : `/s/${WORKSPACE_ID}`);
 }
 
 function buildPublicSubUrl(slug) {
@@ -5367,6 +5416,7 @@ function safeParseJsonField(value, fallback = {}) {
 }
 
 async function loginNode(node, timeoutMs = NODE_API_TIMEOUT_MS) {
+  access.claimRemote(node.panel_url);
   const rootUrl = normalizeRootUrl(node.panel_url, node.panel_path);
   const password = decrypt(node.password_enc, APP_SECRET);
 
@@ -10320,11 +10370,12 @@ async function createExistingClientsOnNode(targetNode, operation = null, options
         skippedExisting++;
         consecutiveTransportFailures = 0;
       } else {
+        const existingMap = db.prepare('SELECT * FROM client_nodes WHERE client_id = ? AND node_id = ?').get(client.id, targetNode.id);
         const result = await ensureAggregatorClientOnNode(targetNode, client, {
           uuid: client.uuid,
           email: client.login,
           subId: client.sub_slug,
-          traffic_gb: client.traffic_gb,
+          traffic_gb: getClientNodeEffectiveTrafficGb(existingMap, client, 0),
           limit_ip: client.limit_ip,
           expiry_time: client.expiry_time,
           duration_days: client.duration_days,
@@ -10953,6 +11004,21 @@ function getClientNodeEffectiveTrafficGb(map, client, fallback = 0) {
     return Math.max(0, Number(map.traffic_gb || 0));
   }
   return Math.max(0, Number(client?.traffic_gb ?? fallback ?? 0));
+}
+
+function clientNodeTrafficGbFromForm(raw, globalLimit, map = null) {
+  const value = raw === undefined ? getClientNodeEffectiveTrafficGb(map, {traffic_gb: globalLimit}, 0)
+    : typeof raw === 'string' && raw.trim() === '' ? globalLimit : raw;
+  if (!['string', 'number'].includes(typeof value) || !Number.isFinite(Number(value)) || Number(value) < 0 || Number(value) * 1024 ** 3 > Number.MAX_SAFE_INTEGER) {
+    throw new Error('Лимит трафика должен быть неотрицательным числом ГБ; 0 — безлимит.');
+  }
+  return Number(value);
+}
+
+function validateClientQuotaForm(body) {
+  for (const [key, value] of Object.entries(body)) {
+    if (key === 'traffic_gb' || /^node_traffic_gb_\d+$/.test(key)) clientNodeTrafficGbFromForm(value, 0);
+  }
 }
 
 function readUsageForClientNode(node, client, map, inbound = null) {
@@ -12880,9 +12946,9 @@ app.post('/login', requireAllowedAdminIp, (req, res) => {
     return render(res, 'login', { error: `Слишком много попыток входа. Повтори через ${minutes} мин.` });
   }
 
-  const user = db.prepare('SELECT * FROM app_users WHERE username = ?').get(username);
+  const user = access.control.prepare('SELECT * FROM users WHERE username = ? COLLATE NOCASE').get(username);
 
-  if (!user || !bcrypt.compareSync(req.body.password || '', user.password_hash)) {
+  if (!user || user.disabled || !bcrypt.compareSync(req.body.password || '', user.password_hash)) {
     const count = Number(failure.count || 0) + 1;
     const lockedUntil = count >= LOGIN_MAX_ATTEMPTS ? Date.now() + LOGIN_LOCK_MINUTES * 60 * 1000 : 0;
     loginFailures.set(failure.key, { count, lockedUntil });
@@ -12892,14 +12958,14 @@ app.post('/login', requireAllowedAdminIp, (req, res) => {
   loginFailures.delete(failure.key);
   req.session.regenerate((err) => {
     if (err) return render(res, 'login', { error: 'Не удалось создать сессию' });
-    req.session.userId = user.id;
+    access.authenticate(req, user);
     req.session.loginIp = getClientIp(req);
     req.session.lastActivity = Date.now();
     req.session.cookie.maxAge = 30 * 24 * 60 * 60 * 1000;
-    res.redirect('/dashboard');
+    res.redirect(access.landingPath(user, req.session.workspaceId));
   });
 });
-app.post('/logout', requireAuth, (req, res) => {
+app.post('/logout', (req, res) => {
   req.session.destroy(() => res.redirect(buildLoginRedirectPath()));
 });
 
@@ -14276,7 +14342,7 @@ app.post('/settings/project-update/start.json', requireAuth, express.json({ limi
 
 app.get('/settings', requireAuth, async (req, res) => {
   const subscriptionName = getSetting('subscription_name', DEFAULT_SUBSCRIPTION_NAME);
-  const currentUser = db.prepare('SELECT username FROM app_users WHERE id = ?').get(req.session.userId);
+  const currentUser = access.user(req.session.userId);
   const projectUpdateStatus = await getProjectUpdateStatus(req.query.check_update === '1');
   const routingCfg = getRoutingConfig();
 
@@ -14856,7 +14922,7 @@ app.post('/settings', requireAuth, (req, res) => {
     const newUsername = String(req.body.admin_username || '').trim();
     const newPassword = String(req.body.new_password || '');
     const newPassword2 = String(req.body.new_password_confirm || '');
-    const user = db.prepare('SELECT * FROM app_users WHERE id = ?').get(req.session.userId);
+    const user = access.user(req.session.userId);
     const usernameChanged = Boolean(user && newUsername && newUsername !== user.username);
     const wantsAccountChange = Boolean(usernameChanged || newPassword || currentPassword || newPassword2);
 
@@ -14867,7 +14933,7 @@ app.post('/settings', requireAuth, (req, res) => {
       }
 
       const finalUsername = newUsername || user.username;
-      const owner = db.prepare('SELECT id FROM app_users WHERE username = ? AND id != ?').get(finalUsername, user.id);
+      const owner = access.control.prepare('SELECT id FROM users WHERE username = ? COLLATE NOCASE AND id != ?').get(finalUsername, user.id);
       if (owner) throw new Error('Такой логин администратора уже существует');
 
       let finalHash = user.password_hash;
@@ -14877,8 +14943,9 @@ app.post('/settings', requireAuth, (req, res) => {
         finalHash = bcrypt.hashSync(newPassword, 12);
       }
 
-      db.prepare('UPDATE app_users SET username = ?, password_hash = ? WHERE id = ?')
+      access.control.prepare('UPDATE users SET username = ?, password_hash = ?, auth_version=auth_version+1 WHERE id = ?')
         .run(finalUsername, finalHash, user.id);
+      req.session.authVersion = access.user(user.id).auth_version;
     }
 
     res.redirect('/settings?message=' + encodeURIComponent('Настройки сохранены'));
@@ -15272,6 +15339,7 @@ app.post('/nodes', requireAuth, async (req, res) => {
               ? normalizeH1Cloud3xuiSubBaseUrl({ panel_url, sub_base_url: h1cloud_3xui_sub_base_url, h1cloud_3xui_sub_port: h1cloud3xuiSubPort })
               : ''));
 
+    access.claimRemote(storedPanelUrl);
     validateSupportIsolation({ id: 0, expired_support: req.body.expired_support === '1', panel_url: storedPanelUrl, panel_path: storedPanelPath, inbound_id, node_type: normalizedNodeType });
     const storedPasswordEnc = encrypt(apiMode === 'password' ? String(password || '').trim() : '', APP_SECRET);
     const storedApiTokenEnc = apiMode === 'token' ? encrypt(String(api_token || '').trim(), APP_SECRET) : '';
@@ -15733,6 +15801,7 @@ app.post('/nodes/:id/edit', requireAuth, async (req, res) => {
               ? normalizeH1Cloud3xuiSubBaseUrl({ panel_url, sub_base_url: h1cloud_3xui_sub_base_url, h1cloud_3xui_sub_port: h1cloud3xuiSubPort })
               : ''));
 
+    access.claimRemote(storedPanelUrl);
     validateSupportIsolation({ ...existingNode, expired_support: req.body.expired_support === '1', panel_url: storedPanelUrl, panel_path: storedPanelPath, inbound_id, node_type: normalizedNodeType });
     let preflightInbound = null;
     let refreshedSubSource = {
@@ -16189,6 +16258,7 @@ app.post('/client-tags/:id/delete', requireAuth, (req, res) => {
 
 app.post('/clients', requireAuth, async (req, res) => {
   try {
+    validateClientQuotaForm(req.body);
     const { login, limit_ip, device_limit, duration_days, traffic_gb, comment } = req.body;
     let nodeIds = req.body.node_ids || [];
 
@@ -16255,7 +16325,7 @@ app.post('/clients', requireAuth, async (req, res) => {
       if (!node) throw new Error(`Узел ${nodeId} не найден`);
 
       const nodeTrafficRaw = req.body[`node_traffic_gb_${node.id}`];
-      const nodeTrafficGb = String(nodeTrafficRaw || '').trim() === '' ? cleanTrafficGb : Math.max(0, Number(nodeTrafficRaw || 0));
+      const nodeTrafficGb = clientNodeTrafficGbFromForm(nodeTrafficRaw, cleanTrafficGb);
 
       await ensureAggregatorClientOnNode(node, createdClient, {
         uuid,
@@ -16719,7 +16789,7 @@ app.get('/clients/:id/summary.json', requireAuth, async (req, res) => {
         links: {
           editor: `/clients?q=${encodeURIComponent(login)}&edit=${client.id}`,
           search: `/clients?q=${encodeURIComponent(login)}`,
-          open: `/open/${client.sub_slug}`,
+          open: buildPublicOpenUrl(client.sub_slug),
           json: buildPublicJsonUrl(client.sub_slug),
           sub: showSubLinksInPanel ? buildPublicSubUrl(client.sub_slug) : '',
           happ: showHappLinksInPanel ? buildPublicHappUrl(client.sub_slug) : ''
@@ -16773,6 +16843,7 @@ app.post('/clients/:id/devices/reset', requireAuth, (req, res) => {
 
 app.post('/clients/:id/edit', requireAuth, async (req, res) => {
   try {
+    validateClientQuotaForm(req.body);
     const clientId = Number(req.params.id);
     const client = db.prepare('SELECT * FROM clients WHERE id = ?').get(clientId);
     if (!client) throw new Error('Клиент не найден');
@@ -16785,7 +16856,7 @@ app.post('/clients/:id/edit', requireAuth, async (req, res) => {
     const durationWasChanged = rawDurationDays !== '';
     const term = clientTermForEdit(client, req.body, countSubscriptionDevices(client.id));
     const durationDays = term.days;
-    const trafficGb = Math.max(0, Number(req.body.traffic_gb || 0));
+    const trafficGb = Math.max(0, Number(req.body.traffic_gb ?? client.traffic_gb ?? 0));
     const comment = String(req.body.comment || "").trim();
     const groupId = normalizeClientGroupId(req.body.group_id);
     const expiryTime = term.expiry;
@@ -16814,9 +16885,9 @@ app.post('/clients/:id/edit', requireAuth, async (req, res) => {
 
     for (const node of nodesForEdit) {
       const raw = req.body[`node_traffic_gb_${node.id}`];
-      const nodeTrafficGb = String(raw || '').trim() === '' ? trafficGb : Math.max(0, Number(raw || 0));
       const nodeEnabled = req.body[`node_enabled_${node.id}`] === '1';
       const map = db.prepare('SELECT * FROM client_nodes WHERE client_id = ? AND node_id = ?').get(clientId, node.id);
+      const nodeTrafficGb = clientNodeTrafficGbFromForm(raw, trafficGb, map);
 
       try {
         if (map) {
@@ -20093,7 +20164,11 @@ app.use((err, req, res, next) => {
   res.status(500).send(formatServerErrorPage('Внутренняя ошибка сервера', err));
 });
 
-app.listen(PORT, () => {
+const nexusServer = app.listen(PORT, WORKSPACE_ID === 'main' ? '0.0.0.0' : '127.0.0.1', () => {
+  if (process.send) process.send({ type: 'ready', port: nexusServer.address().port });
+  if (workspaceRuntime) {
+    for (const workspace of access.control.prepare("SELECT id FROM workspaces WHERE id!='main' AND status='ready'").all()) workspaceRuntime.start(workspace.id).catch(err => console.error('Workspace startup:', err.message));
+  }
   console.log(`3xui-aggregator started on :${PORT}`);
   startTelegramManagerBot();
   setTimeout(scheduleSupportReconcile, 2000).unref();
@@ -20105,3 +20180,7 @@ app.listen(PORT, () => {
     for (const row of rows) syncActivatedClient(row).catch(err => console.error('Activation sync failed:', err.message));
   }, 30000).unref();
 });
+if (workspaceRuntime) {
+  process.on('exit', () => workspaceRuntime.stop());
+  for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => { workspaceRuntime.stop(); process.exit(0); });
+}

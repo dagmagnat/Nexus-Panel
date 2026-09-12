@@ -2393,6 +2393,13 @@ body.client-modal-open { overflow: hidden; overscroll-behavior: none; }
 .portal-app-actions { display: grid; grid-column: 1 / -1; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
 .portal-app-actions .link-btn { min-width: 0; min-height: 34px; padding: 7px 8px; font-size: 9px; }
 .portal-app-actions button.link-btn { width: 100%; }
+.subscription-portal-page .btn-main,
+.subscription-portal-page .btn-main:hover,
+.subscription-portal-page .btn-main:focus-visible,
+.subscription-portal-page .link-btn:not(.secondary),
+.subscription-portal-page .link-btn:not(.secondary):visited,
+.subscription-portal-page .link-btn:not(.secondary):hover,
+.subscription-portal-page .link-btn:not(.secondary):focus-visible { color: #fff; }
 .is-copied { color: var(--green) !important; }
 
 .portal-node-list { display: grid; gap: 7px; }
@@ -3233,8 +3240,12 @@ body.client-modal-open { overflow: hidden; overscroll-behavior: none; }
 }
 
 .expiry-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (min-width: 1440px) {
+  .expiry-list { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
 .expiry-list .dashboard-client-card {
   position: relative;
+  margin-top: 0;
   grid-template-columns: minmax(0, 1fr) auto;
   grid-template-areas: "identity devices" "meta meta" "renew renew";
   min-height: 132px;
