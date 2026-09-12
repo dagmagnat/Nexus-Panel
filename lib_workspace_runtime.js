@@ -4,7 +4,7 @@ const path = require('node:path');
 const http = require('node:http');
 const crypto = require('node:crypto');
 const { fork } = require('node:child_process');
-const { PUBLIC_PATH } = require('./lib_access');
+const { PUBLIC_PATH, denyAccess } = require('./lib_access');
 
 function validId(id) { return /^[a-f0-9]{24}$/.test(String(id)); }
 function publicTarget(url) {
@@ -122,7 +122,7 @@ function createRuntime(access, baseEnv = process.env) {
     const u = access.sessionUser(req);
     if (!u) return next();
     const id = req.session.workspaceId || 'main';
-    if (!access.workspaces(u).some(w => w.id === id && w.status === 'ready')) return res.status(403).send('Нет доступа к выбранному пространству. Откройте /access.');
+    if (!access.workspaces(u).some(w => w.id === id && w.status === 'ready')) return denyAccess(req, res);
     if (id === 'main') return next();
     proxy(req, res, id, req.originalUrl);
   }

@@ -56,6 +56,13 @@ test('live HTTP: independent workers, RBAC, profiles and unchanged main subscrip
     const db=new Database(path.join(data,'app.db')); db.prepare('INSERT INTO clients(login,display_name,uuid,sub_slug) VALUES (?,?,?,?)').run(label,label,label,slug); db.close();
   }
   const reader=await browser(); await reader.login('reader','reader-password-test');
+  const preflight = async (actor, wid, route, method = 'GET') => actor.request('/access/check?' + new URLSearchParams({workspace:wid,path:route,method}));
+  assert.equal(JSON.parse((await preflight(reader,w.id,'/clients')).text).allowed,true);
+  assert.equal(JSON.parse((await preflight(reader,w.id,'/clients/1/extend','POST')).text).allowed,false);
+  assert.equal(JSON.parse((await preflight(owner,'main','/settings')).text).allowed,true);
+  assert.equal(JSON.parse((await preflight(reader,'main','/clients')).text).stale,true);
+  assert.equal((await anonymousPreflight()).status,302);
+  async function anonymousPreflight() { const a=await browser(); return preflight(a,'main','/clients'); }
   result=await reader.request('/clients'); assert.equal(result.status,200,result.text.slice(0,600)+'\n'+log); assert.match(result.text,/TEAM-PRIVATE/); assert.doesNotMatch(result.text,/MAIN-PRIVATE/);
   for(const route of ['/nodes','/settings','/backup/download','/diagnostics','/preferences']) assert.equal((await reader.request(route)).status,403,route);
   assert.equal((await reader.request('/clients/1/delete',{})).status,403);

@@ -93,17 +93,21 @@ function createAccess({ rootDir, localDb, legacyUsername, workspaceId = 'main' }
     for (const [permission, url] of [['clients.read','/dashboard'],['nodes.manage','/nodes'],['routing.manage','/routing'],['preferences.manage','/preferences']]) if (can(u, wid, permission)) return url;
     return '/access';
   }
+  function allowsRoute(u, wid, method, url) {
+    if (!u || u.disabled || !workspaces(u).some(w => w.id === wid && w.status === 'ready')) return false;
+    const read = ['GET', 'HEAD'].includes(method);
+    if (url === '/logout' || (read && ['/access', '/more'].includes(url)) || url === '/access/switch') return true;
+    if (url.startsWith('/access/')) return Boolean(u.is_owner && wid === 'main');
+    if (u.is_owner && wid === 'main') return true;
+    const permission = permissionFor(method, url.replace(/\/$/, '') || '/');
+    return Boolean(permission && can(u, wid, permission) &&
+      !(permission === 'clients.bulk' && /(?:delete-all|bulk-delete)$/.test(url) && !can(u, wid, 'clients.delete')));
+  }
   function authorize(req, res) {
     res.setHeader('Cache-Control', 'private, no-store');
     const u = sessionUser(req);
     if (!u) { req.session.userId = null; res.redirect('/login'); return false; }
-    if (!workspaces(u).some(w => w.id === workspaceId && w.status === 'ready')) { res.status(403).send('Нет доступа к этому пространству'); return false; }
-    if (['GET', 'HEAD'].includes(req.method) && req.path === '/more') return true;
-    // Host-wide operations belong only to the owner in the main process.
-    if (u.is_owner && workspaceId === 'main') return true;
-    const permission = permissionFor(req.method, req.path.replace(/\/$/, '') || '/');
-    if (!permission || !can(u, workspaceId, permission)) { res.status(403).send('Недостаточно прав. Обратитесь к главному администратору.'); return false; }
-    if (permission === 'clients.bulk' && /(?:delete-all|bulk-delete)$/.test(req.path) && !can(u, workspaceId, 'clients.delete')) { res.status(403).send('Нужно отдельное право удаления клиентов'); return false; }
+    if (!allowsRoute(u, workspaceId, req.method, req.path)) { denyAccess(req, res); return false; }
     return true;
   }
   function createUser({ username, password, wid, permissions }) {
@@ -144,11 +148,19 @@ function createAccess({ rootDir, localDb, legacyUsername, workspaceId = 'main' }
       control.prepare('INSERT OR IGNORE INTO remote_owners VALUES (?,?)').run(endpoint, workspaceId);
     })();
   }
-  return { control, user, workspaces, can, audit, authenticate, landingPath, sessionUser, authorize, createUser, updateUser, claimRemote, workspaceId, rootDir };
+  return { control, user, workspaces, can, audit, authenticate, landingPath, sessionUser, authorize, allowsRoute, createUser, updateUser, claimRemote, workspaceId, rootDir };
 }
 function validatePermissions(values) {
   const result = Array.isArray(values) ? values : values ? [values] : [];
   if (result.some(p => !Object.hasOwn(PERMISSIONS, p))) throw new Error('Неизвестное разрешение');
   return [...new Set(result)];
 }
-module.exports = { createAccess, permissionFor, validatePermissions, PERMISSIONS, ROLES, PUBLIC_PATH };
+function denyAccess(req, res) {
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.setHeader('X-Nexus-Access-Denied', '1');
+  const message = 'У вас нет прав для этого действия. Обратитесь к главному администратору.';
+  if (req.get?.('X-Requested-With') === 'XMLHttpRequest' || req.get?.('Accept')?.includes('application/json'))
+    return res.status(403).json({ ok: false, code: 'ACCESS_DENIED', error: message });
+  return res.status(403).send(`<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Нет доступа — Nexus</title><body style="margin:0;min-height:100vh;display:grid;place-items:center;background:#080f1e;color:#f5f7ff;font-family:system-ui"><main role="alert" style="box-sizing:border-box;width:min(520px,92vw);padding:32px;border:1px solid #56627e;border-radius:20px;background:#142038;text-align:center"><h1 style="font-size:26px">Недостаточно прав</h1><p style="font-size:18px;line-height:1.6">${message}</p><a href="/access" style="color:#8edfff;font-size:18px">Пользователи и доступ</a></main></body></html>`);
+}
+module.exports = { createAccess, permissionFor, validatePermissions, PERMISSIONS, ROLES, PUBLIC_PATH, denyAccess };

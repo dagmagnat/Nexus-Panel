@@ -2,7 +2,7 @@
 const express = require('express');
 const fs = require('node:fs');
 const path = require('node:path');
-const { PERMISSIONS } = require('./lib_access');
+const { PERMISSIONS, denyAccess } = require('./lib_access');
 const profiles = require('./lib_settings_profile');
 function attachAccessRoutes({ app, access, runtime, render, db, dataDir, requireAuth }) {
   function signed(req, res, next) {
@@ -11,10 +11,20 @@ function attachAccessRoutes({ app, access, runtime, render, db, dataDir, require
     next();
   }
   function owner(req, res, next) {
-    if (!access.sessionUser(req)?.is_owner || access.workspaceId !== 'main') return res.sendStatus(403);
+    if (!access.sessionUser(req)?.is_owner || access.workspaceId !== 'main') return denyAccess(req, res);
     next();
   }
   if (runtime) {
+    // Read-only preflight: never execute the target route or change its data.
+    app.get('/access/check', signed, (req, res) => {
+      const raw = String(req.query.path || '');
+      const method = String(req.query.method || 'GET').toUpperCase();
+      if (!raw.startsWith('/') || raw.startsWith('//') || raw.includes('\\') || raw.length > 4096 || !['GET','HEAD','POST','PUT','PATCH','DELETE'].includes(method)) return res.status(400).json({allowed:false});
+      const target = new URL(raw, 'http://nexus.local');
+      const wid = req.session.workspaceId || 'main';
+      const stale = String(req.query.workspace || '') !== wid;
+      res.json({allowed: !stale && access.allowsRoute(access.sessionUser(req), wid, method, target.pathname), stale});
+    });
     app.get('/access', signed, (req, res) => {
       const u = access.sessionUser(req);
       render(res, 'access', { accessUser: u, allWorkspaces: access.workspaces(u), permissions: PERMISSIONS,
