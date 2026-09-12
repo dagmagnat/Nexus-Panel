@@ -1,21 +1,21 @@
-<%- include('partials_header', { pageTitle: 'Профиль настроек', pageSubtitle: 'Перенос переключателей и значений по умолчанию без данных клиентов', activePage: 'settings' }) %>
+<%- include('partials_header', { pageTitle: 'Профиль настроек', pageSubtitle: 'Перенос переключателей и значений по умолчанию без данных клиентов', activePage: 'preferences' }) %>
 <section class="card" style="margin-bottom:16px"><h2>Название VPN этого пространства</h2><p class="muted">Не включается в переносимый профиль и не меняется при его загрузке.</p>
-<form action="/preferences/name" method="post" class="form-grid"><input name="subscription_name" value="<%= vpnName %>" maxlength="100" required><button class="btn" type="submit">Сохранить название</button></form></section>
+<form action="/preferences/name" method="post" class="management-inline-form"><input name="subscription_name" value="<%= vpnName %>" maxlength="100" required aria-label="Название VPN"><button class="btn" type="submit">Сохранить название</button></form></section>
 <section class="card"><h2>Значения для новых клиентов</h2>
 <p class="muted">Эти значения заполняют форму создания. Уже существующие клиенты не меняются.</p>
-<form action="/preferences/defaults" method="post" class="form-grid">
+<form action="/preferences/defaults" method="post" class="management-form">
 <% const labels = {client_default_duration_days:'Срок, дней (0 — без срока)', client_default_limit_ip:'Лимит IP (0 — без лимита)', client_default_device_limit:'Лимит устройств (0 — без лимита)', client_default_traffic_gb:'Трафик, ГБ (0 — без лимита)' }; Object.entries(labels).forEach(([key,label]) => { %>
 <label><%= label %><input name="<%= key %>" type="number" min="0" max="<%= rules[key].max %>" step="<%= rules[key].decimal ? 'any' : '1' %>" value="<%= profile.settings[key] %>" required></label><% }) %>
-<label><input type="checkbox" name="client_default_start_on_activation" value="1" <%= profile.settings.client_default_start_on_activation === '1' ? 'checked' : '' %>> Начинать срок с активации</label>
-<button type="submit" class="btn">Сохранить значения</button></form></section>
+<div class="management-form-actions"><label class="management-check"><input type="checkbox" name="client_default_start_on_activation" value="1" <%= profile.settings.client_default_start_on_activation === '1' ? 'checked' : '' %>> <span>Начинать срок с активации</span></label>
+<button type="submit" class="btn">Сохранить значения</button></div></form></section>
 <section class="card" style="margin-top:16px"><details><summary>Переключатели и интервалы этого пространства</summary>
 <p class="muted">Изменяются только параметры выбранной базы. Системная безопасность и управление сервером настраиваются владельцем в Основном пространстве.</p>
-<form action="/preferences/options" method="post" class="form-grid">
+<form action="/preferences/options" method="post" class="management-form">
 <% Object.entries(rules).filter(([key]) => !key.startsWith('client_default_')).forEach(([key,rule]) => { const value = profile.settings[key] ?? rule.fallback; %>
 <label><%= preferenceLabels[key] || key %>
 <% if (rule.values) { %><select name="<%= key %>"><% rule.values.forEach(option => { %><option value="<%= option %>" <%= value === option ? 'selected' : '' %>><%= rule.values.length === 2 && rule.values[0] === '0' ? (option === '1' ? 'Включено' : 'Выключено') : option %></option><% }) %></select>
 <% } else { %><input type="number" name="<%= key %>" min="<%= rule.min %>" max="<%= rule.max %>" step="1" value="<%= value %>" required><% } %></label><% }) %>
-<button class="btn" type="submit">Сохранить переключатели</button></form></details></section>
+<div class="management-form-actions"><button class="btn" type="submit">Сохранить переключатели</button></div></form></details></section>
 <section class="card" style="margin-top:16px"><h2>Передать только настройки</h2>
 <p>В файл попадут поддерживаемые переключатели, интервалы и значения по умолчанию для клиентов. Не попадут название VPN, узлы, клиенты, ссылки, UUID, пароли, токены, адреса и привязки к узлам.</p>
 <p class="muted">Полный перенос настроек старого формата — другая функция. Здесь принимается только .nxpreferences. Профиль не зашифрован: он не содержит секретов.</p>

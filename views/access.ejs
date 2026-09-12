@@ -1,10 +1,10 @@
-<%- include('partials_header', { pageTitle: 'Пользователи и доступ', pageSubtitle: 'Отдельные сотрудники, права и базы', activePage: 'settings' }) %>
+<%- include('partials_header', { pageTitle: 'Пользователи и доступ', pageSubtitle: 'Отдельные сотрудники, права и базы', activePage: 'access' }) %>
 <% if (message) { %><div class="alert ok"><%= message %></div><% } %>
 <% if (error) { %><div class="alert err"><%= error %></div><% } %>
 <section class="card">
   <h2>Выбрать пространство</h2>
   <p class="muted">Каждое пространство содержит свою базу клиентов, узлов и настроек. Сотрудники одной базы работают совместно.</p>
-  <form method="post" action="/access/switch" class="form-grid">
+  <form method="post" action="/access/switch" class="management-inline-form">
     <select name="workspace_id" required><% allWorkspaces.filter(w => w.status === 'ready').forEach(w => { %><option value="<%= w.id %>" <%= workspaceId === w.id ? 'selected' : '' %>><%= w.name %></option><% }) %></select>
     <button class="btn" type="submit">Переключиться</button>
   </form>
@@ -13,32 +13,32 @@
 <section class="card" style="margin-top:16px">
   <h2>Новая отдельная база</h2>
   <p class="muted">Создаётся пустое пространство, без копирования клиентов и секретов. Для каждого запускается отдельный процесс: учитывайте RAM. Лимит первой версии — 8 пространств. Одна удалённая панель не должна управляться разными базами.</p>
-  <form method="post" action="/access/workspaces" class="form-grid"><input name="name" maxlength="80" required placeholder="Например, Команда 2"><button class="btn" type="submit">Создать пустое пространство</button></form>
+  <form method="post" action="/access/workspaces" class="management-inline-form"><input name="name" maxlength="80" required placeholder="Например, Команда 2" aria-label="Название нового пространства"><button class="btn" type="submit">Создать пустое пространство</button></form>
   <% allWorkspaces.filter(w => w.status !== 'ready').forEach(w => { %><p class="muted"><%= w.name %>: <%= w.status %></p><% if (w.status === 'failed') { %><form method="post" action="/access/workspaces/<%= w.id %>/retry"><button class="btn" type="submit">Повторить запуск без удаления данных</button></form><% } %><% }) %>
 </section>
 <section class="card" style="margin-top:16px">
   <h2>Создать пользователя</h2>
-  <form method="post" action="/access/users" class="form-grid" data-permission-form>
+  <form method="post" action="/access/users" class="management-form" data-permission-form>
     <label>Логин<input name="username" autocomplete="off" minlength="3" maxlength="64" required></label>
     <label>Пароль<input name="password" type="password" autocomplete="new-password" minlength="12" required></label>
     <label>Доступ к базе<select name="workspace_id"><% allWorkspaces.filter(w => w.status === 'ready').forEach(w => { %><option value="<%= w.id %>"><%= w.name %></option><% }) %></select></label>
     <label>Набор прав<select data-role><option value="viewer">Просмотр клиентов и подписок</option><option value="operator">Оператор клиентов</option><option value="admin">Администратор пространства</option></select></label>
-    <div class="field full"><% Object.entries(permissions).forEach(([key,label]) => { %><label style="display:block;margin:8px 0"><input type="checkbox" name="permissions" value="<%= key %>" <%= key === 'clients.read' ? 'checked' : '' %>> <%= label %></label><% }) %></div>
-    <p class="muted">Набор можно изменить галочками. Управление хостом, сертификатами, глобальными настройками и пользователями остаётся только у владельца.</p>
-    <button class="btn" type="submit">Создать пользователя</button>
+    <div class="management-permissions"><% Object.entries(permissions).forEach(([key,label]) => { %><label class="management-check"><input type="checkbox" name="permissions" value="<%= key %>" <%= key === 'clients.read' ? 'checked' : '' %>> <span><%= label %></span></label><% }) %></div>
+    <div class="management-form-actions"><p class="muted">Набор можно изменить галочками. Управление хостом, сертификатами, глобальными настройками и пользователями остаётся только у владельца.</p>
+    <button class="btn" type="submit">Создать пользователя</button></div>
   </form>
 </section>
 <section class="card" style="margin-top:16px"><h2>Учётные записи</h2>
 <% accounts.forEach(account => { %>
   <details style="margin:14px 0"><summary><%= account.username %> — <%= account.is_owner ? 'Главный администратор' : account.disabled ? 'Заблокирован' : 'Активен' %></summary>
   <% if (!account.is_owner) { %>
-  <form method="post" action="/access/users/<%= account.id %>" class="form-grid" data-member-form="<%= account.id %>">
+  <form method="post" action="/access/users/<%= account.id %>" class="management-form" data-member-form="<%= account.id %>">
     <label>Пространство<select name="workspace_id" data-member-workspace><% allWorkspaces.filter(w => w.status === 'ready').forEach(w => { %><option value="<%= w.id %>"><%= w.name %></option><% }) %></select></label>
     <label>Новый пароль (пусто — сохранить)<input type="password" name="password" minlength="12" autocomplete="new-password"></label>
-    <label><input type="checkbox" name="disabled" value="1" <%= account.disabled ? 'checked' : '' %>> Заблокировать пользователя во всех базах</label>
-    <div class="field full"><% Object.entries(permissions).forEach(([key,label]) => { %><label style="display:block;margin:8px 0"><input type="checkbox" name="permissions" value="<%= key %>"> <%= label %></label><% }) %></div>
-    <p class="muted">Без галочек доступ к выбранной базе будет отозван. Доступ к другим базам сохранится. Любое сохранение отзывает старые сессии пользователя.</p>
-    <button class="btn" type="submit">Сохранить права</button>
+    <label class="management-check"><input type="checkbox" name="disabled" value="1" <%= account.disabled ? 'checked' : '' %>> <span>Заблокировать пользователя во всех базах</span></label>
+    <div class="management-permissions"><% Object.entries(permissions).forEach(([key,label]) => { %><label class="management-check"><input type="checkbox" name="permissions" value="<%= key %>"> <span><%= label %></span></label><% }) %></div>
+    <div class="management-form-actions"><p class="muted">Без галочек доступ к выбранной базе будет отозван. Доступ к другим базам сохранится. Любое сохранение отзывает старые сессии пользователя.</p>
+    <button class="btn" type="submit">Сохранить права</button></div>
   </form><% } %></details>
 <% }) %></section>
 <section class="card" style="margin-top:16px"><h2>Журнал доступа</h2><% audit.forEach(row => { %><p><small><%= row.at %> · Пользователь <%= row.actor %> · <%= row.action %> · <%= row.target %></small></p><% }) %></section>

@@ -34,7 +34,9 @@
     } catch (_) {}
   })();
   </script>
-  <link rel="stylesheet" href="/css/spectrum-clear.css?v=274" />
+  <link rel="stylesheet" href="/css/spectrum-clear.css?v=275" />
+  <link rel="stylesheet" href="/css/management-layout.css?v=1" />
+  <script src="/js/management-layout.js?v=1" defer></script>
   <script src="/js/security.js?v=3"></script>
   <% if (typeof isDevelopment !== 'undefined' && isDevelopment) { %><script src="/js/dev-inspector.js?v=1" defer></script><% } %>
 </head>
@@ -58,11 +60,11 @@
     return '<svg class="nexus-icon' + (cls ? ' ' + cls : '') + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (NEXUS_ICONS[name] || '') + '</svg>';
   }
   const currentPath = typeof activePage !== 'undefined' ? activePage : '';
-  const moreNavActive = ['more', 'settings', 'redirects', 'diagnostics', 'telegram_bot', 'nexus_nodes'].includes(currentPath);
+  const moreNavActive = ['more', 'settings', 'access', 'preferences', 'redirects', 'diagnostics', 'telegram_bot', 'nexus_nodes'].includes(currentPath);
   const sectionLabels = {
     dashboard: 'Обзор', nodes: 'Инфраструктура', clients: 'Доступ',
     routing: 'Сеть', redirects: 'Сеть', diagnostics: 'Система', telegram_bot: 'Интеграции',
-    settings: 'Система', nexus_nodes: 'Инфраструктура', more: 'Nexus Panel'
+    settings: 'Система', access: 'Система', preferences: 'Система', nexus_nodes: 'Инфраструктура', more: 'Nexus Panel'
   };
 %>
 <body class="nexus-spectrum theme-classic page-<%= currentPath || 'app' %> clients-view-<%= typeof clientsViewMode !== 'undefined' ? clientsViewMode : 'modern' %> mobile-nav-<%= typeof panelMobileNavMode !== 'undefined' ? panelMobileNavMode : 'bottom' %> mobile-size-<%= typeof panelMobileUiScale !== 'undefined' ? panelMobileUiScale : 'compact' %>">
@@ -99,8 +101,8 @@
           <a href="/diagnostics" class="<%= currentPath === 'diagnostics' ? 'active' : '' %>"><span class="nav-icon"><%- nexusIcon('diagnostics') %></span><span>Диагностика</span></a>
           <a href="/telegram-bot" class="<%= currentPath === 'telegram_bot' ? 'active' : '' %>"><span class="nav-icon"><%- nexusIcon('telegram') %></span><span>Telegram</span></a>
           <a href="/settings" class="<%= currentPath === 'settings' ? 'active' : '' %>"><span class="nav-icon"><%- nexusIcon('settings') %></span><span>Настройки</span></a>
-          <a href="/access"><span class="nav-icon"><%- nexusIcon('clients') %></span><span>Пользователи и доступ</span></a>
-          <a href="/preferences"><span class="nav-icon"><%- nexusIcon('settings') %></span><span>Профиль настроек</span></a>
+          <a href="/access" class="<%= currentPath === 'access' ? 'active' : '' %>" <%- currentPath === 'access' ? 'aria-current="page"' : '' %>><span class="nav-icon"><%- nexusIcon('clients') %></span><span>Пользователи и доступ</span></a>
+          <a href="/preferences" class="<%= currentPath === 'preferences' ? 'active' : '' %>" <%- currentPath === 'preferences' ? 'aria-current="page"' : '' %>><span class="nav-icon"><%- nexusIcon('settings') %></span><span>Профиль настроек</span></a>
         </div>
       </nav>
 

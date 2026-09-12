@@ -43,7 +43,15 @@ test('live HTTP: independent workers, RBAC, profiles and unchanged main subscrip
     }};
   }
   const owner=await browser(); await owner.login('owner','test-owner-password');
-  assert.equal((await owner.request('/preferences')).status,200);
+  const accessPage = await owner.request('/access');
+  assert.equal(accessPage.status,200);
+  assert.match(accessPage.text, /href="\/access" class="active" aria-current="page"/);
+  assert.doesNotMatch(accessPage.text, /href="\/settings" class="active"/);
+  const preferencesPage = await owner.request('/preferences');
+  assert.equal(preferencesPage.status,200);
+  assert.match(preferencesPage.text, /href="\/preferences" class="active" aria-current="page"/);
+  assert.doesNotMatch(preferencesPage.text, /href="\/settings" class="active"/);
+  assert.match(preferencesPage.text, /management-layout\.css\?v=1/);
   let result=await owner.request('/access/workspaces',{name:'Other team'});
   assert.equal(result.status,302,result.text); assert.ok(!result.location.includes('error='),result.location+'\n'+log);
   const control=new Database(path.join(dir,'control.db'));
