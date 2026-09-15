@@ -47,6 +47,13 @@ function createAccess({ rootDir, localDb, legacyUsername, workspaceId = 'main' }
     CREATE TABLE IF NOT EXISTS memberships(user_id INTEGER REFERENCES users(id), workspace_id TEXT REFERENCES workspaces(id), permissions TEXT NOT NULL, PRIMARY KEY(user_id,workspace_id));
     CREATE TABLE IF NOT EXISTS access_audit(id INTEGER PRIMARY KEY, at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, actor INTEGER, workspace TEXT, action TEXT NOT NULL, target TEXT);
     CREATE TABLE IF NOT EXISTS remote_owners(endpoint TEXT PRIMARY KEY, workspace TEXT NOT NULL);
+    
+    CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
+    CREATE INDEX IF NOT EXISTS idx_memberships_user ON memberships(user_id);
+    CREATE INDEX IF NOT EXISTS idx_memberships_workspace ON memberships(workspace_id);
+    CREATE INDEX IF NOT EXISTS idx_memberships_lookup ON memberships(user_id, workspace_id);
+    CREATE INDEX IF NOT EXISTS idx_access_audit_actor ON access_audit(actor);
+    CREATE INDEX IF NOT EXISTS idx_access_audit_workspace ON access_audit(workspace);
   `);
   if (!control.prepare('SELECT 1 FROM users LIMIT 1').get()) {
     if (workspaceId !== 'main') throw new Error('Сначала должен запуститься основной процесс Nexus');
@@ -71,16 +78,46 @@ function createAccess({ rootDir, localDb, legacyUsername, workspaceId = 'main' }
   }
   const user = id => control.prepare('SELECT * FROM users WHERE id=?').get(Number(id) || -1);
   const workspaces = u => u?.is_owner ? control.prepare('SELECT id,name,status FROM workspaces ORDER BY id').all() : control.prepare('SELECT w.id,w.name,w.status FROM workspaces w JOIN memberships m ON m.workspace_id=w.id WHERE m.user_id=? ORDER BY w.id').all(u?.id || -1);
+  
+  // Prepared statements for performance
+  const userStmt = control.prepare('SELECT * FROM users WHERE id=?');
+  const membershipStmt = control.prepare('SELECT permissions FROM memberships WHERE user_id=? AND workspace_id=?');
+  
   function can(u, wid, permission) {
     if (!u || u.disabled) return false;
     if (u.is_owner) return true;
-    const member = control.prepare('SELECT permissions FROM memberships WHERE user_id=? AND workspace_id=?').get(u.id, wid);
+    const member = membershipStmt.get(u.id, wid);
     return Boolean(member && JSON.parse(member.permissions).includes(permission));
   }
   function audit(actor, wid, action, target = '') { control.prepare('INSERT INTO access_audit(actor,workspace,action,target) VALUES (?,?,?,?)').run(actor || null, wid, action, String(target).slice(0, 200)); }
   function sessionUser(req) {
-    const u = user(req.session?.userId);
-    return u && !u.disabled && Number(req.session.authVersion) === u.auth_version ? u : null;
+    const u = userStmt.get(Number(req.session?.userId) || -1);
+    if (!u || u.disabled || Number(req.session.authVersion) !== u.auth_version) return null;
+    
+    // Cache permissions in session to avoid repeated DB queries
+    const cacheKey = `_accessCache_${u.id}_${u.auth_version}`;
+    if (!req.session[cacheKey]) {
+      const userWorkspaces = workspaces(u);
+      const permissionsMap = {};
+      
+      // Pre-load all permissions for this user's workspaces
+      if (!u.is_owner) {
+        for (const ws of userWorkspaces) {
+          const member = membershipStmt.get(u.id, ws.id);
+          if (member) {
+            permissionsMap[ws.id] = JSON.parse(member.permissions);
+          }
+        }
+      }
+      
+      req.session[cacheKey] = {
+        workspaces: userWorkspaces,
+        permissions: permissionsMap,
+        cachedAt: Date.now()
+      };
+    }
+    
+    return u;
   }
   function authenticate(req, u) {
     req.session.userId = u.id;
@@ -93,8 +130,15 @@ function createAccess({ rootDir, localDb, legacyUsername, workspaceId = 'main' }
     for (const [permission, url] of [['clients.read','/dashboard'],['nodes.manage','/nodes'],['routing.manage','/routing'],['preferences.manage','/preferences']]) if (can(u, wid, permission)) return url;
     return '/access';
   }
-  function allowsRoute(u, wid, method, url) {
-    if (!u || u.disabled || !workspaces(u).some(w => w.id === wid && w.status === 'ready')) return false;
+  function allowsRoute(u, wid, method, url, req = null) {
+    if (!u || u.disabled) return false;
+    
+    // Use cached workspaces from session if available
+    const cacheKey = `_accessCache_${u.id}_${u.auth_version}`;
+    const cached = req?.session?.[cacheKey];
+    const userWorkspaces = cached ? cached.workspaces : workspaces(u);
+    
+    if (!userWorkspaces.some(w => w.id === wid && w.status === 'ready')) return false;
     const read = ['GET', 'HEAD'].includes(method);
     if (url === '/logout' || (read && ['/access', '/more'].includes(url)) || url === '/access/switch') return true;
     if (url.startsWith('/access/')) return Boolean(u.is_owner && wid === 'main');
@@ -107,7 +151,7 @@ function createAccess({ rootDir, localDb, legacyUsername, workspaceId = 'main' }
     res.setHeader('Cache-Control', 'private, no-store');
     const u = sessionUser(req);
     if (!u) { req.session.userId = null; res.redirect('/login'); return false; }
-    if (!allowsRoute(u, workspaceId, req.method, req.path)) { denyAccess(req, res); return false; }
+    if (!allowsRoute(u, workspaceId, req.method, req.path, req)) { denyAccess(req, res); return false; }
     return true;
   }
   function createUser({ username, password, wid, permissions }) {

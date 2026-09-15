@@ -930,8 +930,17 @@ app.use(session({
   }
 }));
 
-function ensureCsrfToken(req) {
-  if (!req.session.csrfToken) req.session.csrfToken = randomBytes(32).toString('hex');
+function ensureCsrfToken(req, callback) {
+  if (!req.session.csrfToken) {
+    req.session.csrfToken = randomBytes(32).toString('hex');
+    // Explicitly save session to ensure CSRF token is persisted
+    req.session.save((err) => {
+      if (err) console.error('Failed to save CSRF token to session:', err);
+      if (callback) callback();
+    });
+  } else if (callback) {
+    callback();
+  }
   return req.session.csrfToken;
 }
 
@@ -939,20 +948,23 @@ app.use((req, res, next) => {
   // Nexus Node uses its own HMAC authentication. Requiring a browser CSRF
   // token here would make an outbound, headless agent impossible to enroll.
   if (NEXUS_NODE_ENABLED && req.path.startsWith('/api/nexus-node/v1/')) return next();
-  const token = ensureCsrfToken(req);
-  res.locals.csrfToken = token;
-  res.locals.workspaceId = req.session.workspaceId || 'main';
-  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
+  
+  ensureCsrfToken(req, () => {
+    const token = req.session.csrfToken;
+    res.locals.csrfToken = token;
+    res.locals.workspaceId = req.session.workspaceId || 'main';
+    if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
 
-  const provided = String(req.body?._csrf || req.headers['x-csrf-token'] || '').trim();
-  if (!safeTokenEquals(provided, token)) {
-    return res.status(403).send('Недействительный CSRF-токен. Обновите страницу и повторите действие.');
-  }
-  if (req.session.userId && req.path !== '/login') {
-    const boundWorkspace = String(req.body?._workspace || req.headers['x-nexus-workspace'] || '');
-    if (boundWorkspace !== String(req.session.workspaceId || 'main')) return res.status(409).send('Пространство изменилось или форма устарела. Обновите страницу.');
-  }
-  next();
+    const provided = String(req.body?._csrf || req.headers['x-csrf-token'] || '').trim();
+    if (!safeTokenEquals(provided, token)) {
+      return res.status(403).send('Недействительный CSRF-токен. Обновите страницу и повторите действие.');
+    }
+    if (req.session.userId && req.path !== '/login') {
+      const boundWorkspace = String(req.body?._workspace || req.headers['x-nexus-workspace'] || '');
+      if (boundWorkspace !== String(req.session.workspaceId || 'main')) return res.status(409).send('Пространство изменилось или форма устарела. Обновите страницу.');
+    }
+    next();
+  });
 });
 
 function safeTokenEquals(a, b) {
