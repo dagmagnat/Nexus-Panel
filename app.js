@@ -3,6 +3,7 @@ const express = require('express');
 const session = require('express-session');
 const SQLiteStore = require('connect-sqlite3')(session);
 const bodyParser = require('body-parser');
+const compression = require('compression');
 const bcrypt = require('bcryptjs');
 const Database = require('better-sqlite3');
 const { randomUUID, randomBytes, timingSafeEqual, createHmac, createHash } = require('crypto');
@@ -859,6 +860,20 @@ function isValidTelegramBackupDownload(req) {
 
 app.set('view engine', 'ejs');
 app.disable('x-powered-by');
+
+// Enable compression for all responses (gzip/brotli)
+// This reduces bandwidth by 70-80% for text-based content
+app.use(compression({
+  filter: (req, res) => {
+    // Don't compress responses with Cache-Control: no-transform
+    if (req.headers['x-no-compression']) return false;
+    // Use compression filter function from compression module
+    return compression.filter(req, res);
+  },
+  level: 6, // Balanced compression level (1-9, higher = better compression but slower)
+  threshold: 1024 // Only compress responses larger than 1KB
+}));
+
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
@@ -869,6 +884,8 @@ app.use((req, res, next) => {
   next();
 });
 app.use(bodyParser.urlencoded({ extended: true, limit: '2mb', verify: (req, res, buffer) => { req.rawFormBody = buffer; } }));
+
+// Cache-Control for dynamic CSS that changes per user preferences
 app.use(['/css/spectrum-clear.css', '/site.webmanifest'], (req, res, next) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
   res.setHeader('Pragma', 'no-cache');
@@ -876,7 +893,29 @@ app.use(['/css/spectrum-clear.css', '/site.webmanifest'], (req, res, next) => {
   res.setHeader('Surrogate-Control', 'no-store');
   next();
 });
-app.use(express.static('public'));
+
+// Aggressive caching for static assets (CSS, JS, images, fonts)
+// These files are immutable or versioned, so can be cached for a long time
+app.use(express.static('public', {
+  maxAge: '1y', // Cache for 1 year
+  etag: true, // Enable ETags for conditional requests
+  lastModified: true, // Include Last-Modified header
+  immutable: true, // Mark as immutable (supported by modern browsers)
+  setHeaders: (res, filePath) => {
+    // Special handling for different file types
+    if (filePath.endsWith('.html')) {
+      // HTML files shouldn't be cached as long
+      res.setHeader('Cache-Control', 'public, max-age=3600'); // 1 hour
+    } else if (filePath.match(/\.(css|js)$/)) {
+      // CSS and JS files
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable'); // 1 year
+    } else if (filePath.match(/\.(png|jpg|jpeg|gif|ico|svg|webp|woff2?|ttf|eot)$/)) {
+      // Images and fonts
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable'); // 1 year
+    }
+  }
+}));
+
 app.use(session({
   store: new SQLiteStore({ db: 'sessions.sqlite', dir: CONTROL_DIR }),
   secret: SESSION_SECRET,
