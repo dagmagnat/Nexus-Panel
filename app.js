@@ -16182,7 +16182,7 @@ app.get('/clients', requireAuth, (req, res) => {
 
   // ОПТИМИЗАЦИЯ 1: Загружаем все devices одним запросом
   const devicesByClient = new Map();
-  for (const device of db.prepare(`SELECT client_id, id, device_name, device_id, first_seen_at, last_seen_at FROM subscription_devices ORDER BY client_id, last_seen_at DESC`).all()) {
+  for (const device of db.prepare(`SELECT client_id, id, hwid_hint, os_name, device_model, first_seen_at, last_seen_at FROM subscription_devices ORDER BY client_id, last_seen_at DESC`).all()) {
     const clientId = Number(device.client_id);
     if (!devicesByClient.has(clientId)) devicesByClient.set(clientId, []);
     devicesByClient.get(clientId).push(device);
