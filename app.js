@@ -333,6 +333,19 @@ function nodeOrderSql(alias = '') {
 }
 
 function backfillSchemaDefaults() {
+  // Performance indexes for dashboard and clients page
+  try {
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_client_nodes_lookup ON client_nodes(client_id, node_id, enabled);
+      CREATE INDEX IF NOT EXISTS idx_client_nodes_node ON client_nodes(node_id, enabled, client_id);
+      CREATE INDEX IF NOT EXISTS idx_traffic_snapshots_time ON traffic_snapshots(created_at_ms DESC);
+      CREATE INDEX IF NOT EXISTS idx_node_traffic_time ON node_traffic_snapshots(node_id, created_at_ms DESC);
+      CREATE INDEX IF NOT EXISTS idx_client_traffic_lookup ON client_traffic_snapshots(client_id, node_id, created_at_ms DESC);
+      CREATE INDEX IF NOT EXISTS idx_clients_expiry ON clients(enabled, expiry_time);
+      CREATE INDEX IF NOT EXISTS idx_clients_group ON clients(group_id, enabled);
+    `);
+  } catch (_) {}
+  
   try { db.prepare("UPDATE clients SET display_name = login WHERE (display_name IS NULL OR display_name = '') AND login IS NOT NULL").run(); } catch (_) {}
   try { db.prepare("UPDATE clients SET comment = '' WHERE comment IS NULL").run(); } catch (_) {}
   try { db.prepare("UPDATE clients SET flow = '' WHERE flow IS NULL").run(); } catch (_) {}
@@ -12043,17 +12056,51 @@ function refreshAllClientUsageFromNodes() {
 }
 
 function buildClientUsageDirectory() {
-  const clients = db.prepare('SELECT id, login, display_name, traffic_gb FROM clients').all();
-  const mappings = db.prepare(`SELECT cn.client_id, cn.node_id, cn.traffic_gb, cn.used_bytes, cn.enabled, n.name, n.country_name_ru, n.label_suffix
-    FROM client_nodes cn JOIN nodes n ON n.id = cn.node_id`).all();
+  // Оптимизация: один JOIN запрос вместо двух раздельных
+  const rows = db.prepare(`
+    SELECT 
+      c.id AS client_id,
+      c.login,
+      c.display_name,
+      c.traffic_gb AS client_traffic_gb,
+      cn.node_id,
+      cn.traffic_gb AS node_traffic_gb,
+      cn.used_bytes,
+      cn.enabled,
+      n.name,
+      n.country_name_ru,
+      n.label_suffix
+    FROM clients c
+    LEFT JOIN client_nodes cn ON cn.client_id = c.id
+    LEFT JOIN nodes n ON n.id = cn.node_id
+    ORDER BY c.id, cn.node_id
+  `).all();
+  
   const byClient = new Map();
-  for (const row of mappings) {
-    if (!byClient.has(Number(row.client_id))) byClient.set(Number(row.client_id), []);
-    byClient.get(Number(row.client_id)).push({ id: Number(row.node_id), name: getNodePublicName(row),
-      limitGb: Math.max(0, Number(row.traffic_gb || 0)), usedBytes: clampByteNumber(row.used_bytes), enabled: Number(row.enabled) });
+  for (const row of rows) {
+    const clientId = Number(row.client_id);
+    if (!byClient.has(clientId)) {
+      byClient.set(clientId, {
+        id: clientId,
+        login: row.login,
+        name: row.display_name || row.login,
+        limitGb: Math.max(0, Number(row.client_traffic_gb || 0)),
+        nodes: []
+      });
+    }
+    
+    if (row.node_id) {
+      byClient.get(clientId).nodes.push({
+        id: Number(row.node_id),
+        name: getNodePublicName(row),
+        limitGb: Math.max(0, Number(row.node_traffic_gb || 0)),
+        usedBytes: clampByteNumber(row.used_bytes),
+        enabled: Number(row.enabled)
+      });
+    }
   }
-  return clients.map(client => ({ id: Number(client.id), login: client.login, name: client.display_name || client.login,
-    limitGb: Math.max(0, Number(client.traffic_gb || 0)), nodes: byClient.get(Number(client.id)) || [] }));
+  
+  return Array.from(byClient.values());
 }
 
 async function collectAllClientUsageFromNodes() {
@@ -12358,16 +12405,13 @@ function getDashboardLimitRows() {
     ORDER BY c.expiry_time ASC, c.login ASC
   `).all();
 
+  // Оптимизация: используем данные из SQL напрямую, без дополнительных запросов
   for (const row of rows) {
-    const node = { id: row.node_id, inbound_id: row.inbound_id };
-    const client = { uuid: row.remote_uuid, login: row.remote_email };
-    const usage = readUsageForClientNode(node, client, row);
-    row.upload_bytes = usage.uploadBytes;
-    row.download_bytes = usage.downloadBytes;
-    row.used_bytes = usage.usedBytes;
+    row.upload_bytes = clampByteNumber(row.upload_bytes);
+    row.download_bytes = clampByteNumber(row.download_bytes);
+    row.used_bytes = clampByteNumber(row.used_bytes);
     row.limit_bytes = toTotalGbBytes(row.traffic_gb || 0);
     row.remaining_bytes = Math.max(0, row.limit_bytes - row.used_bytes);
-    updateClientNodeUsage(row.map_id, usage);
   }
 
   return rows;
@@ -16136,38 +16180,59 @@ app.get('/clients', requireAuth, (req, res) => {
     tagsByClient.get(Number(row.client_id)).push({ id: row.id, name: row.name, color: row.color });
   }
 
+  // ОПТИМИЗАЦИЯ 1: Загружаем все devices одним запросом
+  const devicesByClient = new Map();
+  for (const device of db.prepare(`SELECT client_id, id, device_name, device_id, first_seen_at, last_seen_at FROM subscription_devices ORDER BY client_id, last_seen_at DESC`).all()) {
+    const clientId = Number(device.client_id);
+    if (!devicesByClient.has(clientId)) devicesByClient.set(clientId, []);
+    devicesByClient.get(clientId).push(device);
+  }
+
+  // ОПТИМИЗАЦИЯ 2: Загружаем все node_limits одним запросом с JOIN
+  const nodeLimitsByClient = new Map();
+  const nodeLimitsRows = db.prepare(`
+    SELECT
+      cn.client_id,
+      n.id AS node_id,
+      n.country_code,
+      n.country_name_ru,
+      n.country_flag,
+      n.name,
+      n.node_type,
+      n.h1cloud_link_mode,
+      n.h1cloud_link_types,
+      n.h1cloud_fingerprint,
+      n.label_suffix,
+      n.inbound_id,
+      cn.id AS client_node_id,
+      cn.remote_email,
+      cn.remote_uuid,
+      cn.traffic_gb,
+      cn.limit_ip,
+      cn.upload_bytes,
+      cn.download_bytes,
+      cn.used_bytes,
+      COALESCE(cn.subscription_policy_only, 0) AS subscription_policy_only,
+      CASE WHEN cn.id IS NULL THEN 0 ELSE cn.enabled END AS enabled,
+      n.sort_order
+    FROM nodes n
+    LEFT JOIN client_nodes cn ON cn.node_id = n.id
+    WHERE n.enabled = 1
+    ORDER BY cn.client_id, COALESCE(n.sort_order, n.id) ASC, n.id ASC
+  `).all();
+  
+  for (const row of nodeLimitsRows) {
+    if (!row.client_id) continue;
+    const clientId = Number(row.client_id);
+    if (!nodeLimitsByClient.has(clientId)) nodeLimitsByClient.set(clientId, []);
+    nodeLimitsByClient.get(clientId).push(enrichNodeFlagFields(row));
+  }
+
   for (const client of clients) {
     client.tags = tagsByClient.get(Number(client.id)) || [];
-    client.devices = listSubscriptionDevices(client.id);
+    client.devices = devicesByClient.get(Number(client.id)) || [];
     client.device_count = client.devices.length;
-    client.node_limits = db.prepare(`
-      SELECT
-        n.id AS node_id,
-        n.country_code,
-        n.country_name_ru,
-        n.country_flag,
-        n.name,
-        n.node_type,
-        n.h1cloud_link_mode,
-        n.h1cloud_link_types,
-        n.h1cloud_fingerprint,
-        n.label_suffix,
-        n.inbound_id,
-        cn.id AS client_node_id,
-        cn.remote_email,
-        cn.remote_uuid,
-        cn.traffic_gb,
-        cn.limit_ip,
-        cn.upload_bytes,
-        cn.download_bytes,
-        cn.used_bytes,
-        COALESCE(cn.subscription_policy_only, 0) AS subscription_policy_only,
-        CASE WHEN cn.id IS NULL THEN 0 ELSE cn.enabled END AS enabled
-      FROM nodes n
-      LEFT JOIN client_nodes cn ON cn.node_id = n.id AND cn.client_id = ?
-      WHERE n.enabled = 1
-      ORDER BY ${nodeOrderSql('n')}
-    `).all(client.id).map(enrichNodeFlagFields);
+    client.node_limits = nodeLimitsByClient.get(Number(client.id)) || [];
 
     for (const row of client.node_limits) {
       if (!row.client_node_id) continue;
