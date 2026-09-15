@@ -1,6 +1,6 @@
 (() => {
   'use strict';
-  let clients = [], pending = false, timer;
+  let clients = [], pending = false, timer, consecutiveErrors = 0;
   const el = id => document.getElementById(id);
   function render() {
     const query = el('quotaSearch').value.trim().toLocaleLowerCase('ru');
@@ -30,6 +30,7 @@
       const response = await fetch('/clients/usage.json', { cache: 'no-store', signal: AbortSignal.timeout(10000) });
       if (!response.ok) throw new Error('Нет свежих данных');
       const data = await response.json(); clients = data.clients || [];
+      consecutiveErrors = 0; // Reset error counter on success
       const select = el('quotaNode'), selected = select.value;
       const nodes = new Map(); clients.forEach(client => (client.nodes || []).forEach(node => nodes.set(String(node.id), node.name)));
       select.replaceChildren(new Option('Все узлы', ''));
@@ -38,8 +39,16 @@
       render();
       el('quotaStatus').textContent = `${data.refreshing ? 'Обновляю ГБ…' : 'Снимок: ' + (data.updatedAt ? new Date(data.updatedAt).toLocaleTimeString('ru') : 'кэш')}${data.errors?.length ? ' · часть узлов недоступна; их данные сохранены' : ''}`;
       el('quotaStatus').title = (data.errors || []).join(' | ');
-      timer = setTimeout(() => { if (!document.hidden) refresh(); }, data.refreshing ? 3000 : 30000);
-    } catch (_) { el('quotaStatus').textContent = 'Не удалось обновить ГБ. Показаны прежние данные.'; }
+      // Smart refresh interval: faster when refreshing, slower when stable
+      const interval = data.refreshing ? 3000 : 30000;
+      timer = setTimeout(() => { if (!document.hidden) refresh(); }, interval);
+    } catch (_) { 
+      consecutiveErrors++;
+      el('quotaStatus').textContent = 'Не удалось обновить ГБ. Показаны прежние данные.'; 
+      // Exponential backoff on errors: 30s, 60s, 120s, max 300s (5 minutes)
+      const backoffInterval = Math.min(30000 * Math.pow(2, consecutiveErrors - 1), 300000);
+      timer = setTimeout(() => { if (!document.hidden) refresh(); }, backoffInterval);
+    }
     finally { pending = false; }
   }
   ['quotaNode', 'quotaFilter', 'quotaSort'].forEach(id => el(id).addEventListener('change', render));
