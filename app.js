@@ -515,11 +515,26 @@ const SUBSCRIPTION_STATS_TIMEOUT_MS = Number(process.env.SUBSCRIPTION_STATS_TIME
 async function fetchWithTimeout(url, options = {}, timeoutMs = FETCH_TIMEOUT_MS) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const externalSignal = options.signal;
+  const onAbort = () => controller.abort();
+  if (externalSignal?.aborted) controller.abort();
+  else externalSignal?.addEventListener('abort', onAbort, { once: true });
 
   try {
-    return await fetch(url, {
+    const response = await fetch(url, {
+      size: 16 * 1024 * 1024,
       ...options,
-      signal: options.signal || controller.signal
+      signal: controller.signal
+    });
+    // node-fetch resolves at the headers. Keep the deadline alive while reading
+    // the body too; all callers of this helper consume buffered JSON/text.
+    const body = await response.buffer();
+    return new fetch.Response(body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+      url: response.url,
+      counter: response.redirected ? 1 : 0
     });
   } catch (err) {
     const raw = String(err?.message || err || '');
@@ -536,7 +551,28 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = FETCH_TIMEOUT_MS)
     throw err;
   } finally {
     clearTimeout(timer);
+    externalSignal?.removeEventListener('abort', onAbort);
   }
+}
+
+function subscriptionRequestBudget(timeoutMs) {
+  const deadline = Date.now() + Math.max(1, Number(timeoutMs) || SUBSCRIPTION_STATS_TIMEOUT_MS);
+  return () => {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      const error = new Error('Истекло время обновления данных подписки');
+      error.code = 'ETIMEDOUT';
+      throw error;
+    }
+    return remaining;
+  };
+}
+
+function isTransientSubscriptionError(error) {
+  const status = Number(error?.status || 0);
+  if (status) return status === 408 || status === 429 || status >= 500;
+  return ['ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED', 'EAI_AGAIN', 'ENOTFOUND', 'EPIPE', 'ENETUNREACH', 'EHOSTUNREACH', 'ERR_STREAM_PREMATURE_CLOSE'].includes(error?.code)
+    || ['AbortError', 'NodeApiTimeoutError'].includes(error?.name);
 }
 
 const H1CLOUD_INSECURE_HTTPS_AGENT = new https.Agent({ rejectUnauthorized: false });
@@ -4135,14 +4171,15 @@ function extractRemnawaveHost(data) {
   return root;
 }
 
-async function getRemnawaveHostDescriptor(node) {
+async function getRemnawaveHostDescriptor(node, timeoutMs = Math.min(NODE_API_TIMEOUT_MS, 5000)) {
   const hostUuid = String(node?.remnawave_host_uuid || '').trim();
   if (!hostUuid || !isUuidText(hostUuid)) return null;
   const key = `${Number(node?.id || node?.node_id || 0)}:${hostUuid}`;
   const cached = remnawaveHostDescriptorCache.get(key);
   if (cached && cached.expiresAt > Date.now()) return cached.value;
   try {
-    const data = await remnawaveApiGet(node, `/api/hosts/${encodeURIComponent(hostUuid)}`, Math.min(NODE_API_TIMEOUT_MS, 5000), { allowNotFound: true });
+    const budget = typeof timeoutMs === 'function' ? Math.min(timeoutMs(), 5000) : timeoutMs;
+    const data = await remnawaveApiGet(node, `/api/hosts/${encodeURIComponent(hostUuid)}`, budget, { allowNotFound: true });
     const value = extractRemnawaveHost(data);
     remnawaveHostDescriptorCache.set(key, { value, expiresAt: Date.now() + 5 * 60 * 1000 });
     return value;
@@ -5510,14 +5547,15 @@ async function loginNode(node, timeoutMs = NODE_API_TIMEOUT_MS) {
 }
 
 async function apiGet(node, path, timeoutMs = NODE_API_TIMEOUT_MS) {
-  const auth = await buildNodeApiAuth(node, timeoutMs);
+  const remaining = subscriptionRequestBudget(timeoutMs);
+  const auth = await buildNodeApiAuth(node, remaining());
 
   const response = await fetchWithTimeout(`${auth.rootUrl}${path}`, {
     headers: {
       'Accept': 'application/json',
       ...auth.headers
     }
-  }, timeoutMs);
+  }, remaining());
 
   const data = await safeJson(response);
 
@@ -5734,9 +5772,10 @@ function extractInboundFromApiPayload(data) {
 }
 
 async function fetchSelectedInboundExact(node, timeoutMs = NODE_API_TIMEOUT_MS) {
+  const remaining = subscriptionRequestBudget(timeoutMs);
   let directError = null;
   try {
-    const data = await apiGet(node, `/panel/api/inbounds/get/${encodeURIComponent(node.inbound_id)}`, timeoutMs);
+    const data = await apiGet(node, `/panel/api/inbounds/get/${encodeURIComponent(node.inbound_id)}`, remaining());
     return validateSelectedInbound(node, extractInboundFromApiPayload(data));
   } catch (err) {
     directError = err;
@@ -5748,7 +5787,7 @@ async function fetchSelectedInboundExact(node, timeoutMs = NODE_API_TIMEOUT_MS) 
   // Старые/нестандартные сборки могут не иметь /get/:id. Используем только
   // полный /list. /list/slim намеренно не подходит: в нём нет transport/security.
   try {
-    const data = await apiGet(node, '/panel/api/inbounds/list', timeoutMs);
+    const data = await apiGet(node, '/panel/api/inbounds/list', remaining());
     const rows = extractInboundFromApiPayload(data);
     const list = Array.isArray(rows) ? rows : [];
     const inbound = list.find(row => Number(fieldValue(row, ['id', 'inboundId', 'inbound_id'], 0)) === Number(node.inbound_id));
@@ -5771,7 +5810,7 @@ async function getInbound(node, timeoutMs = NODE_API_TIMEOUT_MS) {
 async function getInboundFast(node) {
   const cached = getCachedInbound(node);
   if (cached) return cached;
-  return getInbound(node);
+  return getInbound(node, SUBSCRIPTION_STATS_TIMEOUT_MS);
 }
 
 
@@ -7213,6 +7252,56 @@ function decodeMaybeBase64Subscription(text) {
   return raw;
 }
 
+// Raw provider links only, scoped to a client/node/URL. Never cache the final
+// response: device limits, expiry and routing must be evaluated on every request.
+const subscriptionLineCache = new Map();
+const subscriptionLineRequests = new Map();
+
+async function fetchCachedSubscriptionLines(key, url, options = {}) {
+  const now = Date.now();
+  let cached = subscriptionLineCache.get(key);
+  if (cached && now - cached.savedAt > 120000) {
+    subscriptionLineCache.delete(key);
+    cached = null;
+  }
+  if (options.allowStale !== true) {
+    subscriptionLineCache.delete(key);
+    cached = null;
+  }
+  if (cached && cached.retryAt > now) return cached.lines.slice();
+  let job = subscriptionLineRequests.get(key);
+  if (!job) {
+    job = (async () => {
+      try {
+        const lines = await fetchSubscriptionLines(url, options);
+        subscriptionLineCache.delete(key);
+        if (lines.length && lines.join('\n').length <= 65536) {
+          while (subscriptionLineCache.size >= 128) subscriptionLineCache.delete(subscriptionLineCache.keys().next().value);
+          subscriptionLineCache.set(key, { lines: lines.slice(), savedAt: Date.now(), retryAt: 0 });
+        }
+        return lines;
+      } catch (error) {
+        if (!isTransientSubscriptionError(error)) subscriptionLineCache.delete(key);
+        throw error;
+      }
+    })();
+    // Bound the registry too; an excess request still has its network deadline.
+    if (subscriptionLineRequests.size < 128) subscriptionLineRequests.set(key, job);
+  }
+  try {
+    return (await job).slice();
+  } catch (error) {
+    cached = subscriptionLineCache.get(key);
+    if (options.allowStale === true && isTransientSubscriptionError(error) && cached && Date.now() - cached.savedAt <= 120000) {
+      cached.retryAt = Date.now() + 5000;
+      return cached.lines.slice();
+    }
+    throw error;
+  } finally {
+    if (subscriptionLineRequests.get(key) === job) subscriptionLineRequests.delete(key);
+  }
+}
+
 async function fetchSubscriptionLines(url, options = {}) {
   const response = await fetchWithTimeout(url, {
     headers: {
@@ -7225,7 +7314,9 @@ async function fetchSubscriptionLines(url, options = {}) {
   }, options.timeoutMs || FETCH_TIMEOUT_MS);
 
   if (!response.ok) {
-    throw new Error(`Failed to fetch subscription (${response.status})`);
+    const error = new Error(`Failed to fetch subscription (${response.status})`);
+    error.status = response.status;
+    throw error;
   }
 
   const text = decodeMaybeBase64Subscription(await response.text());
@@ -8187,15 +8278,35 @@ function buildRemnawaveSubscriptionInfo(row, clientRow) {
 
 async function buildRemnawaveSubscriptionEntries(row, clientRow, includeOffline = true) {
   if (Number(row?.node_enabled) !== 1 || Number(row?.client_node_enabled) !== 1) return [];
+  if (Number(clientRow?.enabled) !== 1 || isClientExpired(clientRow)) return [];
   if (!includeOffline && String(row?.last_status || '') === 'offline') return [];
+  const remaining = subscriptionRequestBudget(Math.min(FETCH_TIMEOUT_MS, 8000));
+  const cacheKeyFor = url => JSON.stringify([clientRow.id, row.node_id || row.id, row.remote_uuid, row.panel_url, row.api_token_enc, url]);
 
   let subscriptionUrl = String(row?.remote_sub_url || '').trim();
+  let remoteAllowsStale = true;
   // Refresh quota usage even when the subscription URL is already saved.
   // Previously this branch ran only once, leaving names such as 0.3/50 GB stale.
   if (row?.remote_uuid && (!subscriptionUrl || shouldRefreshSubscriptionUsage())) {
     try {
-      const user = await getRemnawaveUserByUuid(row, row.remote_uuid, SUBSCRIPTION_STATS_TIMEOUT_MS);
+      const user = await getRemnawaveUserByUuid(row, row.remote_uuid, Math.min(SUBSCRIPTION_STATS_TIMEOUT_MS, remaining()));
+      if (!user) {
+        // Older mappings may use an identifier unsupported by a newer API.
+        // A live subscription can still work, but don't fall back to old links.
+        remoteAllowsStale = false;
+        subscriptionLineCache.delete(cacheKeyFor(subscriptionUrl));
+      }
+      if (user?.status && String(user.status).toUpperCase() !== 'ACTIVE') {
+        subscriptionLineCache.delete(cacheKeyFor(subscriptionUrl));
+        return [];
+      }
       if (user) {
+        const remoteExpiry = normalizeRemoteEpochMillis(user.expireAt || 0);
+        const remoteLimit = Number(user.trafficLimitBytes || 0);
+        if ((remoteExpiry > 0 && remoteExpiry <= Date.now()) || (remoteLimit > 0 && getRemnawaveUsedTrafficBytes(user, row?.used_bytes || 0) >= remoteLimit)) {
+          subscriptionLineCache.delete(cacheKeyFor(subscriptionUrl));
+          return [];
+        }
         subscriptionUrl = normalizeRemnawaveSubscriptionUrl(row, user.subscriptionUrl || subscriptionUrl);
         const usedBytes = getRemnawaveUsedTrafficBytes(user, row?.used_bytes || 0);
         // Update this request's row as well as SQLite BEFORE building the remark.
@@ -8208,17 +8319,26 @@ async function buildRemnawaveSubscriptionEntries(row, clientRow, includeOffline 
       }
     } catch (err) {
       console.error(`Remnawave user refresh failed (${row?.node_id || row?.id}):`, err.message || err);
+      if (!isTransientSubscriptionError(err)) {
+        remoteAllowsStale = false;
+        subscriptionLineCache.delete(cacheKeyFor(subscriptionUrl));
+      }
     }
   }
   if (!subscriptionUrl) return [];
 
   const subscriptionInfo = buildRemnawaveSubscriptionInfo(row, clientRow);
+  if (subscriptionInfo.totalBytes > 0 && subscriptionInfo.usedBytes >= subscriptionInfo.totalBytes) {
+    subscriptionLineCache.delete(cacheKeyFor(subscriptionUrl));
+    return [];
+  }
   const baseNodeName = getNodePublicName(row);
   const visibleNodeName = buildNodeLimitRemark(baseNodeName, subscriptionInfo);
 
   try {
-    const lines = await fetchSubscriptionLines(subscriptionUrl, {
-      timeoutMs: Math.min(FETCH_TIMEOUT_MS, 8000),
+    const lines = await fetchCachedSubscriptionLines(cacheKeyFor(subscriptionUrl), subscriptionUrl, {
+      allowStale: remoteAllowsStale && subscriptionInfo.enabled && !isClientExpired(clientRow),
+      timeoutMs: remaining(),
       headers: {
         'User-Agent': 'v2rayN/7.0',
         'Accept': 'text/plain,*/*'
@@ -8228,7 +8348,9 @@ async function buildRemnawaveSubscriptionEntries(row, clientRow, includeOffline 
     candidates = filterRemnawaveCandidatesByText(candidates, row?.remnawave_link_filter || '');
 
     if (String(row?.remnawave_host_uuid || '').trim()) {
-      const hostDescriptor = await getRemnawaveHostDescriptor(row);
+      const hostDescriptor = await getRemnawaveHostDescriptor(row, remaining);
+      // Never widen a selected host to all provider hosts on a lookup failure.
+      if (!hostDescriptor) return [];
       candidates = filterRemnawaveCandidatesByHost(candidates, hostDescriptor);
     }
 
@@ -9343,8 +9465,16 @@ function pickClientTrafficObject(payload, email, uuid = '') {
   return null;
 }
 
+function shouldTryTrafficCompatibilityEndpoint(error) {
+  if (isMissingApiEndpointError(error)) return true;
+  // Some forks report a missing endpoint as HTTP 200 / success=false.
+  const detail = String(error?.responseData?.msg || error?.responseData?.message || error?.message || '');
+  return Number(error?.status) === 200 && /unsupported endpoint|unknown endpoint|method not found/i.test(detail);
+}
+
 async function getClientTrafficFromApi(node, email, timeoutMs = SUBSCRIPTION_STATS_TIMEOUT_MS, uuid = '') {
   if (isH1CloudNode(node) || isRemnawaveNode(node)) return null;
+  const remaining = subscriptionRequestBudget(timeoutMs);
   const cleanEmail = String(email || '').trim();
   if (!cleanEmail && !uuid) return null;
 
@@ -9358,7 +9488,7 @@ async function getClientTrafficFromApi(node, email, timeoutMs = SUBSCRIPTION_STA
 
   for (const apiPath of uniqueList(paths)) {
     try {
-      const data = await apiGet(node, apiPath, timeoutMs);
+      const data = await apiGet(node, apiPath, remaining());
       if (data?.success === false) {
         lastError = new Error(String(data?.msg || data?.message || `GET ${apiPath} returned success=false`));
         continue;
@@ -9367,6 +9497,7 @@ async function getClientTrafficFromApi(node, email, timeoutMs = SUBSCRIPTION_STA
       if (!stat || !hasTrafficStatFields(stat)) continue;
       return extractTrafficInfoFromClientTraffic(stat);
     } catch (err) {
+      if (!shouldTryTrafficCompatibilityEndpoint(err)) throw err;
       lastError = err;
     }
   }
@@ -9374,7 +9505,7 @@ async function getClientTrafficFromApi(node, email, timeoutMs = SUBSCRIPTION_STA
   // Newer and forked 3x-ui builds often expose only the inbound-wide traffic
   // list. This fallback keeps subscriptions accurate across both API layouts.
   try {
-    const list = await getInboundClientTrafficsFromApi(node, timeoutMs);
+    const list = await getInboundClientTrafficsFromApi(node, remaining());
     const stat = pickTrafficFromList(list, cleanEmail, uuid);
     if (stat && hasTrafficStatFields(stat)) return extractTrafficInfoFromClientTraffic(stat);
   } catch (err) {
@@ -9387,6 +9518,7 @@ async function getClientTrafficFromApi(node, email, timeoutMs = SUBSCRIPTION_STA
 
 async function getInboundClientTrafficsFromApi(node, timeoutMs = SUBSCRIPTION_STATS_TIMEOUT_MS) {
   if (isH1CloudNode(node) || isRemnawaveNode(node)) return [];
+  const remaining = subscriptionRequestBudget(timeoutMs);
   const paths = [
     `/panel/api/inbounds/getClientTrafficsById/${encodeURIComponent(node.inbound_id)}`,
     `/panel/api/inbounds/getClientTrafficsById/${node.inbound_id}`
@@ -9395,13 +9527,14 @@ async function getInboundClientTrafficsFromApi(node, timeoutMs = SUBSCRIPTION_ST
 
   for (const apiPath of uniqueList(paths)) {
     try {
-      const data = await apiGet(node, apiPath, timeoutMs);
+      const data = await apiGet(node, apiPath, remaining());
       if (data?.success === false) {
         lastError = new Error(String(data?.msg || data?.message || `GET ${apiPath} returned success=false`));
         continue;
       }
       return getTrafficCandidateObjects(data).filter(hasTrafficStatFields);
     } catch (err) {
+      if (!shouldTryTrafficCompatibilityEndpoint(err)) throw err;
       lastError = err;
     }
   }
