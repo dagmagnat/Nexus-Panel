@@ -4247,7 +4247,10 @@ function filterRemnawaveCandidatesByHost(candidates, host) {
   if (!host || !candidates.length) return candidates;
   const scored = candidates.map(candidate => ({ candidate, score: remnawaveHostMatchScore(candidate, host) }));
   const maxScore = Math.max(0, ...scored.map(item => item.score));
-  return maxScore > 0 ? scored.filter(item => item.score === maxScore).map(item => item.candidate) : candidates;
+  // A selected Host is an isolation boundary. If none of the subscription
+  // links can be matched to it, returning every provider link silently mixes
+  // other Hosts (for example, another CDN) into this Nexus node's output.
+  return maxScore > 0 ? scored.filter(item => item.score === maxScore).map(item => item.candidate) : [];
 }
 
 function uniqueRemnawaveCandidates(candidates) {
@@ -8351,7 +8354,11 @@ async function buildRemnawaveSubscriptionEntries(row, clientRow, includeOffline 
       const hostDescriptor = await getRemnawaveHostDescriptor(row, remaining);
       // Never widen a selected host to all provider hosts on a lookup failure.
       if (!hostDescriptor) return [];
+      const candidateCountBeforeHostFilter = candidates.length;
       candidates = filterRemnawaveCandidatesByHost(candidates, hostDescriptor);
+      if (candidateCountBeforeHostFilter > 0 && candidates.length === 0) {
+        console.warn(`Remnawave Host filter found no matching subscription links (node ${row?.node_id || row?.id || '?'})`);
+      }
     }
 
     const linkMode = normalizeRemnawaveLinkMode(row?.remnawave_link_mode);

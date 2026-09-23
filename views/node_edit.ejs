@@ -140,7 +140,7 @@
           <label>Клиентский Host UUID</label>
           <input name="remnawave_host_uuid" list="remnawaveHostOptions" value="<%= node.remnawave_host_uuid || '' %>" placeholder="UUID нужного Host" data-remnawave-host-uuid-input />
           <datalist id="remnawaveHostOptions"></datalist>
-          <small class="hint">Host задаёт адрес, порт, SNI и транспорт, которые увидит клиент. Для отдельной физической ноды обычно создаётся отдельная запись Aggregator с её Node UUID и Host UUID.</small>
+          <small class="hint">Host задаёт адрес, порт, SNI и транспорт клиента. Для изоляции отдельного CDN укажи UUID именно его Host. Nexus оставит только совпадающую ссылку, а при несовпадении не подставит ссылки других Hosts. Если меняешь панель Remnawave, заново проверь этот UUID.</small>
         </div>
         <div class="field half js-node-remnawave-only <%= isRemnawave ? '' : 'hidden' %>" <%= isRemnawave ? '' : 'hidden style="display:none!important"' %>>
           <label>Какие Hosts добавлять в общую подписку</label>
