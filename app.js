@@ -23,6 +23,7 @@ const dns = require('dns').promises;
 const { encrypt, decrypt } = require('./lib_crypto');
 const { createVpnManager } = require('./lib_vpn_manager');
 const { nodeCloneValues } = require('./lib_node_clone');
+const { buildClientTrafficResetRequest } = require('./lib_client_traffic_reset');
 const { supportAccess, parseSupportDays, initSupportSchema } = require('./lib_expired_support');
 const { initNexusNodeControlSchema, attachNexusNodeControl } = require('./lib_nexus_node_control');
 
@@ -1282,6 +1283,9 @@ function initDb() {
       name TEXT NOT NULL,
       icon TEXT NOT NULL DEFAULT '⚡',
       node_ids TEXT NOT NULL DEFAULT '[]',
+      normal_node_ids TEXT NOT NULL DEFAULT '[]',
+      preferred_node_id INTEGER DEFAULT NULL,
+      emergency_node_id INTEGER DEFAULT NULL,
       probe_url TEXT NOT NULL DEFAULT 'https://cp.cloudflare.com/generate_204',
       probe_interval_seconds INTEGER NOT NULL DEFAULT 30,
       enabled INTEGER NOT NULL DEFAULT 1,
@@ -1540,6 +1544,9 @@ function initDb() {
   addColumnIfMissing('auto_select_profiles', 'name', "TEXT NOT NULL DEFAULT 'Автовыбор'");
   addColumnIfMissing('auto_select_profiles', 'icon', "TEXT NOT NULL DEFAULT '⚡'");
   addColumnIfMissing('auto_select_profiles', 'node_ids', "TEXT NOT NULL DEFAULT '[]'");
+  addColumnIfMissing('auto_select_profiles', 'normal_node_ids', "TEXT NOT NULL DEFAULT '[]'");
+  addColumnIfMissing('auto_select_profiles', 'preferred_node_id', 'INTEGER DEFAULT NULL');
+  addColumnIfMissing('auto_select_profiles', 'emergency_node_id', 'INTEGER DEFAULT NULL');
   addColumnIfMissing('auto_select_profiles', 'probe_url', "TEXT NOT NULL DEFAULT 'https://cp.cloudflare.com/generate_204'");
   addColumnIfMissing('auto_select_profiles', 'probe_interval_seconds', 'INTEGER NOT NULL DEFAULT 30');
   addColumnIfMissing('auto_select_profiles', 'enabled', 'INTEGER NOT NULL DEFAULT 1');
@@ -2902,17 +2909,36 @@ function normalizeAutoSelectProbeInterval(value) {
   return Math.min(300, Math.max(10, seconds));
 }
 
-function validateAutoSelectNodeIds(value) {
-  const nodeIds = normalizeSubscriptionPolicyNodeIds(value);
+function normalizeAutoSelectPolicy(body = {}) {
+  const normalNodeIds = normalizeSubscriptionPolicyNodeIds(body.auto_select_node_ids);
+  const preferredNodeId = Math.max(0, Number.parseInt(String(body.auto_select_preferred_node_id || '0'), 10) || 0);
+  const emergencyNodeId = Math.max(0, Number.parseInt(String(body.auto_select_emergency_node_id || '0'), 10) || 0);
   const known = new Set(db.prepare('SELECT id FROM nodes').all().map(row => Number(row.id)));
-  const valid = nodeIds.filter(id => known.has(id));
-  if (valid.length < 2) throw new Error('Для автовыбора отметь минимум два существующих узла.');
-  return valid;
+  const allIds = [...normalNodeIds, ...(preferredNodeId ? [preferredNodeId] : []), ...(emergencyNodeId ? [emergencyNodeId] : [])];
+  if (normalNodeIds.some(id => !known.has(id)) || (preferredNodeId && !known.has(preferredNodeId)) || (emergencyNodeId && !known.has(emergencyNodeId))) {
+    throw new Error('В профиле автовыбора выбран узел, которого больше нет в панели. Обнови выбор узлов.');
+  }
+  if (preferredNodeId && normalNodeIds.includes(preferredNodeId)) throw new Error('Приоритетный узел не должен одновременно входить в основной пул.');
+  if (emergencyNodeId && normalNodeIds.includes(emergencyNodeId)) throw new Error('Аварийный узел не должен одновременно входить в основной пул.');
+  if (preferredNodeId && preferredNodeId === emergencyNodeId) throw new Error('Приоритетный и аварийный узлы должны быть разными.');
+  if (!normalNodeIds.length) throw new Error('Выбери хотя бы один узел в основном пуле.');
+  if (new Set(allIds).size < 2) throw new Error('Для автовыбора нужны минимум два разных узла.');
+  return {
+    normalNodeIds,
+    preferredNodeId,
+    emergencyNodeId,
+    nodeIds: [...new Set(allIds)]
+  };
 }
 
 function enrichAutoSelectProfile(row) {
   if (!row) return null;
-  const nodeIds = normalizeSubscriptionPolicyNodeIds(row.node_ids);
+  const legacyNodeIds = normalizeSubscriptionPolicyNodeIds(row.node_ids);
+  const storedNormalNodeIds = normalizeSubscriptionPolicyNodeIds(row.normal_node_ids);
+  const normalNodeIds = storedNormalNodeIds.length ? storedNormalNodeIds : legacyNodeIds;
+  const preferredNodeId = Math.max(0, Number(row.preferred_node_id) || 0);
+  const emergencyNodeId = Math.max(0, Number(row.emergency_node_id) || 0);
+  const nodeIds = [...new Set([...normalNodeIds, ...(preferredNodeId ? [preferredNodeId] : []), ...(emergencyNodeId ? [emergencyNodeId] : []), ...legacyNodeIds])];
   const nodeMap = new Map(db.prepare(`SELECT * FROM nodes ORDER BY ${nodeOrderSql()}`).all().map(node => [Number(node.id), enrichNodeFlagFields(node)]));
   let probeUrl = AUTO_SELECT_DEFAULT_PROBE_URL;
   let icon = '⚡';
@@ -2922,6 +2948,9 @@ function enrichAutoSelectProfile(row) {
     ...row,
     icon,
     nodeIds,
+    normalNodeIds,
+    preferredNodeId,
+    emergencyNodeId,
     nodes: nodeIds.map(id => nodeMap.get(id)).filter(Boolean),
     title: `${icon} ${normalizeAutoSelectProfileName(row.name)}`.trim(),
     probeIntervalSeconds: normalizeAutoSelectProbeInterval(row.probe_interval_seconds),
@@ -2937,14 +2966,14 @@ function getAutoSelectProfiles(options = {}) {
 function createAutoSelectProfileFromBody(body = {}) {
   const name = normalizeAutoSelectProfileName(body.auto_select_name);
   const icon = normalizeAutoSelectProfileIcon(body.auto_select_icon);
-  const nodeIds = validateAutoSelectNodeIds(body.auto_select_node_ids);
+  const policy = normalizeAutoSelectPolicy(body);
   const probeUrl = normalizeAutoSelectProbeUrl(body.auto_select_probe_url);
   const interval = normalizeAutoSelectProbeInterval(body.auto_select_probe_interval_seconds);
   const sortOrder = Number(db.prepare('SELECT COALESCE(MAX(sort_order), 0) + 1 AS n FROM auto_select_profiles').get()?.n || 1);
   const info = db.prepare(`
-    INSERT INTO auto_select_profiles (name, icon, node_ids, probe_url, probe_interval_seconds, enabled, sort_order)
-    VALUES (?, ?, ?, ?, ?, 1, ?)
-  `).run(name, icon, JSON.stringify(nodeIds), probeUrl, interval, sortOrder);
+    INSERT INTO auto_select_profiles (name, icon, node_ids, normal_node_ids, preferred_node_id, emergency_node_id, probe_url, probe_interval_seconds, enabled, sort_order)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+  `).run(name, icon, JSON.stringify(policy.nodeIds), JSON.stringify(policy.normalNodeIds), policy.preferredNodeId || null, policy.emergencyNodeId || null, probeUrl, interval, sortOrder);
   return enrichAutoSelectProfile(db.prepare('SELECT * FROM auto_select_profiles WHERE id = ?').get(info.lastInsertRowid));
 }
 
@@ -2953,14 +2982,14 @@ function updateAutoSelectProfileFromBody(id, body = {}) {
   if (!current) throw new Error('Профиль автовыбора не найден.');
   const name = normalizeAutoSelectProfileName(body.auto_select_name);
   const icon = normalizeAutoSelectProfileIcon(body.auto_select_icon);
-  const nodeIds = validateAutoSelectNodeIds(body.auto_select_node_ids);
+  const policy = normalizeAutoSelectPolicy(body);
   const probeUrl = normalizeAutoSelectProbeUrl(body.auto_select_probe_url);
   const interval = normalizeAutoSelectProbeInterval(body.auto_select_probe_interval_seconds);
   db.prepare(`
     UPDATE auto_select_profiles
-    SET name = ?, icon = ?, node_ids = ?, probe_url = ?, probe_interval_seconds = ?, updated_at = CURRENT_TIMESTAMP
+    SET name = ?, icon = ?, node_ids = ?, normal_node_ids = ?, preferred_node_id = ?, emergency_node_id = ?, probe_url = ?, probe_interval_seconds = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
-  `).run(name, icon, JSON.stringify(nodeIds), probeUrl, interval, current.id);
+  `).run(name, icon, JSON.stringify(policy.nodeIds), JSON.stringify(policy.normalNodeIds), policy.preferredNodeId || null, policy.emergencyNodeId || null, probeUrl, interval, current.id);
   return enrichAutoSelectProfile(db.prepare('SELECT * FROM auto_select_profiles WHERE id = ?').get(current.id));
 }
 
@@ -17097,6 +17126,93 @@ app.post('/clients/:id/devices/reset', requireAuth, (req, res) => {
   }
 });
 
+app.post('/clients/:id/traffic/reset', requireAuth, async (req, res) => {
+  const clientId = Number(req.params.id);
+  const back = String(req.body.back || `/clients?edit=${clientId}`);
+  try {
+    const client = db.prepare('SELECT * FROM clients WHERE id = ?').get(clientId);
+    if (!client) throw new Error('Пользователь не найден.');
+
+    let selectedIds = req.body.node_ids || [];
+    if (!Array.isArray(selectedIds)) selectedIds = [selectedIds];
+    selectedIds = uniqueList(selectedIds.map(value => Number(value)).filter(value => Number.isInteger(value) && value > 0));
+    if (!selectedIds.length) throw new Error('Выберите хотя бы один узел.');
+    if (selectedIds.length > 200) throw new Error('За один раз можно выбрать не более 200 узлов.');
+
+    const maps = db.prepare(`
+      SELECT cn.*, n.node_type, n.name AS node_name, n.country_name_ru, n.country_flag, n.country_code,
+             n.panel_url, n.panel_path, n.api_token_enc, n.api_auth_mode, n.username, n.password_enc, n.inbound_id,
+             n.remnawave_internal_squad_uuid, n.remnawave_node_uuid
+      FROM client_nodes cn JOIN nodes n ON n.id = cn.node_id
+      WHERE cn.client_id = ? AND cn.node_id IN (${selectedIds.map(() => '?').join(',')})
+      ORDER BY cn.node_id
+    `).all(clientId, ...selectedIds);
+    if (maps.length !== selectedIds.length) throw new Error('Один или несколько выбранных узлов не назначены этому пользователю. Обновите страницу.');
+
+    const successNames = [];
+    const failures = [];
+    const handledRemnawavePanels = new Set();
+    const zeroedMaps = new Set();
+    for (const map of maps) {
+      const node = db.prepare('SELECT * FROM nodes WHERE id = ?').get(Number(map.node_id));
+      if (!node) { failures.push(`${map.node_name || map.node_id}: узел не найден`); continue; }
+      const title = String(map.country_name_ru || map.node_name || node.name || `Узел ${node.id}`);
+      try {
+        const request = buildClientTrafficResetRequest({
+          node, map, client,
+          remnawave: isRemnawaveNode(node),
+          h1cloud: isH1CloudNode(node) || isH1Cloud3xuiNode(node),
+          modern3xui: is3xuiV3Mode(node)
+        });
+        if (request.kind === 'remnawave') {
+          const panelKey = `${normalizeRemnawaveBaseUrl(node.panel_url)}|${String(map.remote_uuid || client.uuid).toLowerCase()}`;
+          if (handledRemnawavePanels.has(panelKey)) {
+            successNames.push(`${title} (тот же общий Remnawave-счётчик)`);
+            continue;
+          }
+          await remnawaveApiPost(node, request.path, undefined);
+          handledRemnawavePanels.add(panelKey);
+
+          // Remnawave's user counter is panel-wide, not per physical node.
+          const samePanelMaps = db.prepare(`
+            SELECT cn.id, cn.node_id, cn.remote_uuid, n.panel_url FROM client_nodes cn JOIN nodes n ON n.id = cn.node_id
+            WHERE cn.client_id = ? AND n.node_type = ?
+          `).all(clientId, NODE_TYPE_REMNAWAVE);
+          const sharedMaps = samePanelMaps.filter(row =>
+            normalizeRemnawaveBaseUrl(row.panel_url) === normalizeRemnawaveBaseUrl(node.panel_url)
+            && String(row.remote_uuid || client.uuid).toLowerCase() === String(map.remote_uuid || client.uuid).toLowerCase()
+          );
+          if (!sharedMaps.some(row => Number(row.id) === Number(map.id))) sharedMaps.push(map);
+          for (const sharedMap of sharedMaps) zeroClientNodeTraffic(sharedMap.id, clientId, sharedMap.node_id, zeroedMaps);
+        } else {
+          const result = await apiPost(node, request.path, {}, false);
+          if (result?.success === false) throw new Error(String(result.msg || result.message || 'панель отклонила сброс'));
+          zeroClientNodeTraffic(map.id, clientId, map.node_id, zeroedMaps);
+        }
+        successNames.push(title);
+      } catch (err) {
+        failures.push(`${title}: ${String(err.message || err)}`);
+      }
+    }
+
+    const message = successNames.length
+      ? `Сброс трафика выполнен на узлах: ${successNames.join(', ')}.`
+      : 'Трафик не сброшен ни на одном узле.';
+    const error = failures.length ? `Не удалось сбросить: ${failures.slice(0, 4).join(' | ')}` : '';
+    res.redirect(appendMessageToBackUrl(back, message, error, '/clients'));
+  } catch (err) {
+    res.redirect(appendMessageToBackUrl(back, '', String(err.message || err), '/clients'));
+  }
+});
+
+function zeroClientNodeTraffic(mapId, clientId, nodeId, seen = new Set()) {
+  if (!mapId || seen.has(Number(mapId))) return;
+  seen.add(Number(mapId));
+  const zero = { uploadBytes: 0, downloadBytes: 0, usedBytes: 0 };
+  updateClientNodeUsage(mapId, zero);
+  recordClientTrafficSnapshot(clientId, nodeId, zero);
+}
+
 app.post('/clients/:id/edit', requireAuth, async (req, res) => {
   try {
     validateClientQuotaForm(req.body);
@@ -18452,24 +18568,89 @@ function buildAutoSelectJsonConfig(profile, client, entries, subscriptionName) {
   candidateOutbounds.forEach((outbound, index) => { outbound.tag = `${tagPrefix}${index + 1}`; });
   if (!candidateOutbounds.length) return null;
 
-  const balancerTag = `auto-${Number(profile.id)}-balancer`;
-  // Never route into a known dead first candidate when every probe fails.
-  // A dedicated blackhole also prevents accidental direct fallback.
   const unavailableTag = `auto-${Number(profile.id)}-unavailable`;
   config.outbounds.push({ tag: unavailableTag, protocol: 'blackhole', settings: {} });
+  const tagsByNodeId = new Map();
+  usableEntries.forEach((entry, index) => {
+    const nodeId = Number(entry?.nodeId || 0);
+    if (!nodeId || !candidateOutbounds[index]) return;
+    if (!tagsByNodeId.has(nodeId)) tagsByNodeId.set(nodeId, []);
+    tagsByNodeId.get(nodeId).push(candidateOutbounds[index].tag);
+  });
+  const tagsForNodes = ids => [...new Set((ids || []).flatMap(id => tagsByNodeId.get(Number(id)) || []))];
+  let preferredTags = tagsForNodes(profile.preferredNodeId ? [profile.preferredNodeId] : []);
+  let normalTags = tagsForNodes(profile.normalNodeIds?.length ? profile.normalNodeIds : profile.nodeIds);
+  let emergencyTags = tagsForNodes(profile.emergencyNodeId ? [profile.emergencyNodeId] : []);
+  // Old saved profiles keep their original all-nodes leastPing behavior.
+  const tieredPolicy = Boolean(profile.preferredNodeId || profile.emergencyNodeId);
+  if (!tieredPolicy) normalTags = candidateOutbounds.map(outbound => outbound.tag);
+  // A client's assigned nodes may be a subset of the profile. If its normal
+  // pool is absent, use the remaining configured node(s) rather than creating
+  // an empty selector or silently dropping the auto-select entry.
+  if (tieredPolicy && !normalTags.length) {
+    normalTags = [...preferredTags, ...emergencyTags];
+    preferredTags = [];
+    emergencyTags = [];
+  }
+
+  const balancers = [];
+  let routeBalancerTag = '';
+  let fallbackLoopbackTag = '';
+  let mainBalancerTag = '';
+  if (tieredPolicy && preferredTags.length && normalTags.length) {
+    mainBalancerTag = `auto-${Number(profile.id)}-main-balancer`;
+    const emergencyFallbackTag = emergencyTags[0] || unavailableTag;
+    balancers.push({
+      tag: mainBalancerTag,
+      selector: normalTags,
+      strategy: { type: 'leastPing' },
+      fallbackTag: emergencyFallbackTag
+    });
+    const reentryTag = `auto-${Number(profile.id)}-main-reentry`;
+    fallbackLoopbackTag = `auto-${Number(profile.id)}-main-loopback`;
+    config.outbounds.push({
+      tag: fallbackLoopbackTag,
+      protocol: 'loopback',
+      settings: { inboundTag: reentryTag }
+    });
+    routeBalancerTag = `auto-${Number(profile.id)}-preferred-balancer`;
+    balancers.push({
+      tag: routeBalancerTag,
+      selector: preferredTags,
+      strategy: { type: 'leastPing' },
+      fallbackTag: fallbackLoopbackTag
+    });
+  } else {
+    routeBalancerTag = `auto-${Number(profile.id)}-balancer`;
+    const selector = tieredPolicy ? [...normalTags, ...preferredTags] : normalTags;
+    const fallbackTag = emergencyTags[0] || unavailableTag;
+    balancers.push({
+      tag: routeBalancerTag,
+      selector,
+      strategy: { type: 'leastPing' },
+      fallbackTag
+    });
+  }
+
   const baseRules = Array.isArray(config.routing?.rules) && config.routing.rules.length
     ? config.routing.rules
     : [{ type: 'field', network: 'tcp,udp', outboundTag: 'proxy' }];
+  const rules = baseRules.map(rule => autoSelectRuleForBalancer(rule, routeBalancerTag));
+  if (mainBalancerTag) {
+    // The preferred node is used while its internet probe succeeds. If Xray
+    // marks it unavailable, Loopback re-enters routing and selects the best
+    // healthy member of the regular pool, then the emergency outbound.
+    rules.unshift({
+      type: 'field',
+      inboundTag: [`auto-${Number(profile.id)}-main-reentry`],
+      balancerTag: mainBalancerTag
+    });
+  }
   config.routing = {
     domainStrategy: String(config.routing?.domainStrategy || 'IPOnDemand'),
     domainMatcher: String(config.routing?.domainMatcher || 'hybrid'),
-    balancers: [{
-      tag: balancerTag,
-      selector: [tagPrefix],
-      strategy: { type: 'leastPing' },
-      fallbackTag: unavailableTag
-    }],
-    rules: baseRules.map(rule => autoSelectRuleForBalancer(rule, balancerTag))
+    balancers,
+    rules
   };
   config.observatory = {
     subjectSelector: [tagPrefix],
@@ -18484,7 +18665,10 @@ function buildAutoSelectJsonConfig(profile, client, entries, subscriptionName) {
   config.title = profile.title;
   config.autoSelect = {
     enabled: true,
-    strategy: 'leastPing',
+    strategy: tieredPolicy ? 'preferred-then-leastPing-then-emergency' : 'leastPing',
+    preferredNodeId: profile.preferredNodeId || null,
+    normalNodeIds: profile.normalNodeIds || profile.nodeIds,
+    emergencyNodeId: profile.emergencyNodeId || null,
     connectivityCheck: true,
     probeUrl: config.observatory.probeURL,
     noHealthyNode: 'block-until-healthy',

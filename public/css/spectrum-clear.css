@@ -28,6 +28,15 @@
 .client-label-manager-list form { margin:0; }
 .btn-link-danger { border:0; padding:4px; background:transparent; color:var(--danger); font-size:12px; cursor:pointer; }
 .modern-traffic-cell.is-per-node > div:first-child { align-items:flex-start; gap:5px; flex-direction:column; }
+.modern-traffic-cell.is-over-limit .client-traffic-reset-trigger { color:var(--danger,#ef4444); }
+.client-traffic-reset-trigger { border:0; padding:0; background:transparent; color:inherit; font:inherit; font-weight:800; text-align:left; cursor:pointer; }
+.client-traffic-reset-trigger:hover { text-decoration:underline; text-underline-offset:3px; }
+.traffic-reset-card { width:min(560px,calc(100vw - 24px)); }
+.traffic-reset-card h2 { margin:0 0 8px; }
+.traffic-reset-warning { margin:9px 0; padding:9px 11px; border:1px solid color-mix(in srgb,var(--warning,#f59e0b) 35%,var(--line)); border-radius:10px; color:var(--text-muted); font-size:12px; line-height:1.45; }
+.traffic-reset-actions { display:flex; gap:8px; margin:12px 0 8px; }
+.traffic-reset-node-list { max-height:min(44vh,380px); overflow:auto; }
+.traffic-reset-form .modal-actions { margin-top:14px; }
 .inbound-advanced-settings { border:1px solid var(--line); border-radius:14px; background:var(--surface-soft); overflow:hidden; }
 .inbound-advanced-settings > summary { padding:13px 15px; cursor:pointer; color:var(--text-strong); font-weight:800; list-style-position:inside; }
 .inbound-advanced-settings[open] > summary { border-bottom:1px solid var(--line); }

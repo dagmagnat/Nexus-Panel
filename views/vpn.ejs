@@ -16,7 +16,7 @@
 <nav class="vpn-tabs" aria-label="Разделы VPN">
   <a href="/vpn?tab=hosts" class="<%= tab === 'hosts' ? 'active' : '' %>">VPS <span><%= hosts.length %></span></a>
   <a href="/vpn?tab=services" class="<%= tab === 'services' ? 'active' : '' %>">Сервисы <span><%= services.length %></span></a>
-  <a href="/clients?type=wireguard">Клиенты <span><%= clients.length %></span></a>
+  <a href="/clients?type=wireguard">Пользователи <span><%= clients.length %></span></a>
   <a href="/vpn?tab=jobs" class="<%= tab === 'jobs' ? 'active' : '' %>">Задания <span><%= jobs.length %></span></a>
 </nav>
 
@@ -139,9 +139,9 @@
   <div class="section-title-row vpn-section-heading">
     <div>
       <h2>Создать VPN-сервис</h2>
-      <p class="muted">Общие параметры сервиса применяются ко всем его клиентам. Клиенты создаются в разделе «Клиенты».</p>
+      <p class="muted">Общие параметры сервиса применяются ко всем его пользователям. Управление ими находится в разделе «Пользователи».</p>
     </div>
-    <a class="link-btn secondary" href="/clients?type=wireguard">Перейти к клиентам</a>
+    <a class="link-btn secondary" href="/clients?type=wireguard">Перейти к пользователям</a>
   </div>
   <% if (!hosts.length) { %>
     <div class="alert err">Сначала добавьте и проверьте VPS.</div>
@@ -293,7 +293,7 @@
 
 <% if (tab === 'clients') { %>
 <section class="card">
-  <h2>VPN-клиенты перенесены в общий раздел «Клиенты»</h2>
+  <h2>VPN-пользователи перенесены в общий раздел «Пользователи»</h2>
   <p class="muted">Там доступны отдельные вкладки WireGuard, AmneziaWG и Outline с созданием, QR-кодом, скачиванием, продлением и отключением.</p>
   <div class="button-row"><a class="link-btn" href="/clients?type=wireguard">Открыть VPN-клиентов</a></div>
 </section>

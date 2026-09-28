@@ -1,4 +1,4 @@
-<%- include('partials_header', { pageTitle: 'Клиенты', pageSubtitle: 'Xray / Reality, подписки, лимиты и управление доступом', activePage: 'clients' }) %>
+<%- include('partials_header', { pageTitle: 'Пользователи', pageSubtitle: 'Xray / Reality, подписки, лимиты и управление доступом', activePage: 'clients' }) %>
 <%
   function flagEmojiFromCode(code) {
     const cc = String(code || '').trim().toUpperCase();
@@ -111,11 +111,11 @@
   function clientStatusMeta(client) {
     const enabled = client.enabled !== 0;
     const left = daysLeftNumber(client.expiry_time);
-    if (!enabled) return { key: 'offline', label: 'Отключён', text: 'Клиент отключён и не может подключаться.' };
+    if (!enabled) return { key: 'offline', label: 'Отключён', text: 'Пользователь отключён и не может подключаться.' };
     if (isActivationPending(client)) return { key: 'warning', label: 'Ждёт активации', text: 'Срок начнётся после первого добавления подписки в приложении с HWID устройства.' };
     if (left === 0) return { key: 'expired', label: 'Срок истёк', text: 'Срок доступа закончился. Продли доступ или отключи клиента на узлах.' };
     if (left !== null && left <= 7) return { key: 'warning', label: 'Скоро закончится', text: 'Срок доступа скоро закончится: осталось ' + left + ' дн.' };
-    return { key: 'online', label: 'Включён', text: 'Клиент активен и может подключаться.' };
+    return { key: 'online', label: 'Включён', text: 'Пользователь активен и может подключаться.' };
   }
   function clientDirectoryStatusFilter(client) {
     const enabled = client.enabled !== 0;
@@ -172,6 +172,11 @@
     const limitGb = Math.max(0, Number(client.traffic_gb || 0));
     if (!limitGb) return clientUsedBytes(client) > 0 ? 100 : 0;
     return Math.max(0, Math.min(100, clientUsedBytes(client) / (limitGb * 1024 ** 3) * 100));
+  }
+  function clientTrafficExceeded(client) {
+    const globalLimit = Math.max(0, Number(client.traffic_gb || 0));
+    if (globalLimit > 0) return clientUsedBytes(client) >= globalLimit * 1024 ** 3;
+    return clientLimitedNodes(client).some(row => Number(row.used_bytes || 0) >= Number(row.traffic_gb || 0) * 1024 ** 3);
   }
   function clientDeviceUsage(client) {
     const used = Math.max(0, Number(client.device_count ?? (client.devices || []).length));
@@ -246,7 +251,7 @@
 <div class="card clients-card">
   <% if (clientType === 'xray') { %>
   <div class="client-overview-strip" aria-label="Сводка по клиентам">
-    <button type="button" class="client-overview-stat" data-client-status-shortcut="all"><span>Клиенты</span><strong><%= clients.length %></strong></button>
+    <button type="button" class="client-overview-stat" data-client-status-shortcut="all"><span>Пользователи</span><strong><%= clients.length %></strong></button>
     <button type="button" class="client-overview-stat is-online" data-client-status-shortcut="online"><span>В сети</span><strong id="clientOnlineNowCount">—</strong></button>
     <button type="button" class="client-overview-stat is-danger" data-client-status-shortcut="expired"><span>Срок истёк</span><strong><%= xrayExpiredCount %></strong></button>
     <button type="button" class="client-overview-stat is-warning" data-client-status-shortcut="expiring"><span>Скоро закончатся</span><strong><%= xrayExpiringCount %></strong></button>
@@ -255,7 +260,7 @@
   </div>
   <% } %>
   <div class="section-title-row">
-    <h2><%= currentClientTypeLabel %> — клиенты</h2>
+    <h2><%= currentClientTypeLabel %> — пользователи</h2>
     <span class="count-chip"><%= currentClientCount %></span>
   </div>
 
@@ -337,7 +342,7 @@
     </div>
   </div>
   <div class="client-directory-empty" id="clientDirectoryEmpty" hidden>
-    <strong>Клиенты не найдены</strong>
+    <strong>Пользователи не найдены</strong>
     <span>Измените строку поиска или сбросьте фильтры.</span>
   </div>
   <form method="post" action="/clients/bulk-delete" class="bulk-delete-form js-long-action" data-loading-title="Выполняю массовое действие" data-loading-text="Операция может занять время, если требуется подключение к узлам." onsubmit="return confirmClientBulkAction(event)">
@@ -507,7 +512,7 @@
           <tr>
             <th class="check-col"><input class="inline" type="checkbox" onclick="toggleAllClients(this)" /></th>
             <th>ID</th>
-            <th>Клиент</th>
+            <th>Пользователь</th>
             <th>Комментарий</th>
             <th>Статус</th>
             <th class="link-col">SUB / JSON / QR</th>
@@ -570,7 +575,7 @@
             <th class="modern-actions-col">Действия</th>
             <th>Включён</th>
             <th>В сети</th>
-            <th>Клиент</th>
+            <th>Пользователь</th>
             <th>Комментарий</th>
             <th>Группа / метки</th>
             <th>Трафик</th>
@@ -653,8 +658,8 @@
               <% if ((client.tags || []).length > 2) { %><span class="client-label-more" title="Дополнительных меток: <%= client.tags.length - 2 %>">+<%= client.tags.length - 2 %></span><% } %>
               <% if (!client.group_name && !(client.tags || []).length) { %><span class="modern-label-empty">—</span><% } %>
             </td>
-            <td class="modern-traffic-cell <%= trafficLimitGb > 0 ? '' : (clientLimitedNodes(client).length ? 'is-per-node' : 'is-unlimited') %>" data-modern-traffic-client="<%= client.id %>" data-traffic-limit-gb="<%= trafficLimitGb %>">
-              <div><span><%= trafficLimitGb > 0 ? formatClientBytes(usedBytes) : clientTrafficHeadline(client) %></span><b><%= trafficLimitGb > 0 ? trafficLimitGb + ' ГБ' : (clientLimitedNodes(client).length ? 'по узлам' : '∞') %></b></div>
+            <td class="modern-traffic-cell <%= trafficLimitGb > 0 ? '' : (clientLimitedNodes(client).length ? 'is-per-node' : 'is-unlimited') %> <%= clientTrafficExceeded(client) ? 'is-over-limit' : '' %>" data-modern-traffic-client="<%= client.id %>" data-traffic-limit-gb="<%= trafficLimitGb %>">
+              <div><button type="button" class="client-traffic-reset-trigger" data-open-traffic-reset="<%= client.id %>" title="Нажмите, чтобы сбросить трафик на выбранных узлах"><%= trafficLimitGb > 0 ? formatClientBytes(usedBytes) : clientTrafficHeadline(client) %></button><b><%= trafficLimitGb > 0 ? trafficLimitGb + ' ГБ' : (clientLimitedNodes(client).length ? 'по узлам' : '∞') %></b></div>
               <% if (trafficLimitGb > 0) { %><div class="modern-traffic-track"><i style="width:<%= clientTrafficPercent(client).toFixed(1) %>%"></i></div><% } %>
             </td>
             <td class="modern-device-cell"><button type="button" class="client-device-count-link" onclick="openModalById('deviceDetails-<%= client.id %>')" title="Показать устройства"><%= clientDeviceUsage(client) %></button></td>
@@ -1276,6 +1281,32 @@
       </div>
     </div>
   <% } %>
+<% }) %>
+
+<% clients.forEach(client => {
+  const trafficNodes = (client.node_limits || []).filter(row => row.client_node_id);
+  if (!trafficNodes.length) return;
+  const hasRemnawaveTraffic = trafficNodes.some(row => String(row.node_type || '').toLowerCase() === 'remnawave');
+%>
+  <div id="trafficReset-<%= client.id %>" class="modal hidden" onclick="closeModalById(event, 'trafficReset-<%= client.id %>')">
+    <div class="modal-card traffic-reset-card" onclick="event.stopPropagation()">
+      <button type="button" class="modal-close" onclick="hideModalById('trafficReset-<%= client.id %>')">×</button>
+      <h2>Сброс трафика пользователя</h2>
+      <p class="muted"><%= client.display_name || client.login %> · выберите, на каких узлах обнулить счётчик.</p>
+      <% if (hasRemnawaveTraffic) { %><p class="traffic-reset-warning">На Remnawave счётчик общий для пользователя в этой панели. Сброс на выбранном Remnawave-узле может обнулить его использование и на других узлах той же панели.</p><% } %>
+      <p class="traffic-reset-warning">Сбрасывается счётчик пользователя в панели узла. Это не сбрасывает оплаченный исходящий трафик или лимит CDN-ресурса Timeweb.</p>
+      <div class="traffic-reset-actions"><button type="button" class="btn-secondary" data-traffic-select-all="<%= client.id %>">Выбрать все</button><button type="button" class="btn-secondary" data-traffic-select-none="<%= client.id %>">Снять все</button></div>
+      <form method="post" action="/clients/<%= client.id %>/traffic/reset" class="traffic-reset-form">
+        <input type="hidden" name="back" value="/clients?q=<%= encodeURIComponent(client.login || '') %>&edit=<%= client.id %>" />
+        <div class="checkbox-list traffic-reset-node-list">
+          <% trafficNodes.forEach(row => { %>
+            <label class="node-item"><input type="checkbox" name="node_ids" value="<%= row.node_id %>" checked /><span class="node-info"><strong><%- flagIcon(row.country_code, row.country_flag, row.country_name_ru || row.node_name || row.name, row.node_type) %><span><%= nodeName(row) %></span></strong><small><%= String(row.node_type || '').toLowerCase() === 'remnawave' ? 'общий пользовательский счётчик панели' : 'счётчик этого узла' %></small></span></label>
+          <% }) %>
+        </div>
+        <div class="modal-actions"><button type="submit" class="btn-danger" onclick="return confirm('Сбросить счётчики трафика на выбранных узлах?')">Сбросить выбранное</button></div>
+      </form>
+    </div>
+  </div>
 <% }) %>
 
 <% clients.forEach(client => { %>
@@ -2105,6 +2136,9 @@ function closeClientEditor(e, id) { if (e.target.id === 'clientEditor-' + id) hi
 function openLimitDetails(id) { document.getElementById('limitDetails-' + id)?.classList.remove('hidden'); }
 function hideLimitDetails(id) { document.getElementById('limitDetails-' + id)?.classList.add('hidden'); }
 function closeLimitDetails(e, id) { if (e.target.id === 'limitDetails-' + id) hideLimitDetails(id); }
+document.querySelectorAll('[data-open-traffic-reset]').forEach(button => button.addEventListener('click', () => openModalById('trafficReset-' + button.dataset.openTrafficReset)));
+document.querySelectorAll('[data-traffic-select-all]').forEach(button => button.addEventListener('click', () => document.querySelectorAll(`#trafficReset-${button.dataset.trafficSelectAll} input[name="node_ids"]`).forEach(input => { input.checked = true; })));
+document.querySelectorAll('[data-traffic-select-none]').forEach(button => button.addEventListener('click', () => document.querySelectorAll(`#trafficReset-${button.dataset.trafficSelectNone} input[name="node_ids"]`).forEach(input => { input.checked = false; })));
 
 function setupClientTagMultiselects() {
   document.querySelectorAll('[data-tag-multiselect]').forEach(details => {

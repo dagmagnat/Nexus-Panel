@@ -1,4 +1,4 @@
-<%- include('partials_header', { pageTitle: 'Главная', pageSubtitle: 'Клиенты, сроки, онлайн и лимиты', activePage: 'dashboard' }) %>
+<%- include('partials_header', { pageTitle: 'Главная', pageSubtitle: 'Пользователи, сроки, онлайн и лимиты', activePage: 'dashboard' }) %>
 <%
   function daysLeft(ts) {
     const n = Number(ts || 0);
@@ -144,7 +144,7 @@
   </nav>
 
   <section class="card span-12 dashboard-actions-card dashboard-priority-actions">
-    <a href="/clients" class="link-btn secondary">Клиенты</a>
+    <a href="/clients" class="link-btn secondary">Пользователи</a>
     <button type="button" class="btn-secondary" onclick="openDashboardModal('limitsModal')">Лимиты</button>
     <button type="button" class="btn-secondary" onclick="runPanelCheck()">Проверка панели</button>
   </section>
@@ -467,7 +467,7 @@ function renderTopUsageReport(report) {
   }
   if (!list) return;
   if (!visible.length) {
-    list.innerHTML = '<div class="empty-state">Клиенты или данные трафика не найдены.</div>';
+    list.innerHTML = '<div class="empty-state">Пользователи или данные трафика не найдены.</div>';
     return;
   }
   list.innerHTML = visible.map((item, index) => `

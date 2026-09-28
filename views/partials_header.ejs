@@ -34,7 +34,7 @@
     } catch (_) {}
   })();
   </script>
-  <link rel="stylesheet" href="/css/spectrum-clear.css?v=275" />
+  <link rel="stylesheet" href="/css/spectrum-clear.css?v=276" />
   <link rel="stylesheet" href="/css/management-layout.css?v=1" />
   <script src="/js/management-layout.js?v=1" defer></script>
   <script src="/js/security.js?v=3"></script>
@@ -89,7 +89,7 @@
           <a href="/dashboard" class="<%= currentPath === 'dashboard' ? 'active' : '' %>"><span class="nav-icon"><%- nexusIcon('dashboard') %></span><span>Дашборд</span></a>
           <a href="/nodes" class="<%= currentPath === 'nodes' ? 'active' : '' %>"><span class="nav-icon"><%- nexusIcon('nodes') %></span><span>Узлы</span></a>
           <% if (typeof nexusNodeEnabled !== 'undefined' && nexusNodeEnabled) { %><a href="/nexus-nodes" class="<%= currentPath === 'nexus_nodes' ? 'active' : '' %>"><span class="nav-icon"><%- nexusIcon('nodes') %></span><span>Nexus Node · эксперимент</span></a><% } %>
-          <a href="/clients" class="<%= currentPath === 'clients' ? 'active' : '' %>"><span class="nav-icon"><%- nexusIcon('clients') %></span><span>Клиенты</span></a>
+          <a href="/clients" class="<%= currentPath === 'clients' ? 'active' : '' %>"><span class="nav-icon"><%- nexusIcon('clients') %></span><span>Пользователи</span></a>
         </div>
         <div class="spectrum-nav-group">
           <span class="spectrum-nav-label">Сеть</span>
@@ -132,7 +132,7 @@
 
   <nav class="mobile-bottom-nav spectrum-bottom-nav" aria-label="Быстрая навигация">
     <a href="/dashboard" class="<%= currentPath === 'dashboard' ? 'active' : '' %>"><span class="bn-ico"><%- nexusIcon('dashboard') %></span><em>Главная</em></a>
-    <a href="/clients" class="<%= currentPath === 'clients' ? 'active' : '' %>"><span class="bn-ico"><%- nexusIcon('clients') %></span><em>Клиенты</em></a>
+    <a href="/clients" class="<%= currentPath === 'clients' ? 'active' : '' %>"><span class="bn-ico"><%- nexusIcon('clients') %></span><em>Пользователи</em></a>
     <a href="/nodes" class="<%= currentPath === 'nodes' ? 'active' : '' %>"><span class="bn-ico"><%- nexusIcon('nodes') %></span><em>Узлы</em></a>
     <a href="/routing" class="<%= currentPath === 'routing' ? 'active' : '' %>"><span class="bn-ico"><%- nexusIcon('routing') %></span><em>Маршруты</em></a>
     <a href="/more" class="<%= moreNavActive ? 'active' : '' %>"><span class="bn-ico"><%- nexusIcon('more') %></span><em>Ещё</em></a>
