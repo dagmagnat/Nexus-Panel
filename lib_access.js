@@ -18,15 +18,17 @@ const ROLES = { viewer: ['clients.read'], operator: ['clients.read', 'clients.wr
 const PUBLIC_PATH = /^\/(?:sub|sub-plain|json|happ|hiddify|happ-routing|happ-routing-json|open)\/[^/]+(?:\/status)?\/?$/;
 function permissionFor(method, url) {
   const read = ['GET', 'HEAD'].includes(method);
+  if (read && /^\/node-traffic(?:\/data\.json)?$/.test(url)) return 'clients.read';
+  if (!read && url === '/clients/traffic/reset-selected') return 'clients.bulk';
   if (read && ['/', '/dashboard', '/more'].includes(url)) return 'clients.read';
-  if (read && /^\/dashboard\/(?:node-status|panel-check|traffic-series|live-client-traffic|live-client-traffic-probe|online-clients|top-client-usage)\.json$/.test(url)) return 'clients.read';
+  if (read && /^\/dashboard\/(?:node-status|node-usage|panel-check|traffic-series|live-client-traffic|live-client-traffic-probe|online-clients|top-client-usage)\.json$/.test(url)) return 'clients.read';
   if (/^\/preferences(?:\/(?:export|inspect|import|defaults|options|name))?$/.test(url)) return 'preferences.manage';
   if (read && /^\/preferences\/backups\/preferences-before-\d+-[a-f0-9]{8}\.nxpreferences$/.test(url)) return 'preferences.manage';
   if (/^\/operations\/[a-f0-9-]+\/cancel$/.test(url)) return 'clients.write';
   if (/^\/clients\/transfer\//.test(url) || /^\/clients\/(?:import|sync-nodes|create-missing-on-node|apply-to-node|refresh-subscriptions|delete-all|bulk-remove-node|bulk-delete)$/.test(url)) return 'clients.bulk';
   if (/^\/clients(?:\/\d+(?:\/summary\.json)?|\/usage\.json)?$/.test(url) && read) return 'clients.read';
   if (/^\/clients\/\d+\/delete$/.test(url)) return 'clients.delete';
-  if (!read && (url === '/clients' || /^\/clients\/\d+\/(?:sync|edit|extend|toggle|devices\/reset|devices\/\d+\/delete)$/.test(url) || /^\/client-(?:groups|tags)(?:\/\d+\/delete)?$/.test(url))) return 'clients.write';
+  if (!read && (url === '/clients' || /^\/clients\/\d+\/(?:sync|edit|extend|toggle|traffic\/reset|devices\/reset|devices\/\d+\/delete)$/.test(url) || /^\/client-(?:groups|tags)(?:\/\d+\/delete)?$/.test(url))) return 'clients.write';
   if (/^\/nodes(?:\/\d+(?:\/(?:edit|check|sync-clients|create-missing-clients|toggle|delete|clone|clone-remnawave|renew-support|h1cloud-transport|remnawave-resources\.json))?|\/reorder)?$/.test(url) || /^\/auto-select-profiles\/\d+\/(?:edit|toggle|delete)$/.test(url)) return 'nodes.manage';
   if (/^\/routing(?:\/geodata-index)?$/.test(url)) return 'routing.manage';
   // No wildcard grants for diagnostics, backup, SSH/VPN tools, host operations,

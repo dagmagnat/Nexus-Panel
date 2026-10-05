@@ -133,8 +133,8 @@
   <section class="dashboard-secondary-stats span-12" aria-label="Общая статистика">
     <span><small>Клиентов</small><strong><%= stats.clients %></strong></span>
     <span><small>Узлов</small><strong><%= stats.nodes %></strong></span>
-    <span><small>Узлов онлайн</small><strong id="dashboardNodesOnlineCount"><%= stats.online %></strong></span>
-    <span><small>Узлов оффлайн</small><strong id="dashboardNodesOfflineCount"><%= stats.offline %></strong></span>
+    <span><small>Расход по узлам</small><a href="/node-traffic"><strong>Трафик →</strong></a></span>
+    <span><small>Статистика клиентов</small><a href="/node-traffic"><strong>Период / сброс →</strong></a></span>
   </section>
 
   <nav class="mobile-dashboard-tabs span-12" id="mobileDashboardTabs" aria-label="Разделы главной страницы">
@@ -221,6 +221,30 @@
         <div class="alert ok traffic-note">Для выбранного периода ещё нет снимка на начало периода, поэтому расчёт начинается с первого доступного снимка: <%= dateTimeShort(trafficReport.firstSnapshotAt) %>. Дальше точность будет расти автоматически по мере накопления снимков.</div>
       <% } %>
     <% } %>
+  </section>
+
+  <section class="card span-12 node-traffic-range-card tab-panel" data-tab-panel="traffic">
+    <div class="section-title-row">
+      <div><h2>Трафик по нодам</h2><p class="muted">Расход по снимкам счетчиков пользователей. Выберите одну ноду или все и задайте даты вручную.</p></div>
+    </div>
+    <div class="node-traffic-range-controls">
+      <label><span>Нода</span><select id="nodeTrafficSelect"><option value="all">Все ноды</option><% pulseNodes.forEach(node => { %><option value="<%= node.id %>"><%= node.name %><%= node.country_name_ru ? ` · ${node.country_name_ru}` : '' %><%= node.label_suffix ? ` · ${node.label_suffix}` : '' %></option><% }) %></select></label>
+      <label><span>С даты</span><input id="nodeTrafficFrom" type="date" /></label>
+      <label><span>По дату включительно</span><input id="nodeTrafficTo" type="date" /></label>
+      <div class="node-traffic-presets" aria-label="Быстрый период"><button type="button" data-node-traffic-days="1">1 день</button><button type="button" data-node-traffic-days="3">3 дня</button><button type="button" data-node-traffic-days="7">7 дней</button><button type="button" data-node-traffic-days="30">30 дней</button></div>
+      <button type="button" class="btn-main" id="nodeTrafficLoad">Показать</button>
+    </div>
+    <p class="hint" id="nodeTrafficStatus" role="status"></p>
+    <div class="node-traffic-warning" id="nodeTrafficWarning" hidden></div>
+    <div class="traffic-grid node-traffic-kpis">
+      <div class="traffic-metric"><span>Скачано</span><strong id="nodeTrafficDownload">—</strong></div>
+      <div class="traffic-metric"><span>Загружено</span><strong id="nodeTrafficUpload">—</strong></div>
+      <div class="traffic-metric"><span>Всего</span><strong id="nodeTrafficTotal">—</strong></div>
+    </div>
+    <div class="node-traffic-table-wrap"><table class="node-traffic-table"><thead><tr><th>Нода</th><th>Скачано</th><th>Загружено</th><th>Всего</th><th>Примечание</th></tr></thead><tbody id="nodeTrafficRows"><tr><td colspan="5" class="muted">Загрузка…</td></tr></tbody></table></div>
+    <h3 class="node-traffic-days-title">По дням</h3>
+    <div class="node-traffic-days" id="nodeTrafficDays"></div>
+    <p class="muted node-traffic-footnote">История начинается с первого сохраненного снимка (хранится до 370 дней). Это оценка по счетчикам клиентов Nexus, а не биллинг CDN/хостера.</p>
   </section>
 
   <section class="card span-12 top-usage-card tab-panel" data-tab-panel="top">
@@ -1290,6 +1314,109 @@ function normalizeDashboardSearchText(value) {
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
+})();
+</script>
+
+<script>
+(function nodeTrafficRangeReport() {
+  const fromInput = document.getElementById('nodeTrafficFrom');
+  const toInput = document.getElementById('nodeTrafficTo');
+  const nodeSelect = document.getElementById('nodeTrafficSelect');
+  const loadButton = document.getElementById('nodeTrafficLoad');
+  if (!fromInput || !toInput || !nodeSelect || !loadButton) return;
+  const dayMs = 86400000;
+  const localDay = date => [date.getFullYear(), String(date.getMonth() + 1).padStart(2, '0'), String(date.getDate()).padStart(2, '0')].join('-');
+  const today = new Date();
+  toInput.value = localDay(today);
+  const initialFrom = new Date(today.getTime() - 6 * dayMs);
+  fromInput.value = localDay(initialFrom);
+  const byId = id => document.getElementById(id);
+  const fmtBytes = value => {
+    let n = Math.max(0, Number(value) || 0);
+    const units = ['Б', 'КБ', 'МБ', 'ГБ', 'ТБ'];
+    let i = 0;
+    while (n >= 1024 && i < units.length - 1) { n /= 1024; i += 1; }
+    return `${n.toLocaleString('ru-RU', { maximumFractionDigits: i ? 2 : 0 })} ${units[i]}`;
+  };
+  function addCell(row, value, className) {
+    const cell = document.createElement('td');
+    cell.textContent = value;
+    if (className) cell.className = className;
+    row.appendChild(cell);
+  }
+  function render(data) {
+    const rows = byId('nodeTrafficRows');
+    const daysBox = byId('nodeTrafficDays');
+    const warning = byId('nodeTrafficWarning');
+    rows.replaceChildren();
+    const totals = data.nodes.reduce((sum, node) => ({ upload: sum.upload + node.uploadBytes, download: sum.download + node.downloadBytes, total: sum.total + node.totalBytes }), { upload: 0, download: 0, total: 0 });
+    byId('nodeTrafficDownload').textContent = fmtBytes(totals.download);
+    byId('nodeTrafficUpload').textContent = fmtBytes(totals.upload);
+    byId('nodeTrafficTotal').textContent = fmtBytes(totals.total);
+    if (!data.nodes.length) {
+      const row = document.createElement('tr');
+      addCell(row, 'Нод нет или данных пока не накоплено.', 'muted');
+      rows.appendChild(row);
+    } else {
+      data.nodes.forEach(node => {
+        const row = document.createElement('tr');
+        const name = `${node.countryFlag || ''} ${node.countryName || node.name}${node.labelSuffix ? ` · ${node.labelSuffix}` : ''}`.trim();
+        addCell(row, name);
+        addCell(row, fmtBytes(node.downloadBytes));
+        addCell(row, fmtBytes(node.uploadBytes));
+        addCell(row, fmtBytes(node.totalBytes));
+        addCell(row, node.sharedRemnawaveCounter ? 'Счётчик может быть общим' : (node.enabled ? '—' : 'Выключена'), node.sharedRemnawaveCounter ? 'is-warning' : '');
+        rows.appendChild(row);
+      });
+    }
+    warning.hidden = !data.warning;
+    warning.textContent = data.warning || '';
+    daysBox.replaceChildren();
+    const max = Math.max(1, ...data.days.map(day => Number(day.totalBytes) || 0));
+    data.days.forEach(day => {
+      const item = document.createElement('div');
+      item.className = 'node-traffic-day';
+      item.title = `${day.date}: ${fmtBytes(day.totalBytes)}`;
+      const label = document.createElement('small');
+      label.textContent = day.date.slice(5);
+      const bar = document.createElement('span');
+      bar.style.height = `${Math.max(3, Math.round((day.totalBytes / max) * 66))}px`;
+      bar.setAttribute('aria-label', fmtBytes(day.totalBytes));
+      const value = document.createElement('b');
+      value.textContent = day.totalBytes ? fmtBytes(day.totalBytes) : '—';
+      item.append(label, bar, value);
+      daysBox.appendChild(item);
+    });
+    const note = !data.hasBaseline ? 'Нет снимка до начала периода: часть расхода до первого снимка не учитывается. ' : '';
+    const first = data.firstSnapshotAt ? new Date(data.firstSnapshotAt).toLocaleString('ru-RU') : '';
+    byId('nodeTrafficStatus').textContent = `${data.from} — ${data.to}. ${note}${first ? `Первый снимок в периоде: ${first}.` : 'Для периода ещё нет сохранённых снимков.'}`;
+  }
+  async function load() {
+    const from = fromInput.value;
+    const to = toInput.value;
+    if (!from || !to || from > to) { byId('nodeTrafficStatus').textContent = 'Проверьте диапазон дат.'; return; }
+    loadButton.disabled = true;
+    byId('nodeTrafficStatus').textContent = 'Загружаю статистику…';
+    const query = new URLSearchParams({ from, to, node_id: nodeSelect.value });
+    try {
+      const response = await fetch('/dashboard/node-usage.json?' + query.toString(), { headers: { Accept: 'application/json' } });
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.error || 'Не удалось загрузить статистику.');
+      render(data);
+    } catch (err) { byId('nodeTrafficStatus').textContent = err.message || 'Ошибка загрузки.'; }
+    finally { loadButton.disabled = false; }
+  }
+  loadButton.addEventListener('click', load);
+  nodeSelect.addEventListener('change', load);
+  document.querySelectorAll('[data-node-traffic-days]').forEach(button => button.addEventListener('click', () => {
+    const days = Math.max(1, Math.min(370, Number(button.dataset.nodeTrafficDays) || 7));
+    const end = new Date();
+    const start = new Date(end.getTime() - (days - 1) * dayMs);
+    fromInput.value = localDay(start);
+    toInput.value = localDay(end);
+    load();
+  }));
+  load();
 })();
 </script>
 

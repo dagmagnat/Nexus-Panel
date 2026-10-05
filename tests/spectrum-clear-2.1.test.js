@@ -11,8 +11,8 @@ const read = relative => fs.readFileSync(path.join(root, relative), 'utf8');
 test('dashboard prioritizes online clients and expiry without the large node-state block', () => {
   const dashboard = read('views/dashboard.ejs');
   assert.match(dashboard, /id="dashboardOnlineNowCount"/);
-  assert.match(dashboard, /id="dashboardNodesOnlineCount"/);
-  assert.match(dashboard, /id="dashboardNodesOfflineCount"/);
+  assert.match(dashboard, /href="\/node-traffic"/);
+  assert.doesNotMatch(dashboard, /id="dashboardNodes(?:Online|Offline)Count"/);
   assert.match(dashboard, /id="expiryRangeDays"[\s\S]*value="7"[\s\S]*value="14"[\s\S]*value="30"/);
   assert.match(dashboard, /id="onlineAutoRefresh"[\s\S]*id="onlineRefreshInterval"/);
   assert.match(dashboard, /\[10, 30, 60\]\.includes/);

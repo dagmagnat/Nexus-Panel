@@ -24,6 +24,7 @@ const { encrypt, decrypt } = require('./lib_crypto');
 const { createVpnManager } = require('./lib_vpn_manager');
 const { nodeCloneValues } = require('./lib_node_clone');
 const { buildClientTrafficResetRequest } = require('./lib_client_traffic_reset');
+const { createNodeTraffic, dateRange: nodeTrafficDateRange } = require('./lib_node_traffic');
 const { supportAccess, parseSupportDays, initSupportSchema } = require('./lib_expired_support');
 const { initNexusNodeControlSchema, attachNexusNodeControl } = require('./lib_nexus_node_control');
 
@@ -1776,6 +1777,73 @@ for (const existingNode of db.prepare('SELECT panel_url FROM nodes').all()) {
   try { access.claimRemote(existingNode.panel_url); } catch (err) { console.error('Workspace node ownership:', err.message); }
 }
 initSupportSchema(db);
+const nodeTraffic = createNodeTraffic({db,
+  get: (node, route) => remnawaveApiGet(node, route, 15000),
+  patch: (node, route, body) => remnawaveApiPatch(node, route, body, 15000),
+  baseUrl: normalizeRemnawaveBaseUrl,
+  getUser: getRemnawaveUserByUuid,
+  getIdentity: getRemnawaveUserRemoteId,
+  title: getNodePublicName
+});
+
+// Node traffic: authenticated, CSRF-protected through the existing middleware.
+app.get('/node-traffic', requireAuth, (req,res) => render(res, 'node_traffic', {
+  activePage:'dashboard',pageTitle:'Расход трафика по узлам',message:req.query.message || '',error:req.query.error || ''
+}));
+app.get('/node-traffic/data.json', requireAuth, async (req,res) => {
+  try {
+    const range = nodeTrafficDateRange(req.query.from,req.query.to);
+    const nodeId = req.query.node_id ? Number(req.query.node_id) : null;
+    if (nodeId!==null && (!Number.isInteger(nodeId) || nodeId<=0 || !db.prepare('SELECT id FROM nodes WHERE id=?').get(nodeId))) throw new Error('Узел не найден.');
+    if (req.query.refresh==='1') await refreshAllClientUsageFromNodes();
+    res.setHeader('Cache-Control','no-store');
+    res.json({ok:true,range,nodes:nodeTraffic.report(range,nodeId),errors:usageRefreshErrors,updatedAt:usageRefreshFinishedAt || null});
+  } catch(e) { res.status(400).json({ok:false,error:String(e.message || e)}); }
+});
+
+app.post('/clients/traffic/reset-selected',requireAuth,async(req,res) => {
+  try {
+    let ids = req.body.client_ids || []; if (!Array.isArray(ids)) ids=[ids];
+    ids=[...new Set(ids.map(Number))];
+    if (!ids.length || ids.length>2000 || ids.some(id=>!Number.isInteger(id)||id<=0)) throw new Error('Выберите от 1 до 2000 пользователей.');
+    const allNodes = req.body.reset_node_id==='all';
+    const nodeId=Number(req.body.reset_node_id);
+    if (!allNodes && (!Number.isInteger(nodeId)||nodeId<=0 || !db.prepare('SELECT id FROM nodes WHERE id=?').get(nodeId))) throw new Error('Выберите узел или все узлы.');
+    const missing=ids.filter(id=>!db.prepare('SELECT id FROM clients WHERE id=?').get(id));
+    if (missing.length) throw new Error('Часть выбранных пользователей удалена. Обновите страницу.');
+    const maps=db.prepare(`SELECT * FROM client_nodes WHERE client_id IN (${ids.map(()=>'?').join(',')})${allNodes?'':' AND node_id=?'} ORDER BY client_id,node_id`).all(...ids,...(allNodes?[]:[nodeId]));
+    if (!maps.length) throw new Error('Выбранные пользователи не назначены этому узлу.');
+    await finishLongPost(req,res,'/node-traffic',async action => {
+    const errors=[]; let success=0;
+    const remoteGlobals=new Set();
+    for (let i=0;i<maps.length;i++) {
+      if (action.isCancelled()) break;
+      const map=maps[i],node=db.prepare('SELECT * FROM nodes WHERE id=?').get(map.node_id),client=db.prepare('SELECT * FROM clients WHERE id=?').get(map.client_id);
+      try {
+        if (isRemnawaveNode(node)) {
+          const user=await getRemnawaveUserByUuid(node,map.remote_uuid);
+          if (!user) throw new Error('Пользователь не найден в Remnawave.');
+          // Only an explicit all-node reset may touch a shared native account counter.
+          const key=normalizeRemnawaveBaseUrl(node.panel_url)+'|'+getRemnawaveUserRemoteId(user);
+          await nodeTraffic.resetMapping(node,user,map,{resetNative:allNodes && !remoteGlobals.has(key) ? async()=>{
+            await remnawaveApiPost(node,`/api/users/${encodeURIComponent(getRemnawaveUserRemoteId(user))}/actions/reset-traffic`,undefined);
+            remoteGlobals.add(key);
+          } : undefined});
+        } else {
+          const request=buildClientTrafficResetRequest({node,map,client,h1cloud:isH1CloudNode(node)||isH1Cloud3xuiNode(node),modern3xui:is3xuiV3Mode(node)});
+          const result=await apiPost(node,request.path,{},false);
+          if (result?.success===false) throw new Error(result.msg || 'Панель отклонила сброс.');
+          zeroClientNodeTraffic(map.id,map.client_id,map.node_id);
+        }
+        success++;
+      } catch(e) { errors.push(`${client.login} / ${node.name}: ${e.message}`); }
+      action.setProgress(i+1,maps.length,`${client.login} / ${node.name}`);
+    }
+    recordTrafficSnapshot(true,'reset');
+    return {success,total:maps.length,errors,cancelled:action.isCancelled()};
+    },result => `Сброшено счётчиков: ${result.success} из ${result.total}. История расхода сохранена.`,{label:'Сброс трафика выбранных пользователей'});
+  } catch(e) { res.redirect('/clients?error='+encodeURIComponent(e.message)); }
+});
 initNexusNodeControlSchema(db);
 const vpnManager = createVpnManager({ db, appSecret: APP_SECRET, encrypt, decrypt, dataDir: DATA_DIR });
 ensureMissingAppSettings();
@@ -4362,7 +4430,8 @@ function buildRemnawaveUserPayload(node, client, opts = {}, current = null, mode
   const payload = {
     username: desiredUsername,
     status,
-    trafficLimitBytes: toTotalGbBytes(trafficGb),
+    // A node allowance must never overwrite the panel-wide user allowance.
+    trafficLimitBytes: toTotalGbBytes(Math.max(0, Number(client.traffic_gb || 0))),
     trafficLimitStrategy: 'NO_RESET',
     description: description || '',
     // Remnawave's hwidDeviceLimit is a device/HWID limit, not an IP limit.
@@ -4420,12 +4489,14 @@ async function listRemnawaveUsers(node, timeoutMs = FETCH_TIMEOUT_MS) {
   return users;
 }
 
-function remnawaveRemoteToImportRecord(user) {
+function remnawaveRemoteToImportRecord(user, node = null) {
   const rawExpireAtMs = normalizeRemoteEpochMillis(user?.expireAt || 0);
   // Stage96 encodes Aggregator's unlimited term as 2099 because Remnawave
   // requires expireAt. Convert that marker back to local infinity on import.
   const expireAtMs = rawExpireAtMs >= Date.UTC(2099, 0, 1) ? 0 : rawExpireAtMs;
-  const usedBytes = getRemnawaveUsedTrafficBytes(user, 0);
+  const stored = node && db.prepare('SELECT used_bytes FROM client_nodes WHERE node_id=? AND remote_uuid=?').get(node.id,getRemnawaveUserRemoteId(user));
+  // Import/sync must not reintroduce the shared account counter.
+  const usedBytes = clampByteNumber(stored?.used_bytes || 0);
   return {
     uuid: String(user?.vlessUuid || '').trim(),
     remoteUserUuid: getRemnawaveUserRemoteId(user),
@@ -4547,7 +4618,7 @@ async function ensureRemnawaveUserOnNode(node, client, opts = {}) {
     opts = { ...opts, traffic_gb: map ? getClientNodeEffectiveTrafficGb(map, client, 0) : trafficGbFromRemoteValue(current?.trafficLimitBytes || 0) };
   }
   const target = buildRemnawaveUserPayload(node, client, { ...opts, remote_uuid: remoteId }, current, 'update');
-  const usageBytes = getRemnawaveUsedTrafficBytes(current, map?.used_bytes || 0);
+  const usageBytes = clampByteNumber(map?.used_bytes || 0);
   const remoteUsername = String(current?.username || target.desiredUsername || requestedUsername).trim();
   const remoteSubUrl = normalizeRemnawaveSubscriptionUrl(node, current?.subscriptionUrl || map?.remote_sub_url || '');
   const nodeEnabled = target.nodeEnabled;
@@ -8340,7 +8411,13 @@ async function buildRemnawaveSubscriptionEntries(row, clientRow, includeOffline 
           return [];
         }
         subscriptionUrl = normalizeRemnawaveSubscriptionUrl(row, user.subscriptionUrl || subscriptionUrl);
-        const usedBytes = getRemnawaveUsedTrafficBytes(user, row?.used_bytes || 0);
+        const mapping = db.prepare('SELECT * FROM client_nodes WHERE id = ?').get(row.client_node_id);
+        if (mapping) {
+          try { await nodeTraffic.syncMapping(row, user, mapping); }
+          catch (usageError) { console.error('Node-scoped subscription usage:', usageError.message); }
+        }
+        const latestMapping = mapping && db.prepare('SELECT * FROM client_nodes WHERE id = ?').get(mapping.id);
+        const usedBytes = clampByteNumber(latestMapping?.used_bytes ?? row?.used_bytes ?? 0);
         // Update this request's row as well as SQLite BEFORE building the remark.
         // A legitimate remote reset to zero must not fall back to the old value.
         Object.assign(row, { remote_sub_url: subscriptionUrl, upload_bytes: 0, download_bytes: usedBytes, used_bytes: usedBytes });
@@ -8501,6 +8578,7 @@ async function buildSubscriptionEntries(clientRow, includeOffline = true, option
       n.id AS node_id,
       n.name,
       n.node_type,
+      n.panel_url,
       cn.upload_bytes,
       cn.download_bytes,
       cn.used_bytes,
@@ -9041,7 +9119,7 @@ async function getClientsFromNew3xuiApi(node) {
 async function importClientsFromNode(node) {
   if (isRemnawaveNode(node)) {
     const users = await listRemnawaveUsers(node, FETCH_TIMEOUT_MS);
-    return users.map(remnawaveRemoteToImportRecord).filter(c => c.uuid && c.email);
+    return users.map(user=>remnawaveRemoteToImportRecord(user,node)).filter(c => c.uuid && c.email);
   }
   if (isH1CloudNode(node)) {
     const clients = await h1CloudGetClients(node, FETCH_TIMEOUT_MS);
@@ -12238,10 +12316,12 @@ function buildClientUsageDirectory() {
       cn.enabled,
       n.name,
       n.country_name_ru,
-      n.label_suffix
+      n.label_suffix,
+      n.node_type,s.error AS usage_error,s.updated_at AS usage_updated_at
     FROM clients c
     LEFT JOIN client_nodes cn ON cn.client_id = c.id
     LEFT JOIN nodes n ON n.id = cn.node_id
+    LEFT JOIN node_usage_state s ON s.client_id=c.id AND s.node_id=cn.node_id
     ORDER BY c.id, cn.node_id
   `).all();
   
@@ -12264,7 +12344,9 @@ function buildClientUsageDirectory() {
         name: getNodePublicName(row),
         limitGb: Math.max(0, Number(row.node_traffic_gb || 0)),
         usedBytes: clampByteNumber(row.used_bytes),
-        enabled: Number(row.enabled)
+        enabled: Number(row.enabled),
+        usageError:row.usage_error || (row.node_type==='remnawave' && !row.usage_updated_at ? 'Ожидается статистика физической ноды' : ''),
+        usageUpdatedAt:Number(row.usage_updated_at || 0)
       });
     }
   }
@@ -12297,10 +12379,14 @@ async function collectAllClientUsageFromNodes() {
             || byVless.get(String(row.client_uuid || '').toLowerCase())
             || byUsername.get(String(row.remote_email || row.client_login || '').toLowerCase());
           if (!user) {
+            nodeTraffic.markError(row.client_id,node.id,'Удалённый пользователь не найден; показано последнее сохранённое значение');
             if (errors.length < 8) errors.push(`${getNodePublicName(node)}: не найден удалённый клиент ID ${row.client_id}`);
             continue;
           }
-          const usedBytes = getRemnawaveUsedTrafficBytes(user, row.used_bytes || 0);
+          try { await nodeTraffic.syncMapping(node, user, row); }
+          catch (usageError) { errors.push(`${getNodePublicName(node)}: ${usageError.message}`); }
+          const latest = db.prepare('SELECT * FROM client_nodes WHERE id = ?').get(row.id);
+          const usedBytes = clampByteNumber(latest?.used_bytes || 0);
           update.run(
             String(user?.username || row.remote_email || row.client_login || ''),
             getRemnawaveUserRemoteId(user) || String(row.remote_uuid || ''),
@@ -12312,6 +12398,7 @@ async function collectAllClientUsageFromNodes() {
           recordClientTrafficSnapshot(row.client_id, node.id, { uploadBytes: 0, downloadBytes: usedBytes, usedBytes });
         }
       } catch (err) {
+        for (const row of rows) nodeTraffic.markError(row.client_id,node.id,String(err.message || err));
         errors.push(`${getNodePublicName(node)}: ${err.message || err}`);
       }
       return;
@@ -12356,6 +12443,7 @@ async function collectAllClientUsageFromNodes() {
       }
       const usage = mergeTrafficInfo(apiUsage, inboundUsage || row);
       updateClientNodeUsage(row.id, usage);
+      nodeTraffic.recordCounter(row.client_id, node.id, usage);
       recordClientTrafficSnapshot(row.client_id, node.id, usage, nowMs);
     }
   });
@@ -13849,6 +13937,106 @@ app.get('/dashboard/traffic-series.json', requireAuth, (req, res) => {
       series.push({ d, gb: Math.round(bytes / 1073741824 * 100) / 100 });
     }
     res.json({ ok: true, days, series, totalText: formatTrafficBytes(totalBytes) });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: String(err.message || err) });
+  }
+});
+
+app.get('/dashboard/node-usage.json', requireAuth, (req, res) => {
+  // Per-node traffic over an arbitrary inclusive calendar-date range.
+  // Values are derived from stored client-counter snapshots, not CDN billing.
+  try {
+    const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+    const today = new Date().toISOString().slice(0, 10);
+    const to = String(req.query.to || today);
+    const from = String(req.query.from || new Date(Date.now() - 6 * 86400000).toISOString().slice(0, 10));
+    const parseDay = value => {
+      if (!datePattern.test(value)) return NaN;
+      const ms = Date.parse(`${value}T00:00:00.000Z`);
+      return Number.isFinite(ms) && new Date(ms).toISOString().slice(0, 10) === value ? ms : NaN;
+    };
+    const startMs = parseDay(from);
+    const endDayMs = parseDay(to);
+    if (!Number.isFinite(startMs) || !Number.isFinite(endDayMs)) return res.status(400).json({ ok: false, error: 'Укажите даты в формате ГГГГ-ММ-ДД.' });
+    const endExclusiveMs = endDayMs + 86400000;
+    if (endExclusiveMs <= startMs) return res.status(400).json({ ok: false, error: 'Дата окончания должна быть не раньше даты начала.' });
+    if (endExclusiveMs - startMs > 370 * 86400000) return res.status(400).json({ ok: false, error: 'Можно запросить не более 370 дней.' });
+
+    const requestedNodeId = String(req.query.node_id || '').trim();
+    const nodes = db.prepare(`SELECT id, name, node_type, country_code, country_name_ru, country_flag, label_suffix, enabled FROM nodes ORDER BY ${nodeOrderSql()}`).all()
+      .filter(node => !requestedNodeId || requestedNodeId === 'all' || Number(node.id) === Number(requestedNodeId));
+    if (requestedNodeId && requestedNodeId !== 'all' && !nodes.length) return res.status(400).json({ ok: false, error: 'Выбранная нода не найдена.' });
+
+    const dayMs = 86400000;
+    const days = [];
+    for (let stamp = startMs; stamp < endExclusiveMs; stamp += dayMs) days.push({ date: new Date(stamp).toISOString().slice(0, 10), uploadBytes: 0, downloadBytes: 0, totalBytes: 0 });
+    const dayIndex = new Map(days.map((day, index) => [day.date, index]));
+    const getBefore = db.prepare('SELECT * FROM node_traffic_snapshots WHERE node_id = ? AND created_at_ms < ? ORDER BY created_at_ms DESC LIMIT 1');
+    const getRange = db.prepare('SELECT * FROM node_traffic_snapshots WHERE node_id = ? AND created_at_ms >= ? AND created_at_ms < ? ORDER BY created_at_ms ASC, id ASC');
+    let hasBaseline = true;
+    let firstSnapshotAt = null;
+    let latestSnapshotAt = null;
+    const nodeRows = [];
+    for (const node of nodes) {
+      if (isRemnawaveNode(node)) {
+        const daily=db.prepare('SELECT day,SUM(bytes) AS bytes FROM node_usage_daily WHERE node_id=? AND day>=? AND day<=? GROUP BY day').all(node.id,from,to);
+        const nodeTotal=daily.reduce((sum,row)=>sum+Number(row.bytes),0);
+        for (const row of daily) { const bucket=days[dayIndex.get(row.day)]; if(bucket){bucket.downloadBytes+=Number(row.bytes);bucket.totalBytes+=Number(row.bytes);} }
+        const states=db.prepare('SELECT MIN(updated_at) AS oldest,MAX(updated_at) AS newest FROM node_usage_state WHERE node_id=?').get(node.id);
+        if (!states.oldest) hasBaseline=false;
+        if (states.newest) latestSnapshotAt=Math.max(latestSnapshotAt || 0,states.newest);
+        nodeRows.push({nodeId:Number(node.id),name:node.name,nodeType:node.node_type,countryCode:node.country_code || '',countryName:node.country_name_ru || '',countryFlag:getNodeFlag(node),labelSuffix:node.label_suffix || '',enabled:Number(node.enabled || 0),uploadBytes:0,downloadBytes:nodeTotal,totalBytes:nodeTotal});
+        continue;
+      }
+      const before = getBefore.get(node.id, startMs);
+      const rangeSnapshots = getRange.all(node.id, startMs, endExclusiveMs);
+      const snapshots = [...(before ? [before] : []), ...rangeSnapshots];
+      if (!before && snapshots.length) hasBaseline = false;
+      if (rangeSnapshots.length) {
+        const first = rangeSnapshots[0];
+        firstSnapshotAt = firstSnapshotAt === null ? Number(first.created_at_ms) : Math.min(firstSnapshotAt, Number(first.created_at_ms));
+        latestSnapshotAt = latestSnapshotAt === null ? Number(rangeSnapshots[rangeSnapshots.length - 1].created_at_ms) : Math.max(latestSnapshotAt, Number(rangeSnapshots[rangeSnapshots.length - 1].created_at_ms));
+      }
+      let uploadBytes = 0;
+      let downloadBytes = 0;
+      for (let i = 1; i < snapshots.length; i += 1) {
+        const prev = snapshots[i - 1];
+        const current = snapshots[i];
+        const delta = key => {
+          const a = clampByteNumber(prev[key]);
+          const b = clampByteNumber(current[key]);
+          return b >= a ? b - a : b; // counter was reset between snapshots
+        };
+        const up = delta('upload_bytes');
+        const down = delta('download_bytes');
+        const dateKey = new Date(Number(current.created_at_ms)).toISOString().slice(0, 10);
+        const bucket = days[dayIndex.get(dateKey)];
+        if (bucket) { bucket.uploadBytes += up; bucket.downloadBytes += down; bucket.totalBytes += up + down; }
+        uploadBytes += up;
+        downloadBytes += down;
+      }
+      nodeRows.push({ nodeId: Number(node.id), name: node.name, nodeType: node.node_type, countryCode: node.country_code || '', countryName: node.country_name_ru || '', countryFlag: getNodeFlag(node), labelSuffix: node.label_suffix || '', enabled: Number(node.enabled || 0), uploadBytes, downloadBytes, totalBytes: uploadBytes + downloadBytes });
+    }
+    const mappingRows = db.prepare(`
+      SELECT cn.client_id, cn.node_id, cn.remote_uuid, cn.remote_email, c.uuid AS client_uuid, n.panel_url,n.remnawave_node_uuid
+      FROM client_nodes cn JOIN nodes n ON n.id = cn.node_id JOIN clients c ON c.id = cn.client_id
+      WHERE lower(n.node_type) = 'remnawave'
+    `).all();
+    const identityNodes = new Map();
+    for (const row of mappingRows) {
+      const identity = `${normalizeRemnawaveBaseUrl(row.panel_url)}|${row.remnawave_node_uuid || 'unbound:'+row.node_id}|${String(row.remote_uuid || row.client_uuid || row.remote_email || '').trim().toLowerCase()}`;
+      if (!identity.endsWith('|')) {
+        if (!identityNodes.has(identity)) identityNodes.set(identity, new Set());
+        identityNodes.get(identity).add(Number(row.node_id));
+      }
+    }
+    const sharedCounterNodeIds = new Set();
+    for (const ids of identityNodes.values()) if (ids.size > 1) ids.forEach(id => sharedCounterNodeIds.add(id));
+    for (const row of nodeRows) row.sharedRemnawaveCounter = sharedCounterNodeIds.has(row.nodeId);
+    const totalsByNode = nodeRows.reduce((sum, row) => ({ uploadBytes: sum.uploadBytes + row.uploadBytes, downloadBytes: sum.downloadBytes + row.downloadBytes, totalBytes: sum.totalBytes + row.totalBytes }), { uploadBytes: 0, downloadBytes: 0, totalBytes: 0 });
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ ok: true, from, to, nodes: nodeRows, days, totals: totalsByNode, hasBaseline, firstSnapshotAt, latestSnapshotAt,
+      warning: sharedCounterNodeIds.size ? 'На некоторых Remnawave-нодах один и тот же пользовательский счётчик панели привязан повторно. Эти строки могут показывать общий расход, а не независимую статистику физических серверов.' : '' });
   } catch (err) {
     res.status(500).json({ ok: false, error: String(err.message || err) });
   }
@@ -16368,6 +16556,7 @@ app.get('/clients', requireAuth, (req, res) => {
       n.country_flag,
       n.name,
       n.node_type,
+      n.panel_url,
       n.h1cloud_link_mode,
       n.h1cloud_link_types,
       n.h1cloud_fingerprint,
@@ -16402,6 +16591,27 @@ app.get('/clients', requireAuth, (req, res) => {
     client.devices = devicesByClient.get(Number(client.id)) || [];
     client.device_count = client.devices.length;
     client.node_limits = nodeLimitsByClient.get(Number(client.id)) || [];
+
+    const remnaCounterNodes = new Map();
+    for (const row of client.node_limits) {
+      if (!row.client_node_id || String(row.node_type || '').toLowerCase() !== 'remnawave') continue;
+      const remoteIdentity = String(row.remote_uuid || client.uuid || row.remote_email || '').trim().toLowerCase();
+      const physicalNode = db.prepare('SELECT remnawave_node_uuid FROM nodes WHERE id=?').get(row.node_id);
+      const counterKey = `${normalizeRemnawaveBaseUrl(row.panel_url)}|${physicalNode?.remnawave_node_uuid || 'unbound:'+row.node_id}|${remoteIdentity}`;
+      if (!remnaCounterNodes.has(counterKey)) remnaCounterNodes.set(counterKey, new Set());
+      remnaCounterNodes.get(counterKey).add(Number(row.node_id));
+    }
+    for (const row of client.node_limits) {
+      if (!row.client_node_id || String(row.node_type || '').toLowerCase() !== 'remnawave') continue;
+      const remoteIdentity = String(row.remote_uuid || client.uuid || row.remote_email || '').trim().toLowerCase();
+      const physicalNode = db.prepare('SELECT remnawave_node_uuid FROM nodes WHERE id=?').get(row.node_id);
+      const counterKey = `${normalizeRemnawaveBaseUrl(row.panel_url)}|${physicalNode?.remnawave_node_uuid || 'unbound:'+row.node_id}|${remoteIdentity}`;
+      const nodeIds = remnaCounterNodes.get(counterKey) || new Set();
+      row.shared_counter_node_ids = [...nodeIds];
+      row.shared_counter = nodeIds.size > 1;
+      const scopedState=nodeTraffic.state(client.id,row.node_id);
+      row.usage_error = scopedState?.error || (!scopedState?.updated_at ? 'Ожидается статистика физической ноды' : '');
+    }
 
     for (const row of client.node_limits) {
       if (!row.client_node_id) continue;
@@ -17151,7 +17361,6 @@ app.post('/clients/:id/traffic/reset', requireAuth, async (req, res) => {
 
     const successNames = [];
     const failures = [];
-    const handledRemnawavePanels = new Set();
     const zeroedMaps = new Set();
     for (const map of maps) {
       const node = db.prepare('SELECT * FROM nodes WHERE id = ?').get(Number(map.node_id));
@@ -17165,25 +17374,9 @@ app.post('/clients/:id/traffic/reset', requireAuth, async (req, res) => {
           modern3xui: is3xuiV3Mode(node)
         });
         if (request.kind === 'remnawave') {
-          const panelKey = `${normalizeRemnawaveBaseUrl(node.panel_url)}|${String(map.remote_uuid || client.uuid).toLowerCase()}`;
-          if (handledRemnawavePanels.has(panelKey)) {
-            successNames.push(`${title} (тот же общий Remnawave-счётчик)`);
-            continue;
-          }
-          await remnawaveApiPost(node, request.path, undefined);
-          handledRemnawavePanels.add(panelKey);
-
-          // Remnawave's user counter is panel-wide, not per physical node.
-          const samePanelMaps = db.prepare(`
-            SELECT cn.id, cn.node_id, cn.remote_uuid, n.panel_url FROM client_nodes cn JOIN nodes n ON n.id = cn.node_id
-            WHERE cn.client_id = ? AND n.node_type = ?
-          `).all(clientId, NODE_TYPE_REMNAWAVE);
-          const sharedMaps = samePanelMaps.filter(row =>
-            normalizeRemnawaveBaseUrl(row.panel_url) === normalizeRemnawaveBaseUrl(node.panel_url)
-            && String(row.remote_uuid || client.uuid).toLowerCase() === String(map.remote_uuid || client.uuid).toLowerCase()
-          );
-          if (!sharedMaps.some(row => Number(row.id) === Number(map.id))) sharedMaps.push(map);
-          for (const sharedMap of sharedMaps) zeroClientNodeTraffic(sharedMap.id, clientId, sharedMap.node_id, zeroedMaps);
+          const user = await getRemnawaveUserByUuid(node, map.remote_uuid);
+          if (!user) throw new Error('Пользователь не найден в Remnawave.');
+          await nodeTraffic.resetMapping(node,user,map);
         } else {
           const result = await apiPost(node, request.path, {}, false);
           if (result?.success === false) throw new Error(String(result.msg || result.message || 'панель отклонила сброс'));
@@ -17210,6 +17403,7 @@ function zeroClientNodeTraffic(mapId, clientId, nodeId, seen = new Set()) {
   seen.add(Number(mapId));
   const zero = { uploadBytes: 0, downloadBytes: 0, usedBytes: 0 };
   updateClientNodeUsage(mapId, zero);
+  nodeTraffic.recordCounter(clientId,nodeId,zero);
   recordClientTrafficSnapshot(clientId, nodeId, zero);
 }
 
@@ -20612,6 +20806,9 @@ const nexusServer = app.listen(PORT, WORKSPACE_ID === 'main' ? '0.0.0.0' : '127.
   console.log(`3xui-aggregator started on :${PORT}`);
   startTelegramManagerBot();
   setTimeout(scheduleSupportReconcile, 2000).unref();
+  // Accounting and quota enforcement must continue with no browser open.
+  setTimeout(() => refreshAllClientUsageFromNodes().catch(err => console.error('Node usage:',err.message)),10000).unref();
+  setInterval(() => refreshAllClientUsageFromNodes().catch(err => console.error('Node usage:',err.message)),60000).unref();
   setInterval(scheduleSupportReconcile, 60000).unref();
   setTimeout(() => { enforceVpnClientExpirations().catch(err => console.error('VPN expiry sweep failed:', err)); }, 15000);
   setInterval(() => { enforceVpnClientExpirations().catch(err => console.error('VPN expiry sweep failed:', err)); }, 60000).unref();

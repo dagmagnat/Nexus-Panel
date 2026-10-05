@@ -63,6 +63,26 @@ test('autoselect probes ALL candidates through HTTPS and cannot fallback to dead
   assert.equal(c.routing.rules[1].outboundTag, 'direct');
   assert.equal(c.autoSelect.candidates, 2);
 });
+
+test('tiered autoselect prefers its primary node, then leastPing pool, and reserves the emergency node', () => {
+  const ctx = vm.createContext({ AUTO_SELECT_DEFAULT_PROBE_URL: 'https://example.invalid/generate_204', getRoutingConfig: () => ({ enabled: true }),
+    buildHappJsonConfig: () => ({ outbounds: [{ tag: 'proxy', protocol: 'vless' }, { tag: 'proxy-2', protocol: 'vless' }, { tag: 'proxy-3', protocol: 'vless' }, { tag: 'direct', protocol: 'freedom' }], routing: { rules: [{ outboundTag: 'proxy', network: 'tcp,udp' }] }, inbounds: [] }) });
+  vm.runInContext(extract('autoSelectRuleForBalancer') + '\n' + extract('buildAutoSelectJsonConfig'), ctx);
+  const profile = { id: 7, title: 'Priority Auto', nodeIds: [1, 2, 3], normalNodeIds: [2], preferredNodeId: 1, emergencyNodeId: 3, probeUrl: 'https://example.invalid/generate_204', probeIntervalSeconds: 30 };
+  const entries = [{ nodeId: 1, line: 'vless://primary' }, { nodeId: 2, line: 'vless://normal' }, { nodeId: 3, line: 'vless://emergency' }];
+  const c = ctx.buildAutoSelectJsonConfig(profile, {}, entries, 'Sub');
+  const [main, preferred] = c.routing.balancers;
+  const loopback = c.outbounds.find(o => o.tag === preferred.fallbackTag);
+  assert.deepEqual(Array.from(main.selector), ['auto-7-node-2']);
+  assert.equal(main.fallbackTag, 'auto-7-node-3');
+  assert.deepEqual(Array.from(preferred.selector), ['auto-7-node-1']);
+  assert.equal(loopback.protocol, 'loopback');
+  assert.equal(c.routing.rules[0].inboundTag[0], loopback.settings.inboundTag);
+  assert.equal(c.routing.rules[0].balancerTag, main.tag);
+  assert.equal(c.routing.rules[1].balancerTag, preferred.tag);
+  assert.equal(c.autoSelect.strategy, 'preferred-then-leastPing-then-emergency');
+  assert.deepEqual(Array.from(c.observatory.subjectSelector), ['auto-7-node-']);
+});
 test('usage refresh is single flight across clients and dashboard requests', async () => {
   let calls = 0, finish;
   const ctx = vm.createContext({ collectAllClientUsageFromNodes: () => { calls++; return new Promise(resolve => { finish = resolve; }); } });
@@ -87,6 +107,7 @@ test('bulk refresh persists Remnawave reset and retains 3x-ui counters without f
       INSERT INTO clients VALUES (1, 'vless', 'user');
       INSERT INTO client_nodes VALUES (1,1,1,'remote','user','https://example.invalid',999,0,999),(2,1,2,'vless','user','',777,0,777);`);
     const ctx = vm.createContext({ db, nodeOrderSql: () => 'id', isRemnawaveNode: n => n.node_type === 'remnawave', isH1CloudNode: () => false,
+      nodeTraffic:{syncMapping:async(n,u,m)=>db.prepare('UPDATE client_nodes SET used_bytes=42 WHERE id=?').run(m.id),markError:()=>{}},
       listRemnawaveUsers: async () => [{ uuid: 'remote', username: 'user', userTraffic: { usedTrafficBytes: 0 } }],
       getRemnawaveUserRemoteId: u => u.uuid, normalizeRemnawaveSubscriptionUrl: (n, url) => url,
       clampByteNumber: n => Math.max(0, Number(n) || 0), getNodePublicName: n => n.name,
@@ -95,7 +116,7 @@ test('bulk refresh persists Remnawave reset and retains 3x-ui counters without f
       runWithConcurrency: (items, limit, worker) => Promise.allSettled(items.map(worker)) });
     vm.runInContext(extract('getRemnawaveUsedTrafficBytes') + '\n' + extract('collectAllClientUsageFromNodes'), ctx);
     const result = await ctx.collectAllClientUsageFromNodes();
-    assert.equal(db.prepare('SELECT used_bytes FROM client_nodes WHERE id=1').get().used_bytes, 0);
+    assert.equal(db.prepare('SELECT used_bytes FROM client_nodes WHERE id=1').get().used_bytes, 42);
     assert.equal(db.prepare('SELECT used_bytes FROM client_nodes WHERE id=2').get().used_bytes, 777);
     assert.equal(result.errors.length, 1);
     ctx.listRemnawaveUsers = async () => { throw new Error('offline'); };

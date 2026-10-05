@@ -124,8 +124,8 @@
 
         <div class="field full js-node-auto-select-only hidden" hidden style="display:none!important">
           <div class="alert ok auto-select-explainer">
-            <strong>Автовыбор работает внутри приложения клиента.</strong>
-            Xray выполняет реальный HTTP-запрос через каждый выбранный узел, исключает узлы без доступа в интернет и подключает outbound с минимальной задержкой. Лимиты, срок и доступ наследуются от клиента и выбранных физических узлов.
+            <strong>Автовыбор работает в Xray-клиенте и доступен в JSON-подписке.</strong>
+            Приоритетный узел используется, пока проверка через него проходит. Затем Xray выбирает по минимальной задержке среди основного пула. Аварийный узел включается только когда основной пул недоступен. Без приоритетного и аварийного узлов сохраняется обычный leastPing.
           </div>
         </div>
 
@@ -158,8 +158,30 @@
           <small class="hint">HTTPS-запрос проходит через VPN каждого узла. Выбери внешний адрес, доступный через все узлы (например, generate_204). Если ни один не отвечает, трафик блокируется до успешной проверки; принудительного возврата к первому узлу нет.</small>
         </div>
 
+        <div class="field half js-node-auto-select-only hidden" hidden style="display:none!important">
+          <label>Приоритетный узел (необязательно)</label>
+          <select name="auto_select_preferred_node_id">
+            <option value="0">Не задан — выбирать по пингу</option>
+            <% nodes.forEach(node => { const suffix = String(node.label_suffix || '').trim(); const baseName = node.country_name_ru || node.name; const displayName = suffix ? (/^\d+$/.test(suffix) ? `${baseName}-${suffix}` : `${baseName} ${suffix}`) : baseName; %>
+              <option value="<%= node.id %>"><%= displayName %> · <%= node.node_type_label || node.node_type %></option>
+            <% }) %>
+          </select>
+          <small class="hint">Пока через этот узел есть интернет, он предпочтительнее более быстрых узлов.</small>
+        </div>
+
+        <div class="field half js-node-auto-select-only hidden" hidden style="display:none!important">
+          <label>Аварийный узел (необязательно)</label>
+          <select name="auto_select_emergency_node_id">
+            <option value="0">Не задан</option>
+            <% nodes.forEach(node => { const suffix = String(node.label_suffix || '').trim(); const baseName = node.country_name_ru || node.name; const displayName = suffix ? (/^\d+$/.test(suffix) ? `${baseName}-${suffix}` : `${baseName} ${suffix}`) : baseName; %>
+              <option value="<%= node.id %>"><%= displayName %> · <%= node.node_type_label || node.node_type %></option>
+            <% }) %>
+          </select>
+          <small class="hint">Используется только если ни один узел основного пула не проходит интернет-проверку.</small>
+        </div>
+
         <div class="field full js-node-auto-select-only hidden" hidden style="display:none!important">
-          <label>Узлы автовыбора</label>
+          <label>Основной пул (проверка интернета → минимальный пинг)</label>
           <div class="auto-select-node-grid">
             <% nodes.forEach(node => { const suffix = String(node.label_suffix || '').trim(); const baseName = node.country_name_ru || node.name; const displayName = suffix ? (/^\d+$/.test(suffix) ? `${baseName}-${suffix}` : `${baseName} ${suffix}`) : baseName; %>
               <label class="auto-select-node-option">
@@ -168,7 +190,7 @@
               </label>
             <% }) %>
           </div>
-          <small class="hint">Нужно минимум два узла. Для конкретного клиента используются только те из них, где клиент уже создан и включён.</small>
+          <small class="hint">Выбери хотя бы один узел. Приоритетный и аварийный узлы сюда не добавляй. Для клиента участвуют только узлы, где этот клиент уже создан и включён.</small>
         </div>
 
         <div class="field half" data-node-endpoint-field>
@@ -225,8 +247,8 @@
 
         <div class="field half js-node-remnawave-only hidden" hidden style="display:none!important">
           <label>Remnawave Node UUID</label>
-          <input name="remnawave_node_uuid" placeholder="необязательно" />
-          <small class="hint">Необязательно. Используется как справочная привязка к физической Node в Remnawave.</small>
+          <input name="remnawave_node_uuid" placeholder="UUID физической ноды" />
+          <small class="hint">Нужен для раздельного расхода. Если сквад доступен только одной физической ноде, UUID определяется автоматически. Для независимого ограничения нужен отдельный сквад этой ноды.</small>
         </div>
 
         <div class="field half js-node-remnawave-only hidden" hidden style="display:none!important">
@@ -370,16 +392,37 @@
                       <label>URL проверки интернета</label>
                       <input name="auto_select_probe_url" value="<%= profile.probeUrl %>" required />
                     </div>
+                    <div class="field half">
+                      <label>Приоритетный узел (необязательно)</label>
+                      <select name="auto_select_preferred_node_id">
+                        <option value="0" <%= !profile.preferredNodeId ? 'selected' : '' %>>Не задан — выбирать по пингу</option>
+                        <% nodes.forEach(node => { const suffix = String(node.label_suffix || '').trim(); const baseName = node.country_name_ru || node.name; const displayName = suffix ? (/^\d+$/.test(suffix) ? `${baseName}-${suffix}` : `${baseName} ${suffix}`) : baseName; %>
+                          <option value="<%= node.id %>" <%= Number(profile.preferredNodeId) === Number(node.id) ? 'selected' : '' %>><%= displayName %> · <%= node.node_type_label || node.node_type %></option>
+                        <% }) %>
+                      </select>
+                      <small class="hint">Используется, пока через него проходит интернет-проверка.</small>
+                    </div>
+                    <div class="field half">
+                      <label>Аварийный узел (необязательно)</label>
+                      <select name="auto_select_emergency_node_id">
+                        <option value="0" <%= !profile.emergencyNodeId ? 'selected' : '' %>>Не задан</option>
+                        <% nodes.forEach(node => { const suffix = String(node.label_suffix || '').trim(); const baseName = node.country_name_ru || node.name; const displayName = suffix ? (/^\d+$/.test(suffix) ? `${baseName}-${suffix}` : `${baseName} ${suffix}`) : baseName; %>
+                          <option value="<%= node.id %>" <%= Number(profile.emergencyNodeId) === Number(node.id) ? 'selected' : '' %>><%= displayName %> · <%= node.node_type_label || node.node_type %></option>
+                        <% }) %>
+                      </select>
+                      <small class="hint">Проверяется только после отказа всего основного пула.</small>
+                    </div>
                     <div class="field full">
-                      <label>Узлы автовыбора</label>
+                      <label>Основной пул (минимальный пинг среди доступных)</label>
                       <div class="auto-select-node-grid compact">
                         <% nodes.forEach(node => { const suffix = String(node.label_suffix || '').trim(); const baseName = node.country_name_ru || node.name; const displayName = suffix ? (/^\d+$/.test(suffix) ? `${baseName}-${suffix}` : `${baseName} ${suffix}`) : baseName; %>
                           <label class="auto-select-node-option">
-                            <input type="checkbox" name="auto_select_node_ids" value="<%= node.id %>" <%= profile.nodeIds.includes(Number(node.id)) ? 'checked' : '' %> />
+                            <input type="checkbox" name="auto_select_node_ids" value="<%= node.id %>" <%= profile.normalNodeIds.includes(Number(node.id)) ? 'checked' : '' %> />
                             <span><%- flagHtml(node.country_code, node.country_flag, node.country_name_ru || node.name, node.node_type) %><strong><%= displayName %></strong><small><%= Number(node.enabled) === 1 ? 'включён' : 'отключён' %></small></span>
                           </label>
                         <% }) %>
                       </div>
+                      <small class="hint">Выбранные здесь узлы сравниваются по пингу после проверки доступа в интернет. Не добавляй сюда приоритетный или аварийный узел.</small>
                     </div>
                   </div>
                   <div class="actions auto-select-profile-actions">
@@ -503,7 +546,7 @@
                   <span class="node-row-id">A<%= profile.id %></span>
                   <span class="node-row-name"><strong><span class="flag-badge emoji-fallback node-row-auto-icon"><%= profile.icon || '⚡' %></span><span><%= profile.name %></span></strong></span>
                   <span class="node-row-type">Автовыбор</span>
-                  <span class="transport-chip transport-chip-full">leastPing / HTTP</span><span class="transport-chip transport-chip-mobile">AUTO / HTTP</span>
+                  <span class="transport-chip transport-chip-full">AUTO / HTTP</span><span class="transport-chip transport-chip-mobile">AUTO / HTTP</span>
                   <span class="badge <%= profileEnabled ? 'online' : 'offline' %>"><%= profileEnabled ? 'Включён' : 'Отключён' %></span>
                   <span class="node-row-activity"><span class="badge <%= profileEnabled ? 'online' : 'disabled' %>"><%= profile.nodes.length %> узл.</span></span>
                   <span class="node-mobile-health" aria-label="Статус автовыбора"><i class="node-health-mark <%= profileEnabled ? 'is-ok' : 'is-bad' %>"><%= profileEnabled ? '✓' : '×' %></i></span>
@@ -587,7 +630,7 @@
                 <div class="node-detail-flag"><span class="flag-badge emoji-fallback node-row-auto-icon"><%= profile.icon || '⚡' %></span></div>
                 <div class="node-detail-title">
                   <div><strong><%= profile.name %></strong> <span class="badge <%= profileEnabled ? 'online' : 'offline' %>"><%= profileEnabled ? 'Включён' : 'Отключён' %></span></div>
-                  <small>ID: A<%= profile.id %> · Тип: Автовыбор · Стратегия: leastPing</small>
+                  <small>ID: A<%= profile.id %> · Тип: Автовыбор · Стратегия: <%= profile.preferredNodeId || profile.emergencyNodeId ? 'приоритет → leastPing → аварийный' : 'leastPing' %></small>
                 </div>
               </div>
 
@@ -1365,7 +1408,7 @@ document.addEventListener('DOMContentLoaded', () => {
       ? 'Создай токен в панели Remnawave с правами list/create/update/delete для Users; для выбора по Host UUID также разреши чтение Hosts. Aggregator отправляет его как <code>Authorization: Bearer</code> и хранит зашифрованно.'
       : 'Токен удалённой панели 3x-ui хранится зашифрованно.';
     if (summary) summary.textContent = isAutoSelect
-      ? 'Один виртуальный сервер в JSON-подписке: выбирает самый быстрый узел только среди прошедших HTTP-проверку интернета.'
+      ? 'Один виртуальный сервер в JSON-подписке: приоритетный узел, затем leastPing по HTTP-проверке, затем аварийный резерв.'
       : (isRemnawave ? 'Подключение к Remnawave Panel API.' : 'Подключение к обычной панели 3x-ui.');
   }
   function updateNodeType(select) {

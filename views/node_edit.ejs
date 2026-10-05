@@ -134,7 +134,7 @@
           <label>Физическая Remnawave-нода</label>
           <input name="remnawave_node_uuid" list="remnawaveNodeOptions" value="<%= node.remnawave_node_uuid || '' %>" placeholder="UUID физической ноды" data-remnawave-node-uuid-input />
           <datalist id="remnawaveNodeOptions"></datalist>
-          <small class="hint">Это UUID из Remnawave → Ноды → Copy UUID. Он не является доменом и не заменяет Host.</small>
+          <small class="hint">Remnawave → Ноды → Copy UUID. Нужен для раздельного расхода, не заменяет Host. Пустой UUID определяется автоматически только для сквада одной физической ноды. Для независимого ограничения нужен отдельный сквад этой ноды.</small>
         </div>
         <div class="field half js-node-remnawave-only <%= isRemnawave ? '' : 'hidden' %>" <%= isRemnawave ? '' : 'hidden style="display:none!important"' %>>
           <label>Клиентский Host UUID</label>

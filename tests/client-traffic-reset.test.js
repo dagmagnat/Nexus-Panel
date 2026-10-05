@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const { buildClientTrafficResetRequest } = require('../lib_client_traffic_reset');
 
 const client = { uuid: 'd7a86b1f-88cf-4ace-9f50-c1339f0acb17', login: 'phone user' };
+test('Remnawave numeric user ID is also supported',()=>assert.equal(buildClientTrafficResetRequest({node:{},map:{remote_uuid:'17'},client,remnawave:true}).path,'/api/users/17/actions/reset-traffic'));
 
 test('Remnawave reset targets the mapped user UUID', () => {
   const request = buildClientTrafficResetRequest({

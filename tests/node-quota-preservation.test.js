@@ -18,6 +18,7 @@ function harness(t) {
     upload_bytes INTEGER,download_bytes INTEGER,used_bytes INTEGER,enabled INTEGER)`);
   const users = new Map(), writes = [];
   const ctx = vm.createContext({ db, console, Date, Number, String, Math, Object,
+    clampByteNumber:n=>Math.max(0,Number(n)||0),
     FETCH_TIMEOUT_MS:1000, isClientActivationPending:() => false,
     requireRemnawaveSquadUuid:node => 'squad-'+node.id,
     normalizeRemnawaveUsername: name => name, remnawaveExpiryState:() => ({expired:false,iso:'2030-01-01T00:00:00.000Z'}),
@@ -49,16 +50,16 @@ test('Remnawave keeps per-node quotas after create, edit, sync and extend; expli
   await h.ctx.ensureRemnawaveUserOnNode(unlimited,h.client,{traffic_gb:0});
   assert.equal(h.map(1).traffic_gb,50); assert.equal(h.map(2).traffic_gb,0);
   await h.ctx.ensureRemnawaveUserOnNode(limited,h.client);
-  assert.equal(h.map(1).traffic_gb,50); assert.equal(h.users.get(1).trafficLimitBytes,50*1024**3);
+  assert.equal(h.map(1).traffic_gb,50); assert.equal(h.users.get(1).trafficLimitBytes,0);
   await h.ctx.updateRemnawaveUserOnNode(limited,h.map(1),h.client,{expiry_time:Date.now()+86400000});
   assert.equal(h.map(1).traffic_gb,50);
   h.client.traffic_gb=100;
   await h.ctx.updateRemnawaveUserOnNode(unlimited,h.map(2),h.client,{comment:'Comment only'});
-  assert.equal(h.map(2).traffic_gb,0); assert.equal(h.users.get(2).trafficLimitBytes,0);
+  assert.equal(h.map(2).traffic_gb,0); assert.equal(h.users.get(2).trafficLimitBytes,100*1024**3);
   await h.ctx.updateRemnawaveUserOnNode(limited,h.map(1),h.client,{traffic_gb:12.5});
-  assert.equal(h.users.get(1).trafficLimitBytes,12.5*1024**3);
+  assert.equal(h.map(1).traffic_gb,12.5);assert.equal(h.users.get(1).trafficLimitBytes,100*1024**3);
   await h.ctx.updateRemnawaveUserOnNode(limited,h.map(1),h.client,{traffic_gb:0});
-  assert.equal(h.map(1).traffic_gb,0); assert.equal(h.users.get(1).trafficLimitBytes,0);
+  assert.equal(h.map(1).traffic_gb,0); assert.equal(h.users.get(1).trafficLimitBytes,100*1024**3);
 });
 test('create-missing keeps existing Remnawave quota instead of saving a global default',async t => {
   const h=harness(t), node={id:1};

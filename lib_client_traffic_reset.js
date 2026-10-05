@@ -6,8 +6,8 @@ function buildClientTrafficResetRequest({ node, map, client, remnawave = false, 
 
   if (remnawave) {
     const userUuid = String(map.remote_uuid || client.uuid || '').trim();
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(userUuid)) {
-      throw new Error('Для Remnawave не найден UUID удалённого пользователя.');
+    if (!/^[1-9]\d*$/.test(userUuid) && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(userUuid)) {
+      throw new Error('Для Remnawave не найден ID/UUID удалённого пользователя.');
     }
     return { kind: 'remnawave', method: 'POST', path: `/api/users/${encodeURIComponent(userUuid)}/actions/reset-traffic` };
   }

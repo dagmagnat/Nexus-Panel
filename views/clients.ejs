@@ -146,7 +146,7 @@
   function nodeLimitText(row) {
     if (row.enabled === 0) return 'выкл.';
     const gb = Number(row.traffic_gb || 0);
-    if (!gb) return '∞';
+    if (!gb) return `${gbFromBytes(row.used_bytes)} ГБ / ∞`;
     return `${gbFromBytes(row.used_bytes)}/${gb} ГБ`;
   }
   function nodeRemainingText(row) {
@@ -381,6 +381,10 @@
       </div>
 
       <div class="bulk-action-details" id="bulkActionDetails" hidden>
+        <div class="bulk-node-action-row">
+          <div class="bulk-node-action-field"><label for="bulkResetNodeId">Сбросить трафик выбранным клиентам</label><select name="reset_node_id" id="bulkResetNodeId"><option value="">Выберите узел</option><% nodes.forEach(node => { %><option value="<%= node.id %>"><%= nodeName(node) %></option><% }) %><option value="all">Все узлы + общий счётчик Remnawave</option></select><small class="hint">Один узел — независимый счётчик. История расхода сохраняется.</small></div>
+          <button type="submit" class="btn-danger" formaction="/clients/traffic/reset-selected" data-bulk-action="reset-traffic">Сбросить трафик</button>
+        </div>
         <div class="bulk-node-action-row">
           <div class="bulk-node-action-field">
             <label for="bulkRemoveNodeId" id="bulkRemoveNodeLabel">Удалить выбранных клиентов из узла</label>
@@ -1262,19 +1266,24 @@
 <% }) %>
 
 <% clients.forEach(client => { %>
-  <% const details = (client.node_limits || []).filter(nl => nl.client_node_id && ((nl.traffic_gb && nl.traffic_gb > 0) || nl.enabled === 0)); %>
+  <% const details = (client.node_limits || []).filter(nl => nl.client_node_id); %>
   <% if (details.length) { %>
     <div id="limitDetails-<%= client.id %>" class="modal hidden" onclick="closeLimitDetails(event, <%= client.id %>)">
       <div class="modal-card limit-details-card" onclick="event.stopPropagation()">
         <button type="button" class="modal-close" onclick="hideLimitDetails(<%= client.id %>)">×</button>
         <h2>Лимиты узлов</h2>
         <p class="muted"><%= client.login %></p>
+        <p class="muted">Каждый счётчик относится только к своему узлу. <a href="/node-traffic">История расхода по дням →</a></p>
         <div class="limit-details-list">
           <% details.forEach(nl => { %>
             <div class="limit-details-row <%= nl.enabled === 0 ? 'disabled' : '' %>">
-              <span><%= nodeName(nl) %><% if (nl.transport_label) { %> <em class="transport-chip"><%= nl.transport_label %></em><% } %></span>
-              <strong data-node-usage-client="<%= client.id %>" data-node-usage-id="<%= nl.node_id %>"><%= nodeLimitText(nl) %></strong>
-              <% if (nl.enabled !== 0 && nl.traffic_gb > 0) { %><small data-node-remaining-client="<%= client.id %>" data-node-usage-id="<%= nl.node_id %>">осталось <%= nodeRemainingText(nl) %></small><% } %>
+              <div class="limit-details-node"><strong><%= nodeName(nl) %></strong><% if (nl.transport_label) { %><em class="transport-chip"><%= nl.transport_label %></em><% } %></div>
+              <div class="limit-details-usage"><strong data-node-usage-client="<%= client.id %>" data-node-usage-id="<%= nl.node_id %>"><%= nodeLimitText(nl) %></strong>
+                <% if (nl.enabled !== 0 && nl.traffic_gb > 0) { %><small data-node-remaining-client="<%= client.id %>" data-node-usage-id="<%= nl.node_id %>">осталось <%= nodeRemainingText(nl) %></small><% } else if (!nl.traffic_gb || nl.traffic_gb <= 0) { %><small>без лимита</small><% } %>
+              </div>
+              <p class="limit-shared-counter-warning" data-node-error-client="<%= client.id %>" data-node-error-id="<%= nl.node_id %>" <%= nl.usage_error ? '' : 'hidden' %>><% if (nl.usage_error) { %><%= nl.usage_error %>. Показано последнее сохранённое значение; ноль до первого опроса не означает отсутствие расхода.<% } %></p>
+              <% if (nl.shared_counter) { %><p class="limit-shared-counter-warning">Одна физическая нода добавлена повторно. Для независимого учёта используйте одну запись этого сервера в Nexus.</p><% } %>
+              <button type="button" class="limit-reset-button" data-open-traffic-reset="<%= client.id %>" data-reset-node="<%= nl.node_id %>">Сбросить счётчик</button>
             </div>
           <% }) %>
         </div>
@@ -1293,14 +1302,14 @@
       <button type="button" class="modal-close" onclick="hideModalById('trafficReset-<%= client.id %>')">×</button>
       <h2>Сброс трафика пользователя</h2>
       <p class="muted"><%= client.display_name || client.login %> · выберите, на каких узлах обнулить счётчик.</p>
-      <% if (hasRemnawaveTraffic) { %><p class="traffic-reset-warning">На Remnawave счётчик общий для пользователя в этой панели. Сброс на выбранном Remnawave-узле может обнулить его использование и на других узлах той же панели.</p><% } %>
-      <p class="traffic-reset-warning">Сбрасывается счётчик пользователя в панели узла. Это не сбрасывает оплаченный исходящий трафик или лимит CDN-ресурса Timeweb.</p>
+      <% if (hasRemnawaveTraffic) { %><p class="traffic-reset-warning">Remnawave: сбрасывается независимый счётчик узла в Nexus, остальные ноды и история расхода не затрагиваются. Для восстановления доступа нужен отдельный сквад этой физической ноды.</p><% } %>
+      <p class="traffic-reset-warning">XUI: сбрасывается удалённый счётчик соответствующего inbound. Это не сбрасывает оплаченный трафик CDN или хостера. Общий лимит пользователя Remnawave здесь не сбрасывается — для него используйте массовый сброс «Все узлы».</p>
       <div class="traffic-reset-actions"><button type="button" class="btn-secondary" data-traffic-select-all="<%= client.id %>">Выбрать все</button><button type="button" class="btn-secondary" data-traffic-select-none="<%= client.id %>">Снять все</button></div>
       <form method="post" action="/clients/<%= client.id %>/traffic/reset" class="traffic-reset-form">
         <input type="hidden" name="back" value="/clients?q=<%= encodeURIComponent(client.login || '') %>&edit=<%= client.id %>" />
         <div class="checkbox-list traffic-reset-node-list">
           <% trafficNodes.forEach(row => { %>
-            <label class="node-item"><input type="checkbox" name="node_ids" value="<%= row.node_id %>" checked /><span class="node-info"><strong><%- flagIcon(row.country_code, row.country_flag, row.country_name_ru || row.node_name || row.name, row.node_type) %><span><%= nodeName(row) %></span></strong><small><%= String(row.node_type || '').toLowerCase() === 'remnawave' ? 'общий пользовательский счётчик панели' : 'счётчик этого узла' %></small></span></label>
+            <label class="node-item"><input type="checkbox" name="node_ids" value="<%= row.node_id %>" checked /><span class="node-info"><strong><%- flagIcon(row.country_code, row.country_flag, row.country_name_ru || row.node_name || row.name, row.node_type) %><span><%= nodeName(row) %></span></strong><small>независимый счётчик этого узла</small></span></label>
           <% }) %>
         </div>
         <div class="modal-actions"><button type="submit" class="btn-danger" onclick="return confirm('Сбросить счётчики трафика на выбранных узлах?')">Сбросить выбранное</button></div>
@@ -1489,6 +1498,12 @@ function clientIsOnlineHere(id) {
   return clientDirectoryState.nodeId ? nodes.includes(String(clientDirectoryState.nodeId)) : nodes.length > 0;
 }
 function renderClientUsageAndOnline() {
+  document.querySelectorAll('[data-node-error-client]').forEach(cell=>{
+    const client=clientUsageById.get(String(cell.dataset.nodeErrorClient));
+    const node=(client?.nodes || []).find(n=>String(n.id)===String(cell.dataset.nodeErrorId));
+    if (!node) return;
+    cell.hidden=!node.usageError;cell.textContent=node.usageError ? node.usageError+'. Показано последнее сохранённое значение.' : '';
+  });
   document.querySelectorAll('[data-modern-traffic-client], [data-client-usage-text]').forEach(cell => {
     const id = cell.dataset.modernTrafficClient || cell.dataset.clientUsageText;
     const summary = clientUsageSummary(id);
@@ -2007,6 +2022,13 @@ function confirmClientBulkAction(event) {
   const form = event?.currentTarget;
   const selectedNames = getSelectedClientNames(selected, 6);
   const namesText = selectedNames.length ? `\n\nКлиенты: ${selectedNames.join(', ')}` : '';
+  if (action === 'reset-traffic') {
+    const select = form?.querySelector('#bulkResetNodeId');
+    if (!select?.value) { showToast('Выберите узел для сброса'); select?.focus(); return false; }
+    const accepted=window.confirm(`Сбросить трафик ${selected.size} выбранным клиентам?\nУзлы: ${select.selectedOptions[0].textContent}\nИстория расхода сохраняется.${namesText}`);
+    if (accepted) { prepareUniqueClientIdsForSubmit(form, selected); form.dataset.loadingTitle='Сбрасываю выбранные счётчики'; }
+    return accepted;
+  }
   if (action === 'remove-node') {
     const select = form?.querySelector('#bulkRemoveNodeId');
     const nodeId = String(select?.value || '');
@@ -2136,7 +2158,13 @@ function closeClientEditor(e, id) { if (e.target.id === 'clientEditor-' + id) hi
 function openLimitDetails(id) { document.getElementById('limitDetails-' + id)?.classList.remove('hidden'); }
 function hideLimitDetails(id) { document.getElementById('limitDetails-' + id)?.classList.add('hidden'); }
 function closeLimitDetails(e, id) { if (e.target.id === 'limitDetails-' + id) hideLimitDetails(id); }
-document.querySelectorAll('[data-open-traffic-reset]').forEach(button => button.addEventListener('click', () => openModalById('trafficReset-' + button.dataset.openTrafficReset)));
+document.querySelectorAll('[data-open-traffic-reset]').forEach(button => button.addEventListener('click', () => {
+  const clientId = button.dataset.openTrafficReset;
+  const modal = document.getElementById('trafficReset-' + clientId);
+  const requestedNode = button.dataset.resetNode;
+  if (modal) modal.querySelectorAll('input[name="node_ids"]').forEach(input => { input.checked = requestedNode ? input.value === requestedNode : true; });
+  openModalById('trafficReset-' + clientId);
+}));
 document.querySelectorAll('[data-traffic-select-all]').forEach(button => button.addEventListener('click', () => document.querySelectorAll(`#trafficReset-${button.dataset.trafficSelectAll} input[name="node_ids"]`).forEach(input => { input.checked = true; })));
 document.querySelectorAll('[data-traffic-select-none]').forEach(button => button.addEventListener('click', () => document.querySelectorAll(`#trafficReset-${button.dataset.trafficSelectNone} input[name="node_ids"]`).forEach(input => { input.checked = false; })));
 
