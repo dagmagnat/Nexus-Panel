@@ -6,7 +6,7 @@
 
 Nexus Panel объединяет узлы **3x-ui** и **Remnawave** в одной панели: клиенты, подписки, лимиты, трафик, маршрутизация, перенаправление, Telegram и резервные копии.
 
-[![Version](https://img.shields.io/badge/version-2.7.8-blue)](https://github.com/dagmagnat/Nexus-Panel)
+[![Version](https://img.shields.io/badge/version-2.7.9-blue)](https://github.com/dagmagnat/Nexus-Panel)
 ![Node.js](https://img.shields.io/badge/node-%3E%3D22-gray)
 ![License](https://img.shields.io/badge/license-MIT-gray)
 
@@ -183,6 +183,10 @@ HTTPS-проверки неуспешны. Возможности и огран�
 leastPing и последний аварийный узел. Старые профили продолжают работать как
 раньше. Перед массовым применением проверь конфигурацию на клиенте с поддержкой
 Xray Observatory и Loopback: [docs/UPDATE_2.7.7.md](docs/UPDATE_2.7.7.md).
+
+## Обновление 2.7.9
+
+Доработка 2.7.9: серверная пагинация пользователей (20 по умолчанию), настройка замены/сброса HWID при обновлении и исправление синхронизации общего лимита Remnawave перед проверкой LIMITED. Автосброс HWID по умолчанию выключен. [Инструкция 2.7.9](docs/UPDATE_2.7.9.md).
 
 ## Обновление 2.7.8
 

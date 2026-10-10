@@ -139,6 +139,21 @@
           </div>
 
           <div class="happ-section-title">2. Устройства и блокировки</div>
+          <div class="subscription-device-refresh-policy">
+            <label>Смена приложения при обновлении подписки
+              <select name="subscription_device_refresh_mode">
+                <% const refreshMode = typeof subscriptionDeviceRefreshMode !== 'undefined' ? subscriptionDeviceRefreshMode : 'manual'; %>
+                <option value="manual" <%= refreshMode === 'manual' ? 'selected' : '' %>>Ручное удаление / сброс устройств</option>
+                <option value="replace-stale" <%= refreshMode === 'replace-stale' ? 'selected' : '' %>>Заменить одну старую привязку, когда лимит заполнен</option>
+                <option value="reset-on-refresh" <%= refreshMode === 'reset-on-refresh' ? 'selected' : '' %>>Полный сброс при каждом HWID-обновлении (ослабляет лимит)</option>
+              </select>
+            </label>
+            <label>Старая привязка: нет обновления подписки более, часов
+              <input name="subscription_device_stale_hours" type="number" min="1" max="720" value="<%= typeof subscriptionDeviceStaleHours !== 'undefined' ? subscriptionDeviceStaleHours : 72 %>" />
+            </label>
+            <label class="switch-row compact"><input type="checkbox" name="subscription_device_reset_ack" value="1" /><span>При полном сбросе принимаю, что ссылку смогут поочерёдно обновлять больше устройств, чем заданный лимит.</span></label>
+            <p class="muted">Удаление приложения серверу не видно. Время последнего обновления — не доказательство отключения VPN. Сброс освобождает привязки Nexus, но не отзывает уже скачанные ключи и не сбрасывает собственный реестр HWID удалённой панели. Без HWID сброс не выполняется.</p>
+          </div>
           <div class="alert ok subscription-limit-unified-note">
             Лимиты разделены: <strong>IP limit</strong> применяется на удалённых узлах, а <strong>лимит устройств</strong> — только к HWID-активациям подписки Nexus. Значение 0 в любом из полей означает безлимит.
           </div>

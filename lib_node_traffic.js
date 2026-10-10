@@ -142,6 +142,29 @@ function createNodeTraffic({ db, get, patch, baseUrl, getUser, getIdentity, titl
     })();
     return db.prepare('SELECT * FROM client_nodes WHERE id=?').get(map.id);
   }
+  async function syncAccount(node, user, map) {
+    const c = db.prepare('SELECT * FROM clients WHERE id=?').get(map.client_id);
+    if (!c) return user;
+    const globalLimit = Math.max(0,Number(c.traffic_gb || 0))*1024**3;
+    // Normal ACTIVE refreshes already have a recent user snapshot. Re-read
+    // before changing native state, not on every unchanged quota check.
+    const mustWrite = Number(user.trafficLimitBytes)!==globalLimit || user.status==='LIMITED' || (user.trafficLimitStrategy && user.trafficLimitStrategy!=='NO_RESET');
+    const fresh = mustWrite ? await getUser(node,getIdentity(user)) : user;
+    if (!fresh) throw new Error('Пользователь исчез из Remnawave.');
+    const identity = getIdentity(fresh);
+    const payload = {...(/^\d+$/.test(identity) ? {id:Number(identity)} : {uuid:identity}),trafficLimitBytes:globalLimit,trafficLimitStrategy:'NO_RESET'};
+    const remoteUsed = Number(fresh.userTraffic?.usedTrafficBytes ?? fresh.usedTrafficBytes ?? 0);
+    const pending = Number(c.start_on_activation)===1 && Number(c.activation_started_at || 0)<=0 && Number(c.duration_days || 0)>0;
+    if (fresh.status==='LIMITED' && (globalLimit===0 || remoteUsed<globalLimit) && Number(c.enabled)!==0 && !pending && (!c.expiry_time || Number(c.expiry_time)>Date.now())) payload.status='ACTIVE';
+    if (Number(fresh.trafficLimitBytes)!==globalLimit || payload.status || fresh.trafficLimitStrategy && fresh.trafficLimitStrategy!=='NO_RESET') {
+      await patch(node,'/api/users',payload);
+      // Read back: do not pretend a proxy's success envelope applied the quota.
+      const confirmed = await getUser(node,identity);
+      if (!confirmed || Number(confirmed.trafficLimitBytes)!==globalLimit || (payload.status && confirmed.status!==payload.status)) throw new Error('Remnawave не подтвердил новый общий лимит/статус пользователя.');
+      return confirmed;
+    }
+    return fresh;
+  }
   async function reconcile(node, user, map) {
     const c = db.prepare('SELECT * FROM clients WHERE id=?').get(map.client_id);
     if (!c) return;
@@ -165,26 +188,27 @@ function createNodeTraffic({ db, get, patch, baseUrl, getUser, getIdentity, titl
     const pending = Number(c.start_on_activation)===1 && Number(c.activation_started_at || 0)<=0 && Number(c.duration_days || 0)>0;
     const allowed = !exhausted && Number(node.enabled)!==0 && Number(map.enabled)!==0 && Number(c.enabled)!==0 && (!c.expiry_time || Number(c.expiry_time)>Date.now()) && !pending;
     const nextSquads = allowed ? [...new Set([...currentSquads,squad])] : currentSquads.filter(x=>x!==squad);
-    // Only the account-wide Nexus allowance may be sent to the shared remote user.
-    const globalLimit = Math.max(0,Number(c.traffic_gb || 0))*1024**3;
     const identity = getIdentity(fresh);
-    const payload = {...(/^\d+$/.test(identity) ? {id:Number(identity)} : {uuid:identity}),trafficLimitBytes:globalLimit,trafficLimitStrategy:'NO_RESET'};
+    const payload = {...(/^\d+$/.test(identity) ? {id:Number(identity)} : {uuid:identity})};
     if (limit > 0 || s.blocked) payload.activeInternalSquads=nextSquads;
-    const remoteUsed = Number(fresh.userTraffic?.usedTrafficBytes ?? fresh.usedTrafficBytes ?? 0);
-    if (fresh.status==='LIMITED' && (globalLimit===0 || remoteUsed<globalLimit) && Number(c.enabled)!==0 && !pending && (!c.expiry_time || Number(c.expiry_time)>Date.now())) payload.status='ACTIVE';
-    if (Number(fresh.trafficLimitBytes)!==globalLimit || payload.status || (payload.activeInternalSquads && JSON.stringify(currentSquads)!==JSON.stringify(nextSquads))) await patch(node,'/api/users',payload);
+    if (payload.activeInternalSquads && JSON.stringify(currentSquads)!==JSON.stringify(nextSquads)) await patch(node,'/api/users',payload);
     db.prepare('UPDATE node_usage_state SET blocked=? WHERE client_id=? AND node_id=?').run(exhausted ? 1 : 0,c.id,node.id);
+    return payload.activeInternalSquads ? {...fresh,activeInternalSquads:nextSquads} : fresh;
   }
   async function syncMapping(node,user,map,{force=false}={}) {
     node = {...node,id:map.node_id};
     return locked(`${baseUrl(node.panel_url)}|${getIdentity(user)}`, async () => {
       try {
+        // A stale native 5 GB allowance must not block every node. Repair it
+        // even if node statistics/squad isolation are temporarily unavailable.
+        user = await syncAccount(node,user,map);
         const freshMap = save(map,await read(node,user,force));
-        await reconcile(node,user,freshMap);
-        return freshMap;
+        const remoteUser = await reconcile(node,user,freshMap);
+        return {...freshMap,remoteUser};
       } catch(e) {
         ensure(map.client_id,map.node_id);
         db.prepare('UPDATE node_usage_state SET error=? WHERE client_id=? AND node_id=?').run(String(e.message),map.client_id,map.node_id);
+        e.remoteUser = user;
         throw e;
       }
     });
@@ -192,6 +216,7 @@ function createNodeTraffic({ db, get, patch, baseUrl, getUser, getIdentity, titl
   async function resetMapping(node,user,map,{resetNative}={}) {
     node = {...node,id:map.node_id};
     return locked(`${baseUrl(node.panel_url)}|${getIdentity(user)}`, async () => {
+      user = await syncAccount(node,user,map);
       save(map,await read(node,user,true));
       if (resetNative) await resetNative();
       db.transaction(() => {

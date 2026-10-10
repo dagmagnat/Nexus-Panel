@@ -1,5 +1,7 @@
 app.js
 lib_node_traffic.js
+lib_client_directory.js
+lib_device_refresh.js
 lib_access.js
 lib_client_traffic_reset.js
 package.json
@@ -10,13 +12,18 @@ update.json
 README.md
 PROJECT_HANDOFF.md
 views/clients.ejs
+views/settings.ejs
 views/dashboard.ejs
 views/nodes.ejs
 views/node_edit.ejs
 views/node_traffic.ejs
 public/js/node-traffic.js
 public/css/node-traffic.css
+public/css/client-pagination.css
 tests/node-traffic.test.js
+tests/client-directory.test.js
+tests/device-refresh.test.js
+tests/client-activation.test.js
 tests/node-traffic-http.test.js
 tests/node-quota-preservation.test.js
 tests/remnawave-live-usage.test.js
@@ -25,3 +32,4 @@ tests/usage-directory-2.7.3.test.js
 tests/spectrum-clear-2.1.test.js
 tests/installer-source-migration.test.js
 docs/UPDATE_2.7.8.md
+docs/UPDATE_2.7.9.md

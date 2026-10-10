@@ -39,6 +39,8 @@ function harness(t) {
   const calls = [];
   const ctx = vm.createContext({
     db, Date, console: { error() {} }, Buffer, ...crypto,
+    getSetting: (key, fallback) => fallback,
+    applyDeviceRefreshPolicy: require('../lib_device_refresh').applyDeviceRefreshPolicy,
     addColumnIfMissing(table, name, type) {
       if (!db.prepare(`PRAGMA table_info(${table})`).all().some(r => r.name === name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
     },

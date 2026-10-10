@@ -25,6 +25,8 @@ const { createVpnManager } = require('./lib_vpn_manager');
 const { nodeCloneValues } = require('./lib_node_clone');
 const { buildClientTrafficResetRequest } = require('./lib_client_traffic_reset');
 const { createNodeTraffic, dateRange: nodeTrafficDateRange } = require('./lib_node_traffic');
+const { initClientDirectory, queryClientDirectory } = require('./lib_client_directory');
+const { deviceRefreshPolicy, applyDeviceRefreshPolicy } = require('./lib_device_refresh');
 const { supportAccess, parseSupportDays, initSupportSchema } = require('./lib_expired_support');
 const { initNexusNodeControlSchema, attachNexusNodeControl } = require('./lib_nexus_node_control');
 
@@ -1659,6 +1661,8 @@ function initDb() {
     ['subscription_device_tracking_enabled', '1'],
     ['subscription_device_limit_enforced', '1'],
     ['subscription_device_require_hwid', '0'],
+    ['subscription_device_refresh_mode', 'manual'],
+    ['subscription_device_stale_hours', '72'],
     ['subscription_expired_notice_enabled', '1'],
     ['subscription_expired_notice_title', '⛔ Продлите подписку'],
     ['subscription_device_limit_notice_title', '⚠️ Превышен лимит устройств'],
@@ -1777,6 +1781,7 @@ for (const existingNode of db.prepare('SELECT panel_url FROM nodes').all()) {
   try { access.claimRemote(existingNode.panel_url); } catch (err) { console.error('Workspace node ownership:', err.message); }
 }
 initSupportSchema(db);
+initClientDirectory(db);
 const nodeTraffic = createNodeTraffic({db,
   get: (node, route) => remnawaveApiGet(node, route, 15000),
   patch: (node, route, body) => remnawaveApiPatch(node, route, body, 15000),
@@ -2789,6 +2794,11 @@ function registerSubscriptionDevice(req, clientRow, options = {}) {
 
   const hwidHash = subscriptionDeviceHash(clientRow, info.hwid);
   const upsertDevice = db.transaction(() => {
+    applyDeviceRefreshPolicy(db, Number(clientRow.id), hwidHash, {
+      mode: getSetting('subscription_device_refresh_mode', 'manual'),
+      staleHours: getSetting('subscription_device_stale_hours', '72'),
+      allowNew: options.allowNew, limit, enforced: isSubscriptionDeviceLimitEnforced()
+    });
     const existing = db.prepare('SELECT id FROM subscription_devices WHERE client_id = ? AND hwid_hash = ?')
       .get(Number(clientRow.id), hwidHash);
 
@@ -4109,10 +4119,10 @@ function unwrapRemnawaveResponse(data) {
 
 function getRemnawaveUserRemoteId(userOrId) {
   if (userOrId && typeof userOrId === 'object') {
-    const uuid = String(userOrId.uuid || '').trim();
-    if (isUuidText(uuid)) return uuid;
     const id = String(userOrId.id ?? '').trim();
     if (/^[1-9]\d*$/.test(id)) return id;
+    const uuid = String(userOrId.uuid || '').trim();
+    if (isUuidText(uuid)) return uuid;
     return '';
   }
   const raw = String(userOrId ?? '').trim();
@@ -4451,6 +4461,9 @@ function buildRemnawaveUserPayload(node, client, opts = {}, current = null, mode
       throw new Error('Remnawave не вернул идентификатор пользователя (id/UUID) для обновления.');
     }
     Object.assign(payload, identity);
+    // 3.3+ treats username as an alternative lookup key, not a rename field.
+    // Send exactly one identifier; the old UUID-only contract keeps username.
+    if (identity.id) delete payload.username;
     // Remnawave rejects an expired date in PATCH. For an expired local client
     // status=DISABLED is enough; the exact future date will be written on extend.
     if (!expiry.expired) payload.expireAt = expiry.iso;
@@ -4606,6 +4619,14 @@ async function ensureRemnawaveUserOnNode(node, client, opts = {}) {
 
   let remoteId = getRemnawaveUserRemoteId(current);
   if (!remoteId) throw new Error(`${getNodePublicName(node)}: Remnawave не вернул идентификатор созданного пользователя (id/UUID).`);
+  if (remoteUpdated && opts.skip_existing !== true) {
+    const confirmed = await getRemnawaveUserByUuid(node, remoteId, FETCH_TIMEOUT_MS);
+    const expectedLimit = toTotalGbBytes(Math.max(0, Number(client.traffic_gb || 0)));
+    if (!confirmed || Number(confirmed.trafficLimitBytes) !== expectedLimit) {
+      throw new Error(`${getNodePublicName(node)}: Remnawave не подтвердил общий лимит ${client.traffic_gb || 0} ГБ. Лимит узла отдельно хранится в Nexus; проверь API и доступ к пользователю.`);
+    }
+    current = confirmed;
+  }
   if (!current?.subscriptionUrl) {
     const refreshed = await getRemnawaveUserByUuid(node, remoteId, FETCH_TIMEOUT_MS);
     if (refreshed) current = refreshed;
@@ -8392,12 +8413,22 @@ async function buildRemnawaveSubscriptionEntries(row, clientRow, includeOffline 
   // Previously this branch ran only once, leaving names such as 0.3/50 GB stale.
   if (row?.remote_uuid && (!subscriptionUrl || shouldRefreshSubscriptionUsage())) {
     try {
-      const user = await getRemnawaveUserByUuid(row, row.remote_uuid, Math.min(SUBSCRIPTION_STATS_TIMEOUT_MS, remaining()));
+      let user = await getRemnawaveUserByUuid(row, row.remote_uuid, Math.min(SUBSCRIPTION_STATS_TIMEOUT_MS, remaining()));
+      if (!user && row.remote_email) user = await getRemnawaveUserByUsername(row, row.remote_email, Math.min(SUBSCRIPTION_STATS_TIMEOUT_MS, remaining()));
       if (!user) {
         // Older mappings may use an identifier unsupported by a newer API.
         // A live subscription can still work, but don't fall back to old links.
         remoteAllowsStale = false;
         subscriptionLineCache.delete(cacheKeyFor(subscriptionUrl));
+      }
+      const mapping = user && db.prepare('SELECT * FROM client_nodes WHERE id = ?').get(row.client_node_id);
+      if (mapping) {
+        // Repair an obsolete panel-wide limit BEFORE rejecting LIMITED users.
+        // A per-node allowance is checked separately below and never globally.
+        let refreshedUser;
+        try { refreshedUser = (await nodeTraffic.syncMapping(row, user, mapping))?.remoteUser; }
+        catch (usageError) { refreshedUser = usageError.remoteUser; console.error('Node-scoped subscription usage:', usageError.message); }
+        user = refreshedUser || await getRemnawaveUserByUuid(row, getRemnawaveUserRemoteId(user), Math.min(SUBSCRIPTION_STATS_TIMEOUT_MS, remaining())) || user;
       }
       if (user?.status && String(user.status).toUpperCase() !== 'ACTIVE') {
         subscriptionLineCache.delete(cacheKeyFor(subscriptionUrl));
@@ -8411,11 +8442,6 @@ async function buildRemnawaveSubscriptionEntries(row, clientRow, includeOffline 
           return [];
         }
         subscriptionUrl = normalizeRemnawaveSubscriptionUrl(row, user.subscriptionUrl || subscriptionUrl);
-        const mapping = db.prepare('SELECT * FROM client_nodes WHERE id = ?').get(row.client_node_id);
-        if (mapping) {
-          try { await nodeTraffic.syncMapping(row, user, mapping); }
-          catch (usageError) { console.error('Node-scoped subscription usage:', usageError.message); }
-        }
         const latestMapping = mapping && db.prepare('SELECT * FROM client_nodes WHERE id = ?').get(mapping.id);
         const usedBytes = clampByteNumber(latestMapping?.used_bytes ?? row?.used_bytes ?? 0);
         // Update this request's row as well as SQLite BEFORE building the remark.
@@ -12302,7 +12328,7 @@ function refreshAllClientUsageFromNodes() {
   return usageRefreshPending;
 }
 
-function buildClientUsageDirectory() {
+function buildClientUsageDirectory(clientIds = null) {
   // Оптимизация: один JOIN запрос вместо двух раздельных
   const rows = db.prepare(`
     SELECT 
@@ -12322,8 +12348,9 @@ function buildClientUsageDirectory() {
     LEFT JOIN client_nodes cn ON cn.client_id = c.id
     LEFT JOIN nodes n ON n.id = cn.node_id
     LEFT JOIN node_usage_state s ON s.client_id=c.id AND s.node_id=cn.node_id
+    ${clientIds ? 'WHERE c.id IN (SELECT value FROM json_each(?))' : ''}
     ORDER BY c.id, cn.node_id
-  `).all();
+  `).all(...(clientIds ? [JSON.stringify(clientIds)] : []));
   
   const byClient = new Map();
   for (const row of rows) {
@@ -14102,7 +14129,8 @@ app.get('/clients/usage.json', requireAuth, (req, res) => {
     });
   }
   res.setHeader('Cache-Control', 'no-store');
-  res.json({ ok: true, clients: buildClientUsageDirectory(), refreshing: Boolean(usageRefreshPending),
+  const clientIds = req.query.ids === undefined ? null : [...new Set(String(req.query.ids).split(',').map(Number).filter(id => Number.isSafeInteger(id) && id > 0))].slice(0, 100000);
+  res.json({ ok: true, clients: buildClientUsageDirectory(clientIds), refreshing: Boolean(usageRefreshPending),
     updatedAt: usageRefreshFinishedAt || null, errors: usageRefreshErrors });
 });
 
@@ -14832,6 +14860,8 @@ app.get('/settings', requireAuth, async (req, res) => {
     subscriptionExpiredNoticeEnabled: isExpiredSubscriptionNoticeEnabled(),
     subscriptionExpiredNoticeTitle: getSubscriptionNoticeTitle('expired'),
     subscriptionDeviceLimitNoticeTitle: getSubscriptionNoticeTitle('device-limit'),
+    subscriptionDeviceRefreshMode: deviceRefreshPolicy(getSetting('subscription_device_refresh_mode','manual')).mode,
+    subscriptionDeviceStaleHours: deviceRefreshPolicy('',getSetting('subscription_device_stale_hours','72')).staleHours,
     subscriptionExpiredGraceDays: getSubscriptionExpiredGraceDays(),
     subscriptionExpiredGraceNodeIds: getSubscriptionExpiredGraceNodeIds(),
     subscriptionDeviceLimitNodeIds: getSubscriptionDeviceLimitNodeIds(),
@@ -15022,6 +15052,8 @@ app.post('/settings/subscription-revision/bump', requireAuth, (req, res) => {
 
 app.post('/settings/happ-control', requireAuth, (req, res) => {
   try {
+    const devicePolicy = deviceRefreshPolicy(String(req.body.subscription_device_refresh_mode || getSetting('subscription_device_refresh_mode','manual')), req.body.subscription_device_stale_hours ?? getSetting('subscription_device_stale_hours','72'));
+    if (devicePolicy.mode === 'reset-on-refresh' && req.body.subscription_device_refresh_mode === 'reset-on-refresh' && req.body.subscription_device_reset_ack !== '1') throw new Error('Подтверди ослабление лимита устройств для полного сброса при обновлении.');
     const beforeSnapshot = JSON.stringify({
       showHappLinks: getSetting('show_happ_links', '0'),
       userinfo: getSetting('subscription_userinfo_header', '1'),
@@ -15041,6 +15073,8 @@ app.post('/settings/happ-control', requireAuth, (req, res) => {
       deviceTracking: getSetting('subscription_device_tracking_enabled', '1'),
       deviceLimitEnforced: getSetting('subscription_device_limit_enforced', '1'),
       deviceRequireHwid: getSetting('subscription_device_require_hwid', '0'),
+      deviceRefreshMode: getSetting('subscription_device_refresh_mode', 'manual'),
+      deviceStaleHours: getSetting('subscription_device_stale_hours', '72'),
       expiredNoticeEnabled: getSetting('subscription_expired_notice_enabled', '1'),
       expiredNoticeTitle: getSetting('subscription_expired_notice_title', '⛔ Продлите подписку'),
       deviceLimitNoticeTitle: getSetting('subscription_device_limit_notice_title', '⚠️ Превышен лимит устройств'),
@@ -15078,6 +15112,8 @@ app.post('/settings/happ-control', requireAuth, (req, res) => {
     setSetting('subscription_device_tracking_enabled', req.body.subscription_device_tracking_enabled === '1' ? '1' : '0');
     setSetting('subscription_device_limit_enforced', req.body.subscription_device_limit_enforced === '1' ? '1' : '0');
     setSetting('subscription_device_require_hwid', req.body.subscription_device_require_hwid === '1' ? '1' : '0');
+    setSetting('subscription_device_refresh_mode', devicePolicy.mode);
+    setSetting('subscription_device_stale_hours', String(devicePolicy.staleHours));
     setSetting('subscription_expired_notice_enabled', req.body.subscription_expired_notice_enabled === '1' ? '1' : '0');
     setSetting('subscription_expired_notice_title', sanitizeSubscriptionDeviceText(req.body.subscription_expired_notice_title, 80) || '⛔ Продлите подписку');
     setSetting('subscription_device_limit_notice_title', sanitizeSubscriptionDeviceText(req.body.subscription_device_limit_notice_title, 80) || '⚠️ Превышен лимит устройств');
@@ -15146,6 +15182,8 @@ app.post('/settings/happ-control', requireAuth, (req, res) => {
       deviceTracking: getSetting('subscription_device_tracking_enabled', '1'),
       deviceLimitEnforced: getSetting('subscription_device_limit_enforced', '1'),
       deviceRequireHwid: getSetting('subscription_device_require_hwid', '0'),
+      deviceRefreshMode: getSetting('subscription_device_refresh_mode', 'manual'),
+      deviceStaleHours: getSetting('subscription_device_stale_hours', '72'),
       expiredNoticeEnabled: getSetting('subscription_expired_notice_enabled', '1'),
       expiredNoticeTitle: getSetting('subscription_expired_notice_title', '⛔ Продлите подписку'),
       deviceLimitNoticeTitle: getSetting('subscription_device_limit_notice_title', '⚠️ Превышен лимит устройств'),
@@ -16499,31 +16537,19 @@ app.post('/clients/transfer/import', requireAuth, parseClientTransferJsonBody, a
   }
 });
 
-app.get('/clients', requireAuth, (req, res) => {
+app.get('/clients', requireAuth, async (req, res) => {
   try {
   const clientType = 'xray';
   const q = String(req.query.q || '').trim();
   const qNorm = normalizeSearchText(q);
-  const allClients = db.prepare(`
-        SELECT c.*,
-          cg.name AS group_name,
-          cg.color AS group_color,
-          (
-            SELECT cn.remote_sub_url
-            FROM client_nodes cn
-            WHERE cn.client_id = c.id
-              AND cn.remote_sub_url LIKE 'http%'
-            ORDER BY cn.id ASC
-            LIMIT 1
-          ) AS source_sub_url
-        FROM clients c
-        LEFT JOIN client_groups cg ON cg.id = c.group_id
-        ORDER BY c.id DESC
-      `).all();
-  // Reality/Xray clients are intentionally rendered as one local directory.
-  // Search, node filtering and sorting are performed in the browser without a
-  // page reload so the input never loses focus while the administrator types.
-  const clients = clientType !== 'xray' ? [] : allClients;
+  let onlineIds = [];
+  if (req.query.sort === 'online') {
+    const online = await getOnlineClientsForDashboard();
+    onlineIds = (online.clients || []).filter(c => !req.query.node_id || (c.nodes || []).some(n => String(n.id) === String(req.query.node_id))).map(c => c.id);
+  }
+  const directory = queryClientDirectory(db, req.query, { onlineIds });
+  const clients = directory.clients;
+  const pageClientIds = JSON.stringify(clients.map(c => c.id));
   const clientGroups = getClientGroups();
   const clientTags = getClientTags();
   const tagsByClient = new Map();
@@ -16531,15 +16557,16 @@ app.get('/clients', requireAuth, (req, res) => {
     SELECT a.client_id, t.id, t.name, t.color
     FROM client_tag_assignments a
     JOIN client_tags t ON t.id = a.tag_id
+    WHERE a.client_id IN (SELECT value FROM json_each(?))
     ORDER BY t.name COLLATE NOCASE ASC, t.id ASC
-  `).all()) {
+  `).all(pageClientIds)) {
     if (!tagsByClient.has(Number(row.client_id))) tagsByClient.set(Number(row.client_id), []);
     tagsByClient.get(Number(row.client_id)).push({ id: row.id, name: row.name, color: row.color });
   }
 
   // ОПТИМИЗАЦИЯ 1: Загружаем все devices одним запросом
   const devicesByClient = new Map();
-  for (const device of db.prepare(`SELECT client_id, id, hwid_hint, os_name, device_model, first_seen_at, last_seen_at FROM subscription_devices ORDER BY client_id, last_seen_at DESC`).all()) {
+  for (const device of db.prepare(`SELECT client_id, id, hwid_hint, os_name, os_version, device_model, app_name, first_seen_at, last_seen_at FROM subscription_devices WHERE client_id IN (SELECT value FROM json_each(?)) ORDER BY client_id, last_seen_at DESC`).all(pageClientIds)) {
     const clientId = Number(device.client_id);
     if (!devicesByClient.has(clientId)) devicesByClient.set(clientId, []);
     devicesByClient.get(clientId).push(device);
@@ -16557,6 +16584,7 @@ app.get('/clients', requireAuth, (req, res) => {
       n.name,
       n.node_type,
       n.panel_url,
+      n.remnawave_node_uuid,
       n.h1cloud_link_mode,
       n.h1cloud_link_types,
       n.h1cloud_fingerprint,
@@ -16575,9 +16603,9 @@ app.get('/clients', requireAuth, (req, res) => {
       n.sort_order
     FROM nodes n
     LEFT JOIN client_nodes cn ON cn.node_id = n.id
-    WHERE n.enabled = 1
+    WHERE n.enabled = 1 AND cn.client_id IN (SELECT value FROM json_each(?))
     ORDER BY cn.client_id, COALESCE(n.sort_order, n.id) ASC, n.id ASC
-  `).all();
+  `).all(pageClientIds);
   
   for (const row of nodeLimitsRows) {
     if (!row.client_id) continue;
@@ -16596,16 +16624,14 @@ app.get('/clients', requireAuth, (req, res) => {
     for (const row of client.node_limits) {
       if (!row.client_node_id || String(row.node_type || '').toLowerCase() !== 'remnawave') continue;
       const remoteIdentity = String(row.remote_uuid || client.uuid || row.remote_email || '').trim().toLowerCase();
-      const physicalNode = db.prepare('SELECT remnawave_node_uuid FROM nodes WHERE id=?').get(row.node_id);
-      const counterKey = `${normalizeRemnawaveBaseUrl(row.panel_url)}|${physicalNode?.remnawave_node_uuid || 'unbound:'+row.node_id}|${remoteIdentity}`;
+      const counterKey = `${normalizeRemnawaveBaseUrl(row.panel_url)}|${row.remnawave_node_uuid || 'unbound:'+row.node_id}|${remoteIdentity}`;
       if (!remnaCounterNodes.has(counterKey)) remnaCounterNodes.set(counterKey, new Set());
       remnaCounterNodes.get(counterKey).add(Number(row.node_id));
     }
     for (const row of client.node_limits) {
       if (!row.client_node_id || String(row.node_type || '').toLowerCase() !== 'remnawave') continue;
       const remoteIdentity = String(row.remote_uuid || client.uuid || row.remote_email || '').trim().toLowerCase();
-      const physicalNode = db.prepare('SELECT remnawave_node_uuid FROM nodes WHERE id=?').get(row.node_id);
-      const counterKey = `${normalizeRemnawaveBaseUrl(row.panel_url)}|${physicalNode?.remnawave_node_uuid || 'unbound:'+row.node_id}|${remoteIdentity}`;
+      const counterKey = `${normalizeRemnawaveBaseUrl(row.panel_url)}|${row.remnawave_node_uuid || 'unbound:'+row.node_id}|${remoteIdentity}`;
       const nodeIds = remnaCounterNodes.get(counterKey) || new Set();
       row.shared_counter_node_ids = [...nodeIds];
       row.shared_counter = nodeIds.size > 1;
@@ -16669,15 +16695,18 @@ app.get('/clients', requireAuth, (req, res) => {
     outline: vpnClientsAll.filter(client => client.protocol === 'outline').length
   };
 
-  recordTrafficSnapshot(false, 'passive');
-
+  // Rendering a page must not snapshot counters for the whole installation.
+  // Background collection/traffic routes already maintain the history.
   render(res, 'clients', {
     clients,
     nodes,
     clientGroups,
     clientTags,
     clientType,
-    xrayCount: allClients.length,
+    xrayCount: directory.stats.total,
+    directoryStats: directory.stats,
+    pagination: directory.pagination,
+    directoryBack: '/clients?' + new URLSearchParams(Object.entries(req.query).filter(([key, value]) => ['q','node_id','group_id','tag_id','sort','page','page_size'].includes(key) && typeof value === 'string')).toString(),
     vpnClients,
     vpnServices,
     vpnCounts,

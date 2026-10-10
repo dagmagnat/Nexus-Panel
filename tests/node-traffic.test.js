@@ -43,6 +43,16 @@ test('exhausted exclusive squad removed; reset restores only that squad, no nati
   assert.deepEqual(f.user.activeInternalSquads,['squad-2']);assert.equal(f.user.trafficLimitBytes,0);assert.equal(f.api.state(1,1).blocked,1);
   await f.api.resetMapping(f.nodes[0],f.user,f.map(1));assert.deepEqual(f.user.activeInternalSquads,['squad-2','squad-1']);assert.equal(f.api.state(1,1).blocked,0);
 });
+test('obsolete native 5 GB LIMITED account is repaired to 50, without changing per-node quotas',async t=>{
+  const f=fixture(t);f.user.status='LIMITED';f.user.trafficLimitBytes=5*GB;f.db.exec('UPDATE clients SET traffic_gb=50 WHERE id=1');
+  await f.sync(1);assert.equal(f.user.status,'ACTIVE');assert.equal(f.user.trafficLimitBytes,50*GB);assert.equal(f.map(1).traffic_gb,50);assert.equal(f.map(2).traffic_gb,50);
+});
+test('global unlimited repairs LIMITED even if independent stats fail; real exhausted global is not revived',async t=>{
+  const f=fixture(t);f.user.status='LIMITED';f.user.trafficLimitBytes=5*GB;f.broken=true;
+  await assert.rejects(f.sync(1));assert.equal(f.user.status,'ACTIVE');assert.equal(f.user.trafficLimitBytes,0);
+  f.user.status='LIMITED';f.db.exec('UPDATE clients SET traffic_gb=5 WHERE id=1');
+  await assert.rejects(f.sync(1));assert.equal(f.user.status,'LIMITED');assert.equal(f.user.trafficLimitBytes,5*GB);
+});
 test('shared squad never disables another node; scoped statistics still saved with warning',async t=>{
   const f=fixture(t);f.shared=true;f.db.prepare('UPDATE client_nodes SET traffic_gb=5 WHERE id=1').run();
   await assert.rejects(f.sync(1),/Общий сквад не отключён/);assert.equal(f.map(1).used_bytes,30*GB);assert.equal(f.writes.length,0);assert.match(f.api.state(1,1).error,/независимое/);

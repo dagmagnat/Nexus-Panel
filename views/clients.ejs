@@ -1,4 +1,5 @@
 <%- include('partials_header', { pageTitle: 'Пользователи', pageSubtitle: 'Xray / Reality, подписки, лимиты и управление доступом', activePage: 'clients' }) %>
+<link rel="stylesheet" href="/css/client-pagination.css" />
 <%
   function flagEmojiFromCode(code) {
     const cc = String(code || '').trim().toUpperCase();
@@ -222,13 +223,15 @@
     return { text: `через ${Math.max(1, days)} дн.`, key: days <= 7 ? 'warning' : 'active' };
   }
   const isVpnClientTab = clientType !== 'xray';
-  const currentClientCount = isVpnClientTab ? vpnClients.length : clients.length;
+  const clientPagination = typeof pagination !== 'undefined' ? pagination : null;
+  const pageStats = typeof directoryStats !== 'undefined' ? directoryStats : null;
+  const currentClientCount = isVpnClientTab ? vpnClients.length : (clientPagination?.total ?? clients.length);
   const currentClientTypeLabel = clientType === 'wireguard' ? 'WireGuard' : clientType === 'amneziawg' ? 'AmneziaWG' : clientType === 'outline' ? 'Outline' : 'Reality / Xray';
   const clientTypeQuery = clientType === 'xray' ? '' : ('?type=' + encodeURIComponent(clientType));
-  const xrayExpiredCount = clients.filter(c => c.enabled !== 0 && daysLeftNumber(c.expiry_time) === 0).length;
-  const xrayExpiringCount = clients.filter(c => c.enabled !== 0 && daysLeftNumber(c.expiry_time) !== null && daysLeftNumber(c.expiry_time) >= 1 && daysLeftNumber(c.expiry_time) <= 7).length;
-  const xrayDisabledCount = clients.filter(c => c.enabled === 0).length;
-  const xrayActiveCount = clients.filter(c => c.enabled !== 0 && daysLeftNumber(c.expiry_time) !== 0).length;
+  const xrayExpiredCount = pageStats?.expired ?? clients.filter(c => c.enabled !== 0 && daysLeftNumber(c.expiry_time) === 0).length;
+  const xrayExpiringCount = pageStats?.expiring ?? clients.filter(c => c.enabled !== 0 && daysLeftNumber(c.expiry_time) !== null && daysLeftNumber(c.expiry_time) >= 1 && daysLeftNumber(c.expiry_time) <= 7).length;
+  const xrayDisabledCount = pageStats?.disabled ?? clients.filter(c => c.enabled === 0).length;
+  const xrayActiveCount = pageStats?.active ?? clients.filter(c => c.enabled !== 0 && daysLeftNumber(c.expiry_time) !== 0).length;
 %>
 
 <% if (message) { %><div class="alert ok"><%= message %></div><% } %>
@@ -251,7 +254,7 @@
 <div class="card clients-card">
   <% if (clientType === 'xray') { %>
   <div class="client-overview-strip" aria-label="Сводка по клиентам">
-    <button type="button" class="client-overview-stat" data-client-status-shortcut="all"><span>Пользователи</span><strong><%= clients.length %></strong></button>
+    <button type="button" class="client-overview-stat" data-client-status-shortcut="all"><span>Пользователи</span><strong><%= pageStats?.total ?? clients.length %></strong></button>
     <button type="button" class="client-overview-stat is-online" data-client-status-shortcut="online"><span>В сети</span><strong id="clientOnlineNowCount">—</strong></button>
     <button type="button" class="client-overview-stat is-danger" data-client-status-shortcut="expired"><span>Срок истёк</span><strong><%= xrayExpiredCount %></strong></button>
     <button type="button" class="client-overview-stat is-warning" data-client-status-shortcut="expiring"><span>Скоро закончатся</span><strong><%= xrayExpiringCount %></strong></button>
@@ -675,10 +678,32 @@
     </div>
   <% } %>
   </form>
+  <% if (clientPagination) {
+    function clientPageUrl(page) {
+      const params = new URLSearchParams(String(typeof directoryBack !== 'undefined' ? directoryBack : '').split('?')[1] || '');
+      params.set('page', String(page)); params.set('page_size', String(clientPagination.size));
+      return '/clients?' + params.toString();
+    }
+    const pageNumbers = [...new Set([1, ...Array.from({length:5}, (_,i)=>clientPagination.page-2+i),clientPagination.pages])].filter(p=>p>0&&p<=clientPagination.pages).sort((a,b)=>a-b);
+  %>
+  <nav class="client-pagination" aria-label="Страницы пользователей">
+    <label>На странице <select id="clientPageSize" aria-label="Количество пользователей на странице">
+      <% [20,50,100,150,200,'all'].forEach(size => { %><option value="<%= size %>" <%= clientPagination.size === size ? 'selected' : '' %>><%= size === 'all' ? 'Все' : size %></option><% }) %>
+    </select></label>
+    <span>Показано <%= clientPagination.from %>–<%= clientPagination.to %> из <%= clientPagination.total %>. Выбор клиентов — на текущей странице.</span>
+    <div class="client-pagination-links">
+      <% if (clientPagination.page>1) { %><a class="link-btn secondary" rel="prev" href="<%= clientPageUrl(clientPagination.page-1) %>">←</a><% } %>
+      <% pageNumbers.forEach((page,index) => { %><% if (index && page > pageNumbers[index-1]+1) { %><span>…</span><% } %>
+        <a class="link-btn <%= page===clientPagination.page ? '' : 'secondary' %>" href="<%= clientPageUrl(page) %>" <%- page===clientPagination.page ? 'aria-current="page"' : '' %>><%= page %></a>
+      <% }) %>
+      <% if (clientPagination.page<clientPagination.pages) { %><a class="link-btn secondary" rel="next" href="<%= clientPageUrl(clientPagination.page+1) %>">→</a><% } %>
+    </div>
+  </nav>
+  <% } %>
   <% if (clientsViewMode === 'modern') { %>
     <% clients.forEach(client => {
       const toggleQuery = new URLSearchParams({ ...(q ? { q } : {}) }).toString();
-      const toggleBack = toggleQuery ? `/clients?${toggleQuery}` : '/clients';
+      const toggleBack = typeof directoryBack !== 'undefined' ? directoryBack : (toggleQuery ? `/clients?${toggleQuery}` : '/clients');
     %>
       <form id="modernToggleClient-<%= client.id %>" method="post" action="/clients/<%= client.id %>/toggle" class="inline-form js-long-action modern-client-toggle-form" data-global-floating-save="off">
         <input type="hidden" name="back" value="<%= toggleBack %>" />
@@ -1122,7 +1147,9 @@
 
 <% clients.forEach(client => {
   const clientEnabled = client.enabled !== 0;
-  const clientReturnPath = '/clients?' + new URLSearchParams({ ...(q ? { q } : {}), edit: String(client.id) }).toString();
+  const returnParams = new URLSearchParams(typeof directoryBack !== 'undefined' ? directoryBack.split('?')[1] : (q ? 'q=' + encodeURIComponent(q) : ''));
+  returnParams.set('edit', String(client.id));
+  const clientReturnPath = '/clients?' + returnParams.toString();
   const canShowSubInEditor = Boolean(showSubLinks);
 %>
   <div id="clientEditor-<%= client.id %>" class="modal hidden client-editor-shell" onclick="closeClientEditor(event, <%= client.id %>)">
@@ -1547,7 +1574,9 @@ async function refreshClientUsage() {
   clearTimeout(clientUsagePollTimer);
   const status = document.getElementById('clientUsageRefreshStatus');
   try {
-    const response = await fetch('/clients/usage.json', { cache: 'no-store', signal: AbortSignal.timeout(10000) });
+    const ids = [...new Set(getClientDirectoryEntries().map(entry => entry.dataset.clientIdEntry))].filter(Boolean);
+    const usageUrl = clientPaginationInfo?.size === 'all' ? '/clients/usage.json' : '/clients/usage.json?ids=' + encodeURIComponent(ids.join(','));
+    const response = await fetch(usageUrl, { cache: 'no-store', signal: AbortSignal.timeout(10000) });
     if (!response.ok) throw new Error('Ошибка обновления трафика');
     const data = await response.json();
     (data.clients || []).forEach(client => clientUsageById.set(String(client.id), client));
@@ -1560,6 +1589,7 @@ async function refreshClientUsage() {
   } finally { clientUsageRefreshPending = false; }
 }
 const clientDirectoryInitialQuery = new URLSearchParams(window.location.search).get('q') || '';
+const clientPaginationInfo = <%- JSON.stringify(clientPagination) %>;
 let clientDirectoryState = { query: clientDirectoryInitialQuery, nodeId: '', groupId: '', tagId: '', sort: 'newest' };
 const clientDirectorySortModes = ['newest','oldest','name-asc','name-desc','expiring','expired','disabled','active','online','traffic-desc','traffic-asc','limited','exhausted'];
 
@@ -1617,7 +1647,7 @@ function syncClientDirectorySearchInputs(source) {
     if (input !== source && input.value !== clientDirectoryState.query) input.value = clientDirectoryState.query;
   });
 }
-function updateClientDirectoryUrl() {
+function updateClientDirectoryUrl(options = {}) {
   if (!window.history || !window.history.replaceState) return;
   const url = new URL(window.location.href);
   if (clientDirectoryState.query) url.searchParams.set('q', clientDirectoryState.query); else url.searchParams.delete('q');
@@ -1626,10 +1656,31 @@ function updateClientDirectoryUrl() {
   if (clientDirectoryState.tagId) url.searchParams.set('tag_id', clientDirectoryState.tagId); else url.searchParams.delete('tag_id');
   if (clientDirectoryState.sort && clientDirectoryState.sort !== 'newest') url.searchParams.set('sort', clientDirectoryState.sort); else url.searchParams.delete('sort');
   url.searchParams.delete('edit');
+  if (clientPaginationInfo) {
+    url.searchParams.set('page', '1');
+    url.searchParams.set('page_size', String(clientPaginationInfo.size));
+    url.searchParams.delete('message'); url.searchParams.delete('error');
+    if (options.sourceInput && document.activeElement === options.sourceInput) {
+      try { sessionStorage.setItem('nexus.clients.searchFocus', JSON.stringify({query:clientDirectoryState.query,caret:options.sourceInput.selectionStart})); } catch (_) {}
+    }
+    window.location.assign(url.pathname + '?' + url.searchParams.toString());
+    return;
+  }
   window.history.replaceState({}, '', url.pathname + (url.searchParams.toString() ? '?' + url.searchParams.toString() : ''));
 }
 function applyClientDirectoryFilters(options = {}) {
   if (!clientDirectoryMode) return;
+  if (clientPaginationInfo) {
+    // The server filters/sorts the WHOLE directory before LIMIT/OFFSET. Never
+    // re-filter a page in the browser and accidentally hide valid search hits.
+    renderClientUsageAndOnline();
+    syncClientDirectorySearchInputs(options.sourceInput || null);
+    syncBulkNodeActionWithFilter(); updateBulkSelectionUi();
+    const empty = document.getElementById('clientDirectoryEmpty');
+    if (empty) empty.hidden = getClientDirectoryEntries().length !== 0;
+    if (options.updateUrl !== false) updateClientDirectoryUrl(options);
+    return;
+  }
   const query = normalizeClientDirectoryText(clientDirectoryState.query);
   const nodeId = String(clientDirectoryState.nodeId || '');
   const groupId = String(clientDirectoryState.groupId || '');
@@ -1697,16 +1748,25 @@ function setupClientDirectory() {
     const input = form.querySelector('input[name="q"]');
     if (!input) return;
     input.value = clientDirectoryState.query;
+    let searchTimer;
     input.addEventListener('input', () => {
       clientDirectoryState.query = input.value;
-      applyClientDirectoryFilters({ sourceInput: input });
+      clearTimeout(searchTimer);
+      if (clientPaginationInfo) searchTimer = setTimeout(() => applyClientDirectoryFilters({ sourceInput: input }), 600);
+      else applyClientDirectoryFilters({ sourceInput: input });
     });
     form.addEventListener('submit', event => {
       event.preventDefault();
+      clearTimeout(searchTimer);
       clientDirectoryState.query = input.value;
       applyClientDirectoryFilters({ sourceInput: input });
       input.focus({ preventScroll: true });
     });
+  });
+  document.getElementById('clientPageSize')?.addEventListener('change', event => {
+    const url = new URL(window.location.href);
+    url.searchParams.set('page_size', event.target.value); url.searchParams.set('page','1');
+    window.location.assign(url.pathname + '?' + url.searchParams.toString());
   });
   nodeSelect?.addEventListener('change', () => {
     clientDirectoryState.nodeId = nodeSelect.value;
@@ -1741,6 +1801,14 @@ function setupClientDirectory() {
     first?.focus({ preventScroll: true });
   });
   applyClientDirectoryFilters({ updateUrl: false });
+  try {
+    const focus = JSON.parse(sessionStorage.getItem('nexus.clients.searchFocus') || 'null');
+    sessionStorage.removeItem('nexus.clients.searchFocus');
+    if (focus?.query === clientDirectoryState.query) {
+      const input = [...document.querySelectorAll('form[data-client-directory-search] input[name="q"]')].find(item => item.offsetParent);
+      if (input) { input.focus({preventScroll:true}); input.setSelectionRange(focus.caret,focus.caret); }
+    }
+  } catch (_) {}
 }
 
 function showToast(text) {

@@ -10,15 +10,21 @@ test('real HTTP: scoped reporting, individual/bulk/all reset, CSRF and viewer pr
   const origin=http.createServer(async(req,res)=>{
     const url=new URL(req.url,'http://localhost'),route=url.pathname;
     let response;
+    if(route.startsWith('/sub/users/')) {
+      const u=users.find(u=>route.endsWith('/'+u.id));
+      res.setHeader('content-type','text/plain');res.end(physical.flatMap((uuid,i)=>u.activeInternalSquads.includes(squads[i]) ? [`vless://${u.vlessUuid}@${i?'finland':'germany'}.invalid:443?security=tls&type=xhttp#${i?'Finland':'Germany'}`] : []).join('\n'));return;
+    }
     if(route==='/api/nodes')response={nodes:physical.map(uuid=>({uuid}))};
     else if(route==='/api/system/metadata')response={version:'3.3.0'};
     else if(route==='/api/users' && req.method==='GET')response={users,total:2};
     else if(route==='/api/users' && req.method==='PATCH'){
-      let body='';for await(const chunk of req)body+=chunk;const p=JSON.parse(body);const u=users.find(u=>u.uuid===p.uuid||u.id===p.id);assert.ok(u);Object.assign(u,p);patches.push(p);response=u;
+      let body='';for await(const chunk of req)body+=chunk;const p=JSON.parse(body);
+      if (p.uuid || !Number.isSafeInteger(p.id) || p.username) {res.writeHead(400).end(JSON.stringify({error:'3.3.0 requires exactly id or username'}));return;}
+      const u=users.find(u=>u.id===p.id);assert.ok(u);Object.assign(u,p);patches.push(p);response=u;
     }else if(route.includes('/accessible-nodes')){const i=squads.findIndex(id=>route.includes(id));response={accessibleNodes:[{uuid:physical[i]}]};}
     else if(route.includes('/api/bandwidth-stats/users/')){
       const i=Number(route.split('/').pop())===17?0:1;response={categories:[today],series:physical.map((uuid,j)=>({uuid,data:[(j?(i?1:2):(i?20:30))*GB]}))};
-    }else if(route.includes('/actions/reset-traffic')){const u=users.find(u=>route.includes(u.uuid));u.userTraffic.usedTrafficBytes=0;resets.push(u.id);response=u;}
+    }else if(route.includes('/actions/reset-traffic')){const u=users.find(u=>route.includes(u.uuid)||route.split('/').includes(String(u.id)));u.userTraffic.usedTrafficBytes=0;resets.push(u.id);response=u;}
     else if(route.startsWith('/api/users/'))response=users.find(u=>route.endsWith('/'+u.uuid)||route.endsWith('/'+u.id));
     else{res.writeHead(404).end();return;}
     res.setHeader('content-type','application/json');res.end(JSON.stringify({response}));
@@ -29,10 +35,10 @@ test('real HTTP: scoped reporting, individual/bulk/all reset, CSRF and viewer pr
   t.after(async()=>{db?.close();child.kill();await new Promise(resolve=>{if(child.exitCode!==null)return resolve();child.once('exit',resolve);setTimeout(resolve,3000).unref();});await new Promise(resolve=>origin.close(resolve));if(path.resolve(dir).startsWith(path.resolve(os.tmpdir())+path.sep))fs.rmSync(dir,{recursive:true,force:true,maxRetries:10,retryDelay:200});});
   const port=await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error(log||'startup timeout')),20000);child.on('message',m=>{if(m.type==='ready'){clearTimeout(timer);resolve(m.port);}});child.once('exit',()=>{clearTimeout(timer);reject(new Error(log));});});
   const base='http://127.0.0.1:'+port;let cookie='',csrf='';
-  async function request(route,body,{raw=false}={}){
-    const headers={cookie};let encoded;
+  async function request(route,body,{raw=false,extraHeaders={}}={}){
+    const headers={cookie,...extraHeaders};let encoded;
     if(body){encoded=new URLSearchParams();for(const [key,value]of Object.entries(body))for(const item of Array.isArray(value)?value:[value])encoded.append(key,item);if(!raw){encoded.set('_csrf',csrf);encoded.set('_workspace','main');}headers['content-type']='application/x-www-form-urlencoded';}
-    const r=await fetch(base+route,{method:body?'POST':'GET',headers,body:encoded?.toString(),redirect:'manual'});if(r.headers.get('set-cookie'))cookie=r.headers.get('set-cookie').split(';')[0];const text=await r.text();csrf=text.match(/name="csrf-token" content="([^"]+)"/)?.[1]||csrf;return{status:r.status,text,location:r.headers.get('location')};
+    const r=await fetch(base+route,{method:body?'POST':'GET',headers,body:encoded?.toString(),redirect:'manual'});if(r.headers.get('set-cookie'))cookie=r.headers.get('set-cookie').split(';')[0];const text=await r.text();csrf=text.match(/name="csrf-token" content="([^"]+)"/)?.[1]||csrf;return{status:r.status,text,location:r.headers.get('location'),headers:r.headers};
   }
   assert.equal((await request('/node-traffic')).status,302);await request('/login');assert.equal((await request('/login',{username:'owner',password:'test-owner-password'})).status,302);
   assert.equal((await request('/node-traffic')).status,200,log);
@@ -42,8 +48,20 @@ test('real HTTP: scoped reporting, individual/bulk/all reset, CSRF and viewer pr
     const u=users[i];db.prepare('INSERT INTO clients(id,login,display_name,uuid,sub_slug) VALUES(?,?,?,?,?)').run(i+1,u.username,u.username,u.vlessUuid,'synthetic-'+i);
   }
   for(const c of [1,2])for(const n of [1,2])db.prepare('INSERT INTO client_nodes(client_id,node_id,remote_email,remote_uuid,traffic_gb) VALUES(?,?,?,?,?)').run(c,n,users[c-1].username,users[c-1].uuid,n===1&&c===1?5:50);
+  for(const [i,u] of users.entries()){
+    u.subscriptionUrl='http://127.0.0.1:'+origin.address().port+'/sub/users/'+u.id;
+    db.prepare('UPDATE client_nodes SET remote_sub_url=? WHERE client_id=?').run(u.subscriptionUrl,i+1);
+  }
+  db.exec("UPDATE nodes SET remnawave_link_filter=CASE WHEN id=1 THEN 'germany.invalid' ELSE 'finland.invalid' END");
   let r=await request('/node-traffic/data.json?refresh=1&from='+today+'&to='+today);assert.equal(r.status,200,r.text);let data=JSON.parse(r.text);assert.deepEqual(data.errors,[],log);assert.equal(data.nodes[0].clients.find(c=>c.id===1).used_bytes,30*GB);assert.equal(data.nodes[1].clients.find(c=>c.id===1).used_bytes,2*GB);assert.doesNotMatch(r.text,/synthetic-token|api_token_enc|password_enc/);
-  assert.deepEqual(users[0].activeInternalSquads,[squads[1]]);assert.equal(patches[0].trafficLimitBytes,0);
+  assert.deepEqual(users[0].activeInternalSquads,[squads[1]]);assert.equal(users[0].trafficLimitBytes,0);
+  // Exercise a real edit against a strict 3.3.0 API (exactly one numeric ID).
+  r=await request('/clients/1/edit',{login:'user1',traffic_gb:50,node_enabled_1:'1',node_enabled_2:'1',node_traffic_gb_1:5,node_traffic_gb_2:50});
+  assert.equal(r.status,302,r.text);assert.ok(!r.location.includes('error='),r.location);assert.equal(users[0].trafficLimitBytes,50*GB);
+  assert.equal(db.prepare('SELECT traffic_gb FROM client_nodes WHERE client_id=1 AND node_id=1').get().traffic_gb,5);
+  // Repair old native LIMITED in the SAME subscription request, retaining Finland.
+  db.exec('UPDATE clients SET traffic_gb=0 WHERE id=1');users[0].trafficLimitBytes=5*GB;users[0].status='LIMITED';
+  r=await request('/sub-plain/synthetic-0');assert.equal(r.status,200,r.text);assert.match(r.text,/finland\.invalid/);assert.doesNotMatch(r.text,/germany\.invalid/);assert.equal(users[0].status,'ACTIVE');assert.equal(users[0].trafficLimitBytes,0);
   assert.equal((await request('/clients/traffic/reset-selected',{client_ids:[1],reset_node_id:1},{raw:true})).status,403);
   r=await request('/clients/1/traffic/reset',{node_ids:[1]});assert.equal(r.status,302,r.text);assert.ok(!r.location.includes('error='),r.location);assert.equal(db.prepare('SELECT used_bytes FROM client_nodes WHERE client_id=1 AND node_id=1').get().used_bytes,0);assert.equal(db.prepare('SELECT used_bytes FROM client_nodes WHERE client_id=1 AND node_id=2').get().used_bytes,2*GB);assert.deepEqual(resets,[]);assert.ok(users[0].activeInternalSquads.includes(squads[0]));
   const outcome=text=>new URL(text.match(/location.replace\("([^"]+)"/)[1],'http://localhost').searchParams.get('message');
@@ -52,6 +70,45 @@ test('real HTTP: scoped reporting, individual/bulk/all reset, CSRF and viewer pr
   data=JSON.parse((await request('/node-traffic/data.json?from='+today+'&to='+today)).text);assert.equal(data.nodes[0].totalBytes,50*GB);assert.equal(data.nodes[1].totalBytes,3*GB);
   assert.equal((await request('/node-traffic/data.json?from=2026-02-30')).status,400);
   assert.equal((await request('/clients')).status,200,log);
+  // Real HTTP directory: only page clients and their modals are serialized.
+  db.transaction(()=>{for(let id=3;id<=243;id++)db.prepare('INSERT INTO clients(id,login,display_name,uuid,sub_slug) VALUES(?,?,?,?,?)').run(id,'paged-user-'+id,'Paged user '+id,'test-uuid-'+id,'paged-sub-'+id);})();
+  const renderedIds=text=>[...new Set([...text.matchAll(/data-client-id-entry="(\d+)"/g)].map(m=>Number(m[1])))];
+  r=await request('/clients');assert.equal(r.status,200,r.text);assert.equal(renderedIds(r.text).length,20);assert.deepEqual(renderedIds(r.text).slice(0,2),[243,242]);assert.match(r.text,/Показано 1–20 из 243/);assert.doesNotMatch(r.text,/id="clientEditor-1"/);
+  r=await request('/clients?page=2');assert.equal(renderedIds(r.text)[0],223);assert.equal(renderedIds(r.text).length,20);
+  for(const size of [50,100,150,200]){r=await request('/clients?page_size='+size);assert.equal(renderedIds(r.text).length,size);}
+  r=await request('/clients?page_size=all');assert.equal(renderedIds(r.text).length,243);
+  r=await request('/clients?q=paged-user-3');assert.ok(renderedIds(r.text).includes(3));
+  r=await request('/clients/usage.json?ids=1,2');assert.deepEqual(JSON.parse(r.text).clients.map(c=>c.id),[1,2]);
+  r=await request('/settings');assert.equal(r.status,200,r.text);assert.match(r.text,/subscription_device_refresh_mode/);
+  // Rejected unacknowledged full-reset mode must not change any setting.
+  r=await request('/settings/happ-control',{subscription_device_refresh_mode:'reset-on-refresh'});assert.match(r.location,/error=/);assert.equal(db.prepare("SELECT value FROM app_settings WHERE key='subscription_device_refresh_mode'").get().value,'manual');
+  db.exec('UPDATE clients SET device_limit=2 WHERE id=1');
+  const appRequest=hwid=>request('/sub-plain/synthetic-0',undefined,{extraHeaders:{'x-hwid':hwid,'user-agent':'Happ/Test'}});
+  await appRequest('DeviceSynthetic01');await appRequest('DeviceSynthetic02');
+  r=await appRequest('DeviceSynthetic03');assert.equal(r.headers.get('x-hwid-limit'),'true');
+  db.prepare("UPDATE app_settings SET value='replace-stale' WHERE key='subscription_device_refresh_mode'").run();
+  db.exec("UPDATE subscription_devices SET last_seen_at='2020-01-01' WHERE client_id=1 AND id=(SELECT MIN(id) FROM subscription_devices WHERE client_id=1)");
+  r=await appRequest('DeviceSynthetic03');assert.notEqual(r.headers.get('x-hwid-limit'),'true');assert.equal(db.prepare('SELECT COUNT(*) AS n FROM subscription_devices WHERE client_id=1').get().n,2);
+  db.prepare("UPDATE app_settings SET value='reset-on-refresh' WHERE key='subscription_device_refresh_mode'").run();
+  await appRequest('DeviceSynthetic04');assert.equal(db.prepare('SELECT COUNT(*) AS n FROM subscription_devices WHERE client_id=1').get().n,1);
+  if(process.env.NEXUS_BROWSER_QA==='1'){
+    const {chromium}=require('C:/Users/user/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
+    const browser=await chromium.launch({executablePath:'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',headless:true});
+    try{
+      const context=await browser.newContext();await context.addCookies([{name:cookie.split('=')[0],value:cookie.slice(cookie.indexOf('=')+1),url:base}]);
+      const page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
+      for(const width of [1440,390]){
+        await page.setViewportSize({width,height:900});await page.goto(base+'/clients');await page.waitForSelector('#clientPageSize');
+        assert.equal(await page.locator('#clientPageSize').inputValue(),'20');assert.equal(await page.locator('[data-client-entry]:visible').count(),20);
+        await page.selectOption('#clientPageSize','50');await page.waitForURL(/page_size=50/);await page.waitForLoadState('domcontentloaded');assert.equal(await page.locator('[data-client-entry]:visible').count(),50);
+        await page.locator('.client-pagination a[rel=next]').click();await page.waitForURL(/page=2/);await page.waitForLoadState('domcontentloaded');assert.equal(await page.locator('[data-client-entry]:visible').count(),50);
+        await page.locator('.client-pagination').screenshot({path:path.join(__dirname,'../../work/ui-qa/clients-pagination-'+width+'.png')});
+        assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2));
+        await page.selectOption('#clientNodeFilter','1');await page.waitForURL(/node_id=1/);await page.waitForLoadState('domcontentloaded');assert.equal(await page.locator('[data-client-entry]:visible').count(),2);
+      }
+      assert.deepEqual(errors,[]);
+    }finally{await browser.close();}
+  }
   r=await request('/access/users',{username:'viewer',password:'viewer-test-password',workspace_id:'main',permissions:['clients.read']});assert.equal(r.status,302,r.text);cookie='';csrf='';await request('/login');await request('/login',{username:'viewer',password:'viewer-test-password'});
   assert.equal((await request('/node-traffic')).status,200);assert.equal((await request('/node-traffic/data.json')).status,200);assert.equal((await request('/clients/traffic/reset-selected',{client_ids:[1],reset_node_id:1})).status,403);assert.equal((await request('/clients/1/traffic/reset',{node_ids:[1]})).status,403);
 });

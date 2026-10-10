@@ -10,7 +10,7 @@ function extract(name) {
   assert.ok(start >= 0);
   return source.slice(start, source.indexOf('\n}', start) + 2);
 }
-function harness({ user = { userTraffic: { usedTrafficBytes: 32 * 1024 ** 3 } }, scoped = 2*1024**3, fail = false, live = true } = {}) {
+function harness({ user = { userTraffic: { usedTrafficBytes: 32 * 1024 ** 3 } }, scoped = 2*1024**3, fail = false, live = true, repair = false } = {}) {
   const writes = []; let reads = 0;
   let stored={id:7,client_id:1,node_id:24,used_bytes:Math.floor(.3*1024**3)};
   const ctx = vm.createContext({
@@ -18,12 +18,13 @@ function harness({ user = { userTraffic: { usedTrafficBytes: 32 * 1024 ** 3 } },
     isClientExpired:()=>false,subscriptionRequestBudget:()=>()=>8000,
     subscriptionLineCache:new Map(),isTransientSubscriptionError:()=>true,
     normalizeRemoteEpochMillis:n=>Number(n)||0,
-    nodeTraffic:{syncMapping:async()=>{stored.used_bytes=scoped;}},
+    nodeTraffic:{syncMapping:async()=>{stored.used_bytes=scoped;if(repair){user.status='ACTIVE';user.trafficLimitBytes=0;}}},
     FETCH_TIMEOUT_MS: 12000, SUBSCRIPTION_STATS_TIMEOUT_MS: 3500, NODE_TYPE_REMNAWAVE: 'remnawave',
     clampByteNumber: n => Math.floor(Math.max(0, Number(n) || 0)), toTotalGbBytes: n => n * 1024 ** 3,
     normalizeEpochMillis: n => Number(n) || 0,
     shouldRefreshSubscriptionUsage: () => live,
     getRemnawaveUserByUuid: async () => { reads++; if (fail) throw new Error('offline'); return user; },
+    getRemnawaveUserRemoteId: user => user?.id || user?.uuid || 'remote-user',
     normalizeRemnawaveSubscriptionUrl: (node, url) => url,
     db: { prepare: () => ({ run: (...args) => writes.push(args),get:()=>stored }) },
     getNodePublicName: () => 'Анти-глушилка',
@@ -41,13 +42,19 @@ function harness({ user = { userTraffic: { usedTrafficBytes: 32 * 1024 ** 3 } },
 }
 test('saved subscription URL still refreshes current usage and the SAME response name', async () => {
   const h = harness(); const entries = await h.run();
-  assert.equal(h.reads, 1); assert.equal(entries[0].subscriptionInfo.usedBytes, 2 * 1024 ** 3);
+  assert.equal(h.reads, 2); assert.equal(entries[0].subscriptionInfo.usedBytes, 2 * 1024 ** 3);
   assert.match(entries[0].nodeName, /2\/50$/); assert.equal(h.writes.length, 1);
   assert.equal(h.row.upload_bytes, 0); assert.equal(h.writes[0][1], 2 * 1024 ** 3);
 });
 test('native shared reset cannot reset an independent node allowance', async () => {
   const h = harness({ user: { userTraffic: { usedTrafficBytes: 0 } } });
   assert.equal((await h.run())[0].subscriptionInfo.usedBytes, 2*1024**3);
+});
+test('LIMITED is checked after quota repair: healthy node remains in the SAME subscription refresh',async()=>{
+  const h=harness({user:{status:'LIMITED',trafficLimitBytes:5*1024**3,userTraffic:{usedTrafficBytes:32*1024**3}},repair:true});
+  assert.equal((await h.run()).length,1);assert.equal(h.reads,2);
+  const blocked=harness({user:{status:'LIMITED',trafficLimitBytes:5*1024**3,userTraffic:{usedTrafficBytes:32*1024**3}}});
+  assert.equal((await blocked.run()).length,0);
 });
 test('API failure retains cached usage and still returns working links', async () => {
   const h = harness({ fail: true }); const entries = await h.run();
@@ -60,7 +67,7 @@ test('missing remote user retains cached usage but not stale remote links', asyn
 test('live usage switch is respected; missing URL is still resolved', async () => {
   const h = harness({ live: false }); await h.run(); assert.equal(h.reads, 0);
   const missing = harness({ live: false, user: { subscriptionUrl: 'https://example.invalid/new', usedTrafficBytes: 42 } });
-  missing.row.remote_sub_url = ''; await missing.run(); assert.equal(missing.reads, 1); assert.equal(missing.row.used_bytes, 2*1024**3);
+  missing.row.remote_sub_url = ''; await missing.run(); assert.equal(missing.reads, 2); assert.equal(missing.row.used_bytes, 2*1024**3);
 });
 test('lifetime counter is not mistaken for quota-period usage', async () => {
   const h = harness({ user: { lifetimeUsedTrafficBytes: 900 * 1024 ** 3 } });
