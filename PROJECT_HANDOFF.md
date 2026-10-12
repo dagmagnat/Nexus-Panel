@@ -1,6 +1,6 @@
 # Nexus Panel — журнал продолжения разработки
 
-Последнее обновление: **2026-10-08**
+Последнее обновление: **2026-10-12**
 
 Этот файл нужно читать первым при продолжении работы из другой учётной записи или нового чата. После каждой доработки обновляйте разделы «Последнее изменение», «Изменённые файлы» и «Проверки».
 
@@ -11,6 +11,21 @@
 - Папка `node_modules` в исходный архив не входит и в итоговые архивы изменений попадать не должна.
 
 ## Последнее изменение
+
+2026-10-12 — Nexus 2.7.10, оптимизация входа/страниц (локально, не production):
+
+- Главная отдаёт лёгкий HTML без общего/нодового/top/live пересчёта истории, удалённого online даже при `?online=1`, записи и чистки traffic snapshots. Трафик/top/modal лимитов читаются защищёнными AJAX; скрытые тяжёлые разделы загружаются при открытии. Лимиты в разделе top — пагинация 20/50/100/200/Все, поиск по всему загруженному набору.
+- Асинхронный bcrypt login с повторной проверкой актуального пользователя и lockout после await. Исправлено dereference CSRF после синхронного уничтожения сессии в logout. Старые хэши, RBAC и CSRF сохранены. Git execFile асинхронный/параллельный, TTL 60 секунд.
+- `lib_performance.js`: ограниченный process-local read cache, TTL от завершения, single-flight, очистка ошибок; cooperativeMap/yieldToRequests. Top/live отчёты уступают event loop между небольшими группами. Online TTL 5 секунд, без клиентского HTTP-кэша; это не кэш решений по доступу/квотам.
+- Remnawave: bootstrap/force/reset/суточная сверка до 370 дней, остальные чтения — последние три календарных дня; пропущенный интервал сохраняется, late старых дней подбирается суточной сверкой. Миграция `node_usage_state.full_synced_at`; значение сохраняется только после успешной записи series. Ledger/reset_base/неподмена userTraffic не менялись. Старый API-кэш очищается раз в 30 секунд, не накапливается по датам.
+- Каталог Remnawave за один sweep дедуплицируется по URL и hash реальных заголовков авторизации, включая Caddy key. Два разных доступа не объединяются. Локальные XUI-записи по 25 в транзакции, Remna update+snapshot и общий snapshot в транзакциях. Нет await внутри write transaction. Старые retention сроки, индекс created_at_ms и часовая фоновая чистка вместо чистки при переходе.
+- `Server-Timing: nexus;dur` HTML и приватно-безопасные slow_request логи управления. Порог NEXUS_SLOW_REQUEST_MS=1000 (минимум 100), без query/body/password/subslug.
+- Версии package/lock/VERSION/update/README=2.7.10. Новая инструкция docs/UPDATE_2.7.10.md, накопительный manifest + helper для 2.7.7/2.7.8/2.7.9. На сервер Nexus, не на ноды. GitHub не публиковался.
+- Локальный HTTP benchmark одинаковых synthetic 1000 клиентов/120000 снимков: исходная 2.7.9 из предыдущего ZIP — dashboard?online=1 955/899/914 мс, HTML 947696 bytes; оптимизация обычно 18–33 мс, HTML 226367 bytes. Top около 420 мс, /settings во время top 64–75 мс. Это не измерения VPS. Baseline сохранён в work/baseline-2.7.9-performance.
+- Новый `tests/performance*.test.js`: HTTP большой базы/параллельного онлайн, cache/yield, incremental/reset/API failure, top counter resets; node-traffic HTTP дополнен directory-dedup assertion. Edge 1440/390 успешно: вкладки, отложенные отчёты, лимиты 20→50/страница2/поиск, no overflow/no JS errors. Картинки work/ui-qa/performance-dashboard-*.png, не в ZIP.
+- Целевые проверки 65/65 и набор новых HTTP/installer/UI assertions 36 (32 pass/4 platform skip), JS/EJS 20. Полный исторический прогон после актуализации четырёх assertions под оптимизацию: 215, 189 pass, 10 fail, 16 skip. Те же известные категории предыдущего этапа: Python PATH (3), VM subscriptionRequestBudget, node-inbound-sync assert, CSS stylesheet assert, UX grace-node, device grace-node, autoselect/node quota old assert, workspace RBAC worker-profile. Полный набор не зелёный. Последующая очистка API-кэша отдельно перепроверяется целевыми тестами.
+
+Изменённые файлы этапа: app.js, lib_performance.js (новый), lib_node_traffic.js, lib_access.js, views/dashboard.ejs, public/js/dashboard-quotas.js, tests/performance.test.js (новый), tests/performance-http.test.js (новый), tests/node-traffic-http.test.js, tests/usage-directory-2.7.3.test.js, tests/spectrum-clear-2.1.test.js, tests/installer-source-migration.test.js, package.json/package-lock.json/VERSION/update.json/README.md, docs/UPDATE_2.7.10.md (новый), PROJECT_HANDOFF.md/PATCH_FILES.txt/apply-node-traffic-update.sh. Пользователь попросил исправление оптимизации; боевой сервер не доступен, не устанавливалось. Последующий этап — проверить реальные timings после применения.
 
 2026-10-08 — Nexus 2.7.9, текущий этап:
 

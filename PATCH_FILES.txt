@@ -2,6 +2,7 @@ app.js
 lib_node_traffic.js
 lib_client_directory.js
 lib_device_refresh.js
+lib_performance.js
 lib_access.js
 lib_client_traffic_reset.js
 package.json
@@ -18,10 +19,13 @@ views/nodes.ejs
 views/node_edit.ejs
 views/node_traffic.ejs
 public/js/node-traffic.js
+public/js/dashboard-quotas.js
 public/css/node-traffic.css
 public/css/client-pagination.css
 tests/node-traffic.test.js
 tests/client-directory.test.js
+tests/performance.test.js
+tests/performance-http.test.js
 tests/device-refresh.test.js
 tests/client-activation.test.js
 tests/node-traffic-http.test.js
@@ -33,3 +37,4 @@ tests/spectrum-clear-2.1.test.js
 tests/installer-source-migration.test.js
 docs/UPDATE_2.7.8.md
 docs/UPDATE_2.7.9.md
+docs/UPDATE_2.7.10.md

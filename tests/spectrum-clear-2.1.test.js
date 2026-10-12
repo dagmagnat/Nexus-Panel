@@ -54,9 +54,10 @@ test('routing layout cannot overlap its summary on desktop or mobile', () => {
   assert.match(css, /\.routing-page-grid > \.routing-editor-card[\s\S]*position: static !important/);
 });
 
-test('online aggregation is concurrent and never cached', () => {
+test('online aggregation is concurrent; shared server snapshot is never browser cached', () => {
   const app = read('app.js');
-  assert.match(app, /async function getOnlineClientsForDashboard\(\)[\s\S]*runWithConcurrency\(nodes, 4/);
+  assert.match(app, /async function collectOnlineClientsForDashboard\(\)[\s\S]*runWithConcurrency\(nodes, 4/);
+  assert.match(app, /cachedOnlineClients = createAsyncReadCache\(\{ ttlMs: 5000/);
   assert.match(app, /app\.get\('\/dashboard\/online-clients\.json'[\s\S]{0,300}Cache-Control', 'no-store'/);
 });
 

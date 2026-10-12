@@ -1,6 +1,6 @@
 (() => {
   'use strict';
-  let clients = [], pending = false, timer, consecutiveErrors = 0;
+  let clients = [], pending = false, timer, consecutiveErrors = 0, page = 1, visible = false;
   const el = id => document.getElementById(id);
   function render() {
     const query = el('quotaSearch').value.trim().toLocaleLowerCase('ru');
@@ -12,8 +12,13 @@
       .sort((a, b) => el('quotaSort').value === 'name' ? a.client.name.localeCompare(b.client.name, 'ru', { numeric: true })
         : (el('quotaSort').value === 'asc' ? 1 : -1) * (a.summary.usedBytes - b.summary.usedBytes) || a.client.id - b.client.id);
     const list = el('quotaList');
+    const size = el('quotaPageSize')?.value === 'all' ? Math.max(1, rows.length) : Number(el('quotaPageSize')?.value || 20);
+    const pages = Math.max(1, Math.ceil(rows.length / size)); page = Math.min(page, pages);
+    if (el('quotaPageInfo')) el('quotaPageInfo').textContent = `${page} / ${pages} · клиентов: ${rows.length}`;
+    if (el('quotaPrev')) el('quotaPrev').disabled = page <= 1;
+    if (el('quotaNext')) el('quotaNext').disabled = page >= pages;
     list.replaceChildren();
-    for (const { client, summary } of rows) {
+    for (const { client, summary } of rows.slice((page - 1) * size, page * size)) {
       const link = document.createElement('a');
       link.className = 'quota-client-row' + (summary.exhausted ? ' is-limit-exhausted' : '');
       link.href = `/clients?edit=${encodeURIComponent(client.id)}`;
@@ -24,7 +29,7 @@
     if (!rows.length) list.textContent = 'Нет клиентов по выбранным условиям.';
   }
   async function refresh() {
-    if (pending) return;
+    if (pending || !visible || document.hidden) return;
     pending = true; clearTimeout(timer);
     try {
       const response = await fetch('/clients/usage.json', { cache: 'no-store', signal: AbortSignal.timeout(10000) });
@@ -51,9 +56,17 @@
     }
     finally { pending = false; }
   }
-  ['quotaNode', 'quotaFilter', 'quotaSort'].forEach(id => el(id).addEventListener('change', render));
-  el('quotaSearch').addEventListener('input', render);
+  ['quotaNode', 'quotaFilter', 'quotaSort', 'quotaPageSize'].forEach(id => el(id)?.addEventListener('change', () => { page = 1; render(); }));
+  el('quotaSearch').addEventListener('input', () => { page = 1; render(); });
+  el('quotaPrev')?.addEventListener('click', () => { page = Math.max(1, page - 1); render(); });
+  el('quotaNext')?.addEventListener('click', () => { page++; render(); });
   el('quotaRefresh').addEventListener('click', refresh);
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
-  refresh();
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && visible) refresh(); });
+  const card = el('quotaList')?.closest('section');
+  if (card && 'IntersectionObserver' in window) {
+    new IntersectionObserver(entries => {
+      visible = entries.some(entry => entry.isIntersecting);
+      if (visible) refresh(); else clearTimeout(timer);
+    }).observe(card);
+  } else { visible = true; refresh(); }
 })();

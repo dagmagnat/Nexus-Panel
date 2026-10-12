@@ -6,7 +6,7 @@ test('real HTTP: scoped reporting, individual/bulk/all reset, CSRF and viewer pr
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'nexus-node-traffic-')),secret='node-traffic-http-secret-'.repeat(3),GB=1024**3,today=new Date().toISOString().slice(0,10);
   const physical=['10000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000002'],squads=['30000000-0000-4000-8000-000000000001','30000000-0000-4000-8000-000000000002'];
   const users=[17,18].map((id,i)=>({id,uuid:`20000000-0000-4000-8000-0000000000${id}`,vlessUuid:`40000000-0000-4000-8000-00000000000${i+1}`,username:'user'+(i+1),activeInternalSquads:[...squads],status:'ACTIVE',trafficLimitBytes:0,expireAt:'2099-01-01T00:00:00Z',userTraffic:{usedTrafficBytes:(i?21:32)*GB}}));
-  const resets=[],patches=[];
+  const resets=[],patches=[]; let userListReads=0;
   const origin=http.createServer(async(req,res)=>{
     const url=new URL(req.url,'http://localhost'),route=url.pathname;
     let response;
@@ -16,7 +16,7 @@ test('real HTTP: scoped reporting, individual/bulk/all reset, CSRF and viewer pr
     }
     if(route==='/api/nodes')response={nodes:physical.map(uuid=>({uuid}))};
     else if(route==='/api/system/metadata')response={version:'3.3.0'};
-    else if(route==='/api/users' && req.method==='GET')response={users,total:2};
+    else if(route==='/api/users' && req.method==='GET'){userListReads++;response={users,total:2};}
     else if(route==='/api/users' && req.method==='PATCH'){
       let body='';for await(const chunk of req)body+=chunk;const p=JSON.parse(body);
       if (p.uuid || !Number.isSafeInteger(p.id) || p.username) {res.writeHead(400).end(JSON.stringify({error:'3.3.0 requires exactly id or username'}));return;}
@@ -54,6 +54,7 @@ test('real HTTP: scoped reporting, individual/bulk/all reset, CSRF and viewer pr
   }
   db.exec("UPDATE nodes SET remnawave_link_filter=CASE WHEN id=1 THEN 'germany.invalid' ELSE 'finland.invalid' END");
   let r=await request('/node-traffic/data.json?refresh=1&from='+today+'&to='+today);assert.equal(r.status,200,r.text);let data=JSON.parse(r.text);assert.deepEqual(data.errors,[],log);assert.equal(data.nodes[0].clients.find(c=>c.id===1).used_bytes,30*GB);assert.equal(data.nodes[1].clients.find(c=>c.id===1).used_bytes,2*GB);assert.doesNotMatch(r.text,/synthetic-token|api_token_enc|password_enc/);
+  assert.equal(userListReads,1,'two physical nodes share one remote user-directory read per sweep');
   assert.deepEqual(users[0].activeInternalSquads,[squads[1]]);assert.equal(users[0].trafficLimitBytes,0);
   // Exercise a real edit against a strict 3.3.0 API (exactly one numeric ID).
   r=await request('/clients/1/edit',{login:'user1',traffic_gb:50,node_enabled_1:'1',node_enabled_2:'1',node_traffic_gb_1:5,node_traffic_gb_2:50});

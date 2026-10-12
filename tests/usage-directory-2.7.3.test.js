@@ -85,20 +85,20 @@ test('tiered autoselect prefers its primary node, then leastPing pool, and reser
 });
 test('usage refresh is single flight across clients and dashboard requests', async () => {
   let calls = 0, finish;
-  const ctx = vm.createContext({ collectAllClientUsageFromNodes: () => { calls++; return new Promise(resolve => { finish = resolve; }); } });
+  const ctx = vm.createContext({ recordTrafficSnapshot: () => {}, collectAllClientUsageFromNodes: () => { calls++; return new Promise(resolve => { finish = resolve; }); } });
   vm.runInContext('let usageRefreshPending = null, usageRefreshFinishedAt = 0, usageRefreshErrors = [];\n' + extract('refreshAllClientUsageFromNodes'), ctx);
   const a = ctx.refreshAllClientUsageFromNodes(), b = ctx.refreshAllClientUsageFromNodes();
   assert.equal(a, b); assert.equal(calls, 1); finish({ errors: [] }); await a;
   const c = ctx.refreshAllClientUsageFromNodes(); assert.equal(calls, 2); finish({ errors: [] }); await c;
 });
 test('online lookup is constrained to node mappings and no longer uses display-name identity', () => {
-  const fn = extract('getOnlineClientsForDashboard');
+  const fn = extract('collectOnlineClientsForDashboard');
   assert.match(fn, /cn\.node_id = \?/); assert.doesNotMatch(fn, /LOWER\(c\.display_name\)/);
 });
 
 test('bulk refresh persists Remnawave reset and retains 3x-ui counters without fresh stats', async () => {
-  const { DatabaseSync } = require('node:sqlite');
-  const db = new DatabaseSync(':memory:');
+  const Database = require('better-sqlite3');
+  const db = new Database(':memory:');
   try {
     db.exec(`CREATE TABLE nodes (id INTEGER, node_type TEXT, name TEXT);
       CREATE TABLE clients (id INTEGER, uuid TEXT, login TEXT);
@@ -106,7 +106,9 @@ test('bulk refresh persists Remnawave reset and retains 3x-ui counters without f
       INSERT INTO nodes VALUES (1, 'remnawave', 'Remna'), (2, '3xui', 'XUI');
       INSERT INTO clients VALUES (1, 'vless', 'user');
       INSERT INTO client_nodes VALUES (1,1,1,'remote','user','https://example.invalid',999,0,999),(2,1,2,'vless','user','',777,0,777);`);
-    const ctx = vm.createContext({ db, nodeOrderSql: () => 'id', isRemnawaveNode: n => n.node_type === 'remnawave', isH1CloudNode: () => false,
+    const ctx = vm.createContext({ db, createHash: require('node:crypto').createHash, normalizeRemnawaveBaseUrl: u => u,
+      getRemnawaveApiHeaders: () => ({Authorization:'Bearer synthetic'}), yieldToRequests: async () => {},
+      nodeOrderSql: () => 'id', isRemnawaveNode: n => n.node_type === 'remnawave', isH1CloudNode: () => false,
       nodeTraffic:{syncMapping:async(n,u,m)=>db.prepare('UPDATE client_nodes SET used_bytes=42 WHERE id=?').run(m.id),markError:()=>{}},
       listRemnawaveUsers: async () => [{ uuid: 'remote', username: 'user', userTraffic: { usedTrafficBytes: 0 } }],
       getRemnawaveUserRemoteId: u => u.uuid, normalizeRemnawaveSubscriptionUrl: (n, url) => url,

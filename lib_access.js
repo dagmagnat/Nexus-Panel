@@ -21,7 +21,7 @@ function permissionFor(method, url) {
   if (read && /^\/node-traffic(?:\/data\.json)?$/.test(url)) return 'clients.read';
   if (!read && url === '/clients/traffic/reset-selected') return 'clients.bulk';
   if (read && ['/', '/dashboard', '/more'].includes(url)) return 'clients.read';
-  if (read && /^\/dashboard\/(?:node-status|node-usage|panel-check|traffic-series|live-client-traffic|live-client-traffic-probe|online-clients|top-client-usage)\.json$/.test(url)) return 'clients.read';
+  if (read && /^\/dashboard\/(?:node-status|node-usage|panel-check|traffic-series|traffic-summary|limits|live-client-traffic|live-client-traffic-probe|online-clients|top-client-usage)\.json$/.test(url)) return 'clients.read';
   if (/^\/preferences(?:\/(?:export|inspect|import|defaults|options|name))?$/.test(url)) return 'preferences.manage';
   if (read && /^\/preferences\/backups\/preferences-before-\d+-[a-f0-9]{8}\.nxpreferences$/.test(url)) return 'preferences.manage';
   if (/^\/operations\/[a-f0-9-]+\/cancel$/.test(url)) return 'clients.write';

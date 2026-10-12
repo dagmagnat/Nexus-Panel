@@ -49,6 +49,7 @@ function initNodeTrafficSchema(db) {
     CREATE TABLE IF NOT EXISTS node_usage_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
   `);
   if (!db.prepare('PRAGMA table_info(node_usage_state)').all().some(c=>c.name==='api_version')) db.exec("ALTER TABLE node_usage_state ADD COLUMN api_version TEXT NOT NULL DEFAULT ''");
+  if (!db.prepare('PRAGMA table_info(node_usage_state)').all().some(c=>c.name==='full_synced_at')) db.exec('ALTER TABLE node_usage_state ADD COLUMN full_synced_at INTEGER NOT NULL DEFAULT 0');
   // Archive the known-invalid panel-wide values once, not as historical usage.
   db.transaction(() => {
     if (!db.prepare("SELECT 1 FROM node_usage_meta WHERE key='legacy-snapshots-archived'").get()) {
@@ -73,9 +74,10 @@ function initNodeTrafficSchema(db) {
   })();
 }
 
-function createNodeTraffic({ db, get, patch, baseUrl, getUser, getIdentity, title = n => n.name }) {
+function createNodeTraffic({ db, get, patch, baseUrl, getUser, getIdentity, title = n => n.name, now = Date.now }) {
   initNodeTrafficSchema(db);
   const cache = new Map(), locks = new Map();
+  let lastCachePruneAt = 0;
   const total = (clientId, nodeId) => Number(db.prepare('SELECT COALESCE(SUM(bytes),0) AS n FROM node_usage_daily WHERE client_id=? AND node_id=?').get(clientId,nodeId).n);
   const state = (c, n) => db.prepare('SELECT * FROM node_usage_state WHERE client_id=? AND node_id=?').get(c,n);
   function ensure(c,n) { db.prepare('INSERT OR IGNORE INTO node_usage_state(client_id,node_id) VALUES(?,?)').run(c,n); }
@@ -86,11 +88,17 @@ function createNodeTraffic({ db, get, patch, baseUrl, getUser, getIdentity, titl
     try { return await next; } finally { if (locks.get(key) === next) locks.delete(key); }
   }
   async function cached(key, fn, force = false) {
+    const clock = now();
+    if (clock - lastCachePruneAt >= 30000) {
+      for (const [name, entry] of cache) if (!entry.pending && entry.until <= clock) cache.delete(name);
+      lastCachePruneAt = clock;
+    }
     const old = cache.get(key);
-    if (old?.pending || (!force && old?.until > Date.now())) return old.promise;
-    const entry = { pending:true, until:Date.now()+30000 };
+    if (old?.pending || (!force && old?.until > clock)) return old.promise;
+    const entry = { pending:true, until:0 };
     entry.promise = Promise.resolve().then(fn); cache.set(key,entry);
-    try { return await entry.promise; } catch(e) { cache.delete(key); throw e; } finally { entry.pending=false; }
+    try { const result = await entry.promise; entry.until=now()+30000; return result; }
+    catch(e) { cache.delete(key); throw e; } finally { entry.pending=false; }
   }
   async function scope(node) {
     const base = baseUrl(node.panel_url);
@@ -108,17 +116,25 @@ function createNodeTraffic({ db, get, patch, baseUrl, getUser, getIdentity, titl
     if (!node.remnawave_node_uuid) db.prepare("UPDATE nodes SET remnawave_node_uuid=? WHERE id=? AND COALESCE(remnawave_node_uuid,'')=''").run(uuid,node.id);
     return `${base}|${uuid.toLowerCase()}`;
   }
-  async function read(node, user, force = false) {
+  async function read(node, user, force = false, map = null) {
     const key = await scope(node), uuid = key.split('|').pop();
     const apiId = String(user?.id || '');
     if (!/^[1-9]\d*$/.test(apiId)) throw new Error('Remnawave не вернул числовой ID пользователя для node-scoped статистики.');
-    const today = day(Date.now()), start = day(Date.now()-369*DAY), base = baseUrl(node.panel_url);
+    const clock = now(), today = day(clock), base = baseUrl(node.panel_url);
+    const saved = map ? state(map.client_id, map.node_id) : null;
+    const expectedKey = key+'|user:'+apiId;
+    // Bootstrap and explicit resets still fetch the full 370-day window.
+    // Normal polls revisit recent days, including the entire gap after a
+    // stopped collector; full daily reconciliation catches older late stats.
+    const full = force || !saved?.full_synced_at || saved.scope_key !== expectedKey || clock - saved.full_synced_at >= DAY;
+    const recentStart = Math.min(clock - 2*DAY, saved?.updated_at || clock);
+    const start = day(full ? clock - 369*DAY : Math.max(clock - 369*DAY, recentStart));
     const nodesData = await cached(`${base}|nodes`, () => get(node,'/api/nodes'));
     const root = nodesData.response ?? nodesData;
     const physicalNodes = Array.isArray(root) ? root : root?.nodes;
     if (!Array.isArray(physicalNodes)) throw new Error('API не вернул список физических нод.');
     if (!physicalNodes.some(n=>String(n.uuid).toLowerCase()===uuid)) throw new Error('Выбранная физическая нода отсутствует в Remnawave.');
-    const response = await cached(`${base}|${apiId}|${today}|series`, async () => {
+    const response = await cached(`${base}|${apiId}|${start}|${today}|series`, async () => {
       const metadata = await cached(`${base}|metadata`, async () => {
         try { const d = await get(node,'/api/system/metadata'); return String((d.response ?? d)?.version || 'авто'); }
         catch (_) { return 'авто · проверка возможностей API'; }
@@ -126,7 +142,7 @@ function createNodeTraffic({ db, get, patch, baseUrl, getUser, getIdentity, titl
       const qs = new URLSearchParams({start,end:today,topNodesLimit:String(Math.max(physicalNodes.length,1))});
       return { data:await get(node,`/api/bandwidth-stats/users/${apiId}?${qs}`), version:metadata };
     }, force);
-    return { key:key+'|user:'+apiId, rows:parseSeries(response.data,uuid), version:response.version };
+    return { key:expectedKey, rows:parseSeries(response.data,uuid), version:response.version, full, syncedAt:clock };
   }
   function save(map, result) {
     db.transaction(() => {
@@ -136,7 +152,7 @@ function createNodeTraffic({ db, get, patch, baseUrl, getUser, getIdentity, titl
       const upsert = db.prepare(`INSERT INTO node_usage_daily(client_id,node_id,day,bytes,source) VALUES(?,?,?,?,?)
         ON CONFLICT(client_id,node_id,day) DO UPDATE SET bytes=excluded.bytes WHERE excluded.bytes>node_usage_daily.bytes`);
       for (const r of result.rows) upsert.run(map.client_id,map.node_id,r.day,r.bytes,'remnawave-node-series');
-      db.prepare(`UPDATE node_usage_state SET scope_key=?,updated_at=?,api_version=?,error='' WHERE client_id=? AND node_id=?`).run(result.key,Date.now(),result.version,map.client_id,map.node_id);
+      db.prepare(`UPDATE node_usage_state SET scope_key=?,updated_at=?,api_version=?,error='',full_synced_at=CASE WHEN ? THEN ? ELSE full_synced_at END WHERE client_id=? AND node_id=?`).run(result.key,result.syncedAt,result.version,result.full ? 1 : 0,result.syncedAt,map.client_id,map.node_id);
       const used = Math.max(0,total(map.client_id,map.node_id)-old.reset_base);
       db.prepare('UPDATE client_nodes SET upload_bytes=0,download_bytes=?,used_bytes=? WHERE id=?').run(used,used,map.id);
     })();
@@ -202,7 +218,7 @@ function createNodeTraffic({ db, get, patch, baseUrl, getUser, getIdentity, titl
         // A stale native 5 GB allowance must not block every node. Repair it
         // even if node statistics/squad isolation are temporarily unavailable.
         user = await syncAccount(node,user,map);
-        const freshMap = save(map,await read(node,user,force));
+        const freshMap = save(map,await read(node,user,force,map));
         const remoteUser = await reconcile(node,user,freshMap);
         return {...freshMap,remoteUser};
       } catch(e) {
@@ -217,7 +233,7 @@ function createNodeTraffic({ db, get, patch, baseUrl, getUser, getIdentity, titl
     node = {...node,id:map.node_id};
     return locked(`${baseUrl(node.panel_url)}|${getIdentity(user)}`, async () => {
       user = await syncAccount(node,user,map);
-      save(map,await read(node,user,true));
+      save(map,await read(node,user,true,map));
       if (resetNative) await resetNative();
       db.transaction(() => {
         db.prepare('UPDATE node_usage_state SET reset_base=? WHERE client_id=? AND node_id=?').run(total(map.client_id,map.node_id),map.client_id,map.node_id);

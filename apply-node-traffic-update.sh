@@ -16,7 +16,7 @@ fi
 [[ -f "$deploy_dir/app.js" && -f "$deploy_dir/package.json" && -f "$deploy_dir/.env" ]] || { echo 'Не найден установленный Nexus с .env.' >&2; exit 1; }
 grep -q '"name"[[:space:]]*:[[:space:]]*"nexus-panel"' "$deploy_dir/package.json" || { echo 'Это не Nexus Panel.' >&2; exit 1; }
 grep -q 'createAccess' "$deploy_dir/lib_access.js" || { echo 'Этот патч требует рабочую базу Nexus 2.7.7 с поддержкой пространств.' >&2; exit 1; }
-[[ -f "$deploy_dir/docker-compose.yml" ]] || { echo 'Для systemd используйте ручную инструкцию docs/UPDATE_2.7.9.md.' >&2; exit 1; }
+[[ -f "$deploy_dir/docker-compose.yml" ]] || { echo 'Для systemd используйте ручную инструкцию docs/UPDATE_2.7.10.md.' >&2; exit 1; }
 docker compose version >/dev/null
 compose=(docker compose --project-directory "$deploy_dir" -f "$deploy_dir/docker-compose.yml")
 "${compose[@]}" config --services | grep -qx aggregator || { echo 'Сервис aggregator не найден. Используйте ручную инструкцию.' >&2; exit 1; }
@@ -33,6 +33,7 @@ if command -v node >/dev/null 2>&1; then
   node --check "$patch_root/lib_node_traffic.js"
   node --check "$patch_root/lib_client_directory.js"
   node --check "$patch_root/lib_device_refresh.js"
+  node --check "$patch_root/lib_performance.js"
 fi
 echo "Обновление Nexus: $deploy_dir"
 echo 'Остановится только сервис aggregator. Исходники, .env и базы будут сохранены в полный backup.'
@@ -48,7 +49,7 @@ stopped=0
 failed() {
   local code=$?
   echo "Ошибка обновления (код $code). Backup: $backup_file" >&2
-  if [[ "$stopped" == 1 ]]; then echo "Nexus остановлен либо не запустился. Проверьте ${deploy_dir}/docker-compose.yml; инструкция отката: docs/UPDATE_2.7.9.md." >&2; fi
+  if [[ "$stopped" == 1 ]]; then echo "Nexus остановлен либо не запустился. Проверьте ${deploy_dir}/docker-compose.yml; инструкция отката: docs/UPDATE_2.7.10.md." >&2; fi
   exit "$code"
 }
 trap failed ERR
@@ -63,5 +64,5 @@ while IFS= read -r relative || [[ -n "$relative" ]]; do
 done < "$patch_root/PATCH_FILES.txt"
 "${compose[@]}" up -d --build aggregator
 stopped=0
-echo "Исходники Nexus 2.7.9 установлены. Полный backup: $backup_file"
+echo "Исходники Nexus 2.7.10 установлены. Полный backup: $backup_file"
 echo 'Проверьте журналы aggregator и страницу Трафик → Обновить с узлов. Сам запуск контейнера не подтверждает успешный сбор API.'

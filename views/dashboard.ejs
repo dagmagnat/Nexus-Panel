@@ -197,7 +197,8 @@
       </form>
     </div>
 
-    <% if (trafficReport) { %>
+    <p class="hint" id="trafficSummaryStatus" role="status">Статистика загрузится при открытии раздела.</p>
+    <% if (trafficReport && !trafficReport.deferred) { %>
       <div class="traffic-selected-card">
         <small><%= trafficReport.selected.label %> · <%= trafficReport.periodLabel %></small>
         <strong><%= trafficReport.selected.text %></strong>
@@ -220,6 +221,20 @@
       <% if (!trafficReport.hasBaseline && trafficReport.period !== 'all') { %>
         <div class="alert ok traffic-note">Для выбранного периода ещё нет снимка на начало периода, поэтому расчёт начинается с первого доступного снимка: <%= dateTimeShort(trafficReport.firstSnapshotAt) %>. Дальше точность будет расти автоматически по мере накопления снимков.</div>
       <% } %>
+    <% } else { %>
+      <div class="traffic-selected-card"><small data-traffic-summary="selected.label">—</small><strong data-traffic-summary="selected.text">—</strong></div>
+      <div class="traffic-grid">
+        <div class="traffic-metric"><span>Скачано клиентами</span><strong data-traffic-summary="downloadText">—</strong></div>
+        <div class="traffic-metric"><span>Загружено клиентами</span><strong data-traffic-summary="uploadText">—</strong></div>
+        <div class="traffic-metric"><span>Всего</span><strong data-traffic-summary="totalText">—</strong></div>
+        <div class="traffic-metric"><span>Снимки</span><strong data-traffic-summary="snapshotCount">—</strong><small data-traffic-summary="latestSnapshotAt">—</small></div>
+      </div>
+      <div class="traffic-grid traffic-grid-secondary">
+        <div class="traffic-metric"><span>Текущий счётчик down</span><strong data-traffic-summary="currentDownloadText">—</strong></div>
+        <div class="traffic-metric"><span>Текущий счётчик всего</span><strong data-traffic-summary="currentTotalText">—</strong></div>
+        <div class="traffic-metric"><span>Текущий счётчик up</span><strong data-traffic-summary="currentUploadText">—</strong></div>
+        <div class="traffic-metric"><span>Последний снимок</span><strong data-traffic-summary="latestSnapshotAt">—</strong></div>
+      </div>
     <% } %>
   </section>
 
@@ -274,8 +289,12 @@
     </div>
     <p id="quotaStatus" class="hint" role="status"></p>
     <div id="quotaList" class="top-usage-list"></div>
+    <div class="top-usage-toolbar">
+      <label>На странице<select id="quotaPageSize"><option value="20">20</option><option value="50">50</option><option value="100">100</option><option value="200">200</option><option value="all">Все</option></select></label>
+      <button type="button" class="btn-secondary" id="quotaPrev">Назад</button><span id="quotaPageInfo" class="hint"></span><button type="button" class="btn-secondary" id="quotaNext">Далее</button>
+    </div>
     <script src="/js/client-usage.js?v=273"></script>
-    <script src="/js/dashboard-quotas.js?v=273" defer></script>
+    <script src="/js/dashboard-quotas.js?v=2710" defer></script>
   </section>
 
   <section class="card span-12 tab-panel is-active" data-tab-panel="expiry">
@@ -365,7 +384,10 @@
       <input id="limitClientSearch" type="text" placeholder="Поиск по клиенту, ID или узлу" autocomplete="off" />
       <button type="button" class="dashboard-search-clear" id="limitClientSearchClear" aria-label="Очистить поиск">×</button>
     </div>
-    <% if (!limitedClients || !limitedClients.length) { %>
+    <% if (limitedClients === null) { %>
+      <p class="hint" id="limitsLoadStatus" role="status">Счётчики загрузятся при открытии окна.</p>
+      <div class="limit-dashboard-list dashboard-scroll-list" id="limitDashboardList"></div>
+    <% } else if (!limitedClients || !limitedClients.length) { %>
       <p class="muted">Лимитов ГБ на узлах пока нет.</p>
     <% } else { %>
       <div class="limit-dashboard-list dashboard-scroll-list" id="limitDashboardList">
@@ -412,6 +434,7 @@ function syncDashboardModalState() {
 }
 function openDashboardModal(id) {
   document.getElementById(id)?.classList.remove('hidden');
+  if (id === 'limitsModal') loadDashboardLimits();
   syncDashboardModalState();
 }
 function hideDashboardModal(id) {
@@ -419,6 +442,34 @@ function hideDashboardModal(id) {
   syncDashboardModalState();
 }
 function closeDashboardModal(e, id) { if (e.target.id === id) hideDashboardModal(id); }
+let limitsLoading = false;
+async function loadDashboardLimits() {
+  if (limitsLoading) return;
+  const list = document.getElementById('limitDashboardList');
+  const status = document.getElementById('limitsLoadStatus');
+  if (!list || !status) return;
+  limitsLoading = true;
+  status.textContent = 'Загружаю сохранённые лимиты…';
+  try {
+    const response = await fetch('/dashboard/limits.json', { headers: { Accept: 'application/json' }, cache: 'no-store' });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || 'Не удалось загрузить лимиты');
+    list.replaceChildren();
+    for (const row of data.rows) {
+      const item = document.createElement('div'); item.className = 'limit-dashboard-row';
+      item.dataset.limitSearchItem = ''; item.dataset.searchText = [row.clientId, row.login, row.comment, row.nodeName].join(' ');
+      const identity = document.createElement('div'), name = document.createElement('strong'), note = document.createElement('small');
+      name.textContent = row.login; note.textContent = `${row.comment || '—'} · ${row.nodeName}`; identity.append(name, note);
+      const usage = document.createElement('div'); usage.className = 'limit-dashboard-values';
+      const amount = document.createElement('span'), remaining = document.createElement('strong');
+      amount.textContent = `${row.usedText} / ${row.limitGb} ГБ`; remaining.textContent = `Осталось: ${row.remainingText}`;
+      usage.append(amount, remaining); item.append(identity, usage); list.append(item);
+    }
+    status.textContent = data.rows.length ? `Лимитов: ${data.rows.length}` : 'Лимитов ГБ на узлах пока нет.';
+    document.getElementById('limitClientSearch')?.dispatchEvent(new Event('input'));
+  } catch (error) { status.textContent = 'Ошибка: ' + error.message; }
+  finally { limitsLoading = false; }
+}
 async function runPanelCheck(skipOpen) {
   if (!skipOpen) openDashboardModal('panelCheckModal');
   const box = document.getElementById('panelCheckResult');
@@ -484,6 +535,12 @@ function renderTopUsageReport(report) {
   rows.forEach(row => topUsageRowsById.set(String(row.clientId), row));
   const visible = rows.filter(row => !query || [row.clientId, row.login, row.displayName, row.comment].join(' ').toLocaleLowerCase('ru-RU').includes(query));
   if (count) count.textContent = String(visible.length);
+  if (topUsageReport.deferred) {
+    if (count) count.textContent = '—';
+    if (status) status.textContent = 'История загрузится при открытии этого раздела.';
+    if (list) list.innerHTML = '<div class="empty-state">Загрузка сохранённой истории…</div>';
+    return;
+  }
   if (status) {
     const historyNote = topUsageReport.hasCompleteHistory === false ? ' · история за весь период ещё накапливается' : '';
     const errors = Array.isArray(topUsageReport.errors) && topUsageReport.errors.length ? ` · ошибок узлов: ${topUsageReport.errors.length}` : '';
@@ -532,7 +589,7 @@ async function refreshTopUsageReport(forceRefresh = true) {
   const status = document.getElementById('topUsageStatus');
   try {
     if (button) button.disabled = true;
-    if (status) status.textContent = 'Обновляю счётчики клиентов на узлах…';
+    if (status) status.textContent = forceRefresh ? 'Обновляю счётчики клиентов на узлах…' : 'Загружаю сохранённую историю…';
     const response = await fetch(`/dashboard/top-client-usage.json?period=${encodeURIComponent(period)}&refresh=${forceRefresh ? '1' : '0'}`, { headers: { Accept: 'application/json' }, cache: 'no-store' });
     const data = await response.json();
     if (!response.ok || !data.ok) throw new Error(data.error || 'Не удалось получить расход клиентов');
@@ -1063,6 +1120,48 @@ document.addEventListener('DOMContentLoaded', () => {
   topUsagePeriod?.addEventListener('change', () => refreshTopUsageReport(false));
   document.getElementById('topUsageSearch')?.addEventListener('input', () => renderTopUsageReport(topUsageReport));
   renderTopUsageReport(topUsageReport);
+  const summaryStatus = document.getElementById('trafficSummaryStatus');
+  if (summaryStatus) {
+    const loadSummary = async () => {
+      summaryStatus.textContent = 'Загружаю сохранённые счётчики…';
+      try {
+        const query = new URLSearchParams({ period: <%- JSON.stringify(trafficPeriod) %>, metric: <%- JSON.stringify(trafficMetric) %> });
+        const response = await fetch('/dashboard/traffic-summary.json?' + query, { headers: { Accept: 'application/json' }, cache: 'no-store' });
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || 'Не удалось получить статистику');
+        document.querySelectorAll('[data-traffic-summary]').forEach(element => {
+          const key = element.dataset.trafficSummary;
+          const value = key.split('.').reduce((object, name) => object?.[name], data);
+          element.textContent = key === 'latestSnapshotAt' ? (value ? new Date(value).toLocaleString('ru-RU') : 'нет данных') : String(value ?? '—');
+        });
+        summaryStatus.textContent = data.hasBaseline || data.period === 'all' ? 'По сохранённым снимкам. Новый опрос — кнопкой «Обновить снимок».' : 'Нет снимка на начало периода; показан расход по доступной истории.';
+      } catch (error) {
+        summaryStatus.textContent = 'Ошибка: ' + error.message;
+      }
+    };
+    if ('IntersectionObserver' in window) {
+      const observer = new IntersectionObserver(entries => {
+        if (entries.some(entry => entry.isIntersecting)) { observer.disconnect(); loadSummary(); }
+      });
+      observer.observe(summaryStatus.closest('section'));
+    } else window.setTimeout(loadSummary, 1000);
+  }
+  // Do not calculate every client's history just to show the login landing
+  // page. Load it only when the tab becomes visible, without a remote poll.
+  const topUsageCard = document.querySelector('.top-usage-card');
+  if (topUsageReport.deferred && topUsageCard) {
+    if ('IntersectionObserver' in window) {
+      const observer = new IntersectionObserver(entries => {
+        if (entries.some(entry => entry.isIntersecting)) {
+          observer.disconnect();
+          refreshTopUsageReport(false);
+        }
+      });
+      observer.observe(topUsageCard);
+    } else {
+      window.setTimeout(() => refreshTopUsageReport(false), 1000);
+    }
+  }
   const onlineAuto = document.getElementById('onlineAutoRefresh');
   const onlineInterval = document.getElementById('onlineRefreshInterval');
   onlineAuto?.addEventListener('change', configureOnlineClientsAutoRefresh);

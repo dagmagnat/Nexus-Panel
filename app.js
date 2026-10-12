@@ -14,7 +14,8 @@ const { HttpsProxyAgent } = require('https-proxy-agent');
 const { SocksProxyAgent } = require('socks-proxy-agent');
 const fs = require('fs');
 const path = require('path');
-const { execFileSync, spawn } = require('child_process');
+const { execFile, spawn } = require('child_process');
+const { performance } = require('node:perf_hooks');
 const os = require('os');
 const net = require('net');
 const tls = require('tls');
@@ -27,6 +28,7 @@ const { buildClientTrafficResetRequest } = require('./lib_client_traffic_reset')
 const { createNodeTraffic, dateRange: nodeTrafficDateRange } = require('./lib_node_traffic');
 const { initClientDirectory, queryClientDirectory } = require('./lib_client_directory');
 const { deviceRefreshPolicy, applyDeviceRefreshPolicy } = require('./lib_device_refresh');
+const { createAsyncReadCache, cooperativeMap, yieldToRequests } = require('./lib_performance');
 const { supportAccess, parseSupportDays, initSupportSchema } = require('./lib_expired_support');
 const { initNexusNodeControlSchema, attachNexusNodeControl } = require('./lib_nexus_node_control');
 
@@ -303,6 +305,18 @@ const CONTROL_DIR = path.resolve(process.env.NEXUS_CONTROL_DIR || DATA_DIR);
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const app = express();
+const slowRequestMs = Math.max(100, Number(process.env.NEXUS_SLOW_REQUEST_MS) || 1000);
+app.use((req, res, next) => {
+  req.nexusStartedAt = performance.now();
+  res.on('finish', () => {
+    const elapsed = performance.now() - req.nexusStartedAt;
+    // Never log subscription slugs, query strings, bodies, IPs or credentials.
+    if (elapsed >= slowRequestMs && /^\/(?:login|dashboard|clients|nodes|settings|routing|diagnostics|more|node-traffic)(?:\/|$)/.test(req.path)) {
+      console.warn(JSON.stringify({ event: 'nexus_slow_request', route: req.route?.path || req.path.split('/').slice(0, 2).join('/'), method: req.method, status: res.statusCode, ms: Math.round(elapsed) }));
+    }
+  });
+  next();
+});
 if (WORKSPACE_ID !== 'main') {
   if (!/^[a-f0-9]{24}$/.test(WORKSPACE_ID) || !process.env.NEXUS_WORKSPACE_TOKEN) throw new Error('Invalid workspace runtime');
   app.use((req, res, next) => {
@@ -345,6 +359,7 @@ function backfillSchemaDefaults() {
       CREATE INDEX IF NOT EXISTS idx_traffic_snapshots_time ON traffic_snapshots(created_at_ms DESC);
       CREATE INDEX IF NOT EXISTS idx_node_traffic_time ON node_traffic_snapshots(node_id, created_at_ms DESC);
       CREATE INDEX IF NOT EXISTS idx_client_traffic_lookup ON client_traffic_snapshots(client_id, node_id, created_at_ms DESC);
+      CREATE INDEX IF NOT EXISTS idx_client_traffic_retention ON client_traffic_snapshots(created_at_ms);
       CREATE INDEX IF NOT EXISTS idx_clients_expiry ON clients(enabled, expiry_time);
       CREATE INDEX IF NOT EXISTS idx_clients_group ON clients(group_id, enabled);
     `);
@@ -984,8 +999,12 @@ app.use(session({
 }));
 
 function ensureCsrfToken(req, callback) {
-  if (!req.session.csrfToken) {
-    req.session.csrfToken = randomBytes(32).toString('hex');
+  const needsSave = !req.session.csrfToken;
+  if (needsSave) req.session.csrfToken = randomBytes(32).toString('hex');
+  // next() may synchronously destroy the session (logout). Keep the token
+  // before invoking downstream middleware instead of dereferencing afterward.
+  const token = req.session.csrfToken;
+  if (needsSave) {
     // Explicitly save session to ensure CSRF token is persisted
     req.session.save((err) => {
       if (err) console.error('Failed to save CSRF token to session:', err);
@@ -994,7 +1013,7 @@ function ensureCsrfToken(req, callback) {
   } else if (callback) {
     callback();
   }
-  return req.session.csrfToken;
+  return token;
 }
 
 app.use((req, res, next) => {
@@ -2117,6 +2136,7 @@ function render(res, view, params = {}) {
   if (data.error) data.error = humanizeOperationalError(data.error);
 
   res.render(view, data, (err, html) => {
+    if (!res.headersSent && Number.isFinite(res.req.nexusStartedAt)) res.setHeader('Server-Timing', `nexus;dur=${(performance.now() - res.req.nexusStartedAt).toFixed(1)}`);
     if (!err) return res.send(html);
 
     console.error(`Render failed for view "${view}":`, err);
@@ -11426,7 +11446,7 @@ function sleepMs(ms) {
   return new Promise(resolve => setTimeout(resolve, Math.max(0, Number(ms || 0))));
 }
 
-function buildLiveClientTrafficReport(limit = 20, minMbps = 0.1) {
+async function buildLiveClientTrafficReport(limit = 20, minMbps = 0.1) {
   const maxRows = Math.min(Math.max(Number(limit || 20), 1), 500);
   const threshold = Math.max(0, Number(minMbps || 0));
   const rows = db.prepare(`
@@ -11466,7 +11486,10 @@ function buildLiveClientTrafficReport(limit = 20, minMbps = 0.1) {
   const nodeRows = [];
   const byClient = new Map();
 
+  await yieldToRequests();
+  let processed = 0;
   for (const row of rows) {
+    if (++processed % 25 === 0) await yieldToRequests();
     const snaps = snapshotsStmt.all(row.client_id, row.node_id).reverse();
     const speed = snaps.length >= 2 ? calculateTrafficSpeedFromSnapshots(snaps[0], snaps[1]) : null;
     const downloadMbps = speed ? speed.downloadMbps : 0;
@@ -11763,7 +11786,7 @@ function summarizeClientCounterSeries(rows) {
   };
 }
 
-function buildTopClientPeriodUsageReport(period = 'week', limit = 500) {
+async function buildTopClientPeriodUsageReport(period = 'week', limit = 500) {
   const safePeriod = getTopClientUsagePeriod(period);
   const meta = TOP_CLIENT_USAGE_PERIODS[safePeriod];
   const nowMs = Date.now();
@@ -11813,7 +11836,7 @@ function buildTopClientPeriodUsageReport(period = 'week', limit = 500) {
     ORDER BY created_at_ms ASC
   `);
 
-  const resultRows = clients.map(client => {
+  const resultRows = (await cooperativeMap(clients, client => {
     let complete = true;
     let observedFromMs = 0;
     const nodes = (mappingsByClient.get(Number(client.id)) || []).map(mapping => {
@@ -11880,7 +11903,7 @@ function buildTopClientPeriodUsageReport(period = 'week', limit = 500) {
       complete,
       observedFromMs
     };
-  }).sort((a, b) => b.usedBytes - a.usedBytes || b.downloadBytes - a.downloadBytes || a.clientId - b.clientId)
+  })).sort((a, b) => b.usedBytes - a.usedBytes || b.downloadBytes - a.downloadBytes || a.clientId - b.clientId)
     .slice(0, maxRows);
 
   return {
@@ -12288,6 +12311,17 @@ function getCurrentNodeTrafficTotals() {
   });
 }
 
+let lastTrafficRetentionAt = 0;
+function pruneTrafficHistory(nowMs = Date.now()) {
+  if (lastTrafficRetentionAt && nowMs - lastTrafficRetentionAt < 3600000) return;
+  db.transaction(() => {
+    db.prepare('DELETE FROM traffic_snapshots WHERE created_at_ms < ?').run(nowMs - 370 * 86400000);
+    db.prepare('DELETE FROM node_traffic_snapshots WHERE created_at_ms < ?').run(nowMs - 370 * 86400000);
+    db.prepare('DELETE FROM client_traffic_snapshots WHERE created_at_ms < ?').run(nowMs - 30 * 86400000);
+  })();
+  lastTrafficRetentionAt = nowMs;
+}
+
 function recordTrafficSnapshot(force = false, sourceKind = 'passive') {
   const nowMs = Date.now();
   const safeSourceKind = String(sourceKind || 'passive').trim() || 'passive';
@@ -12300,18 +12334,15 @@ function recordTrafficSnapshot(force = false, sourceKind = 'passive') {
     clampByteNumber(last.used_bytes) !== totals.usedBytes;
   const shouldInsert = force || changed || !last || nowMs - Number(last.created_at_ms || 0) > 15 * 60 * 1000;
   if (shouldInsert) {
+    db.transaction(() => {
     db.prepare('INSERT INTO traffic_snapshots (upload_bytes, download_bytes, used_bytes, created_at_ms, source_kind) VALUES (?, ?, ?, ?, ?)')
       .run(totals.uploadBytes, totals.downloadBytes, totals.usedBytes, nowMs, safeSourceKind);
     const insertNodeSnapshot = db.prepare('INSERT INTO node_traffic_snapshots (node_id, upload_bytes, download_bytes, used_bytes, created_at_ms, source_kind) VALUES (?, ?, ?, ?, ?, ?)');
     for (const node of nodeTotals) {
       insertNodeSnapshot.run(node.nodeId, node.uploadBytes, node.downloadBytes, node.usedBytes, nowMs, safeSourceKind);
     }
+    })();
   }
-  try {
-    db.prepare('DELETE FROM traffic_snapshots WHERE created_at_ms < ?').run(nowMs - 370 * 24 * 60 * 60 * 1000);
-    db.prepare('DELETE FROM node_traffic_snapshots WHERE created_at_ms < ?').run(nowMs - 370 * 24 * 60 * 60 * 1000);
-    db.prepare('DELETE FROM client_traffic_snapshots WHERE created_at_ms < ?').run(nowMs - 30 * 24 * 60 * 60 * 1000);
-  } catch (_) {}
   return { totals, nodeTotals, inserted: shouldInsert };
 }
 
@@ -12321,6 +12352,7 @@ let usageRefreshErrors = [];
 function refreshAllClientUsageFromNodes() {
   if (usageRefreshPending) return usageRefreshPending;
   usageRefreshPending = collectAllClientUsageFromNodes().then(result => {
+    recordTrafficSnapshot(false, 'background');
     usageRefreshFinishedAt = Date.now();
     usageRefreshErrors = result.errors || [];
     return result;
@@ -12384,6 +12416,7 @@ function buildClientUsageDirectory(clientIds = null) {
 async function collectAllClientUsageFromNodes() {
   const nodes = db.prepare(`SELECT * FROM nodes ORDER BY ${nodeOrderSql()}`).all();
   const errors = [];
+  const userLists = new Map();
   const results = await runWithConcurrency(nodes, 4, async node => {
     const rows = db.prepare(`
       SELECT cn.*, c.uuid AS client_uuid, c.login AS client_login
@@ -12396,7 +12429,11 @@ async function collectAllClientUsageFromNodes() {
 
     if (isRemnawaveNode(node)) {
       try {
-        const users = await listRemnawaveUsers(node, 15000);
+        // Several Nexus nodes can point to one Remnawave panel. Fetch its
+        // directory only once per sweep, with separate credential scopes.
+        const panelKey = createHash('sha256').update(JSON.stringify([normalizeRemnawaveBaseUrl(node.panel_url), getRemnawaveApiHeaders(node)])).digest('hex');
+        if (!userLists.has(panelKey)) userLists.set(panelKey, listRemnawaveUsers(node, 15000));
+        const users = await userLists.get(panelKey);
         const byUuid = new Map(users.map(user => [getRemnawaveUserRemoteId(user).toLowerCase(), user]).filter(([key]) => key));
         const byVless = new Map(users.map(user => [String(user?.vlessUuid || '').toLowerCase(), user]).filter(([key]) => key));
         const byUsername = new Map(users.map(user => [String(user?.username || '').toLowerCase(), user]).filter(([key]) => key));
@@ -12414,15 +12451,17 @@ async function collectAllClientUsageFromNodes() {
           catch (usageError) { errors.push(`${getNodePublicName(node)}: ${usageError.message}`); }
           const latest = db.prepare('SELECT * FROM client_nodes WHERE id = ?').get(row.id);
           const usedBytes = clampByteNumber(latest?.used_bytes || 0);
-          update.run(
-            String(user?.username || row.remote_email || row.client_login || ''),
-            getRemnawaveUserRemoteId(user) || String(row.remote_uuid || ''),
-            normalizeRemnawaveSubscriptionUrl(node, user?.subscriptionUrl || row.remote_sub_url || ''),
-            usedBytes,
-            usedBytes,
-            row.id
-          );
-          recordClientTrafficSnapshot(row.client_id, node.id, { uploadBytes: 0, downloadBytes: usedBytes, usedBytes });
+          db.transaction(() => {
+            update.run(
+              String(user?.username || row.remote_email || row.client_login || ''),
+              getRemnawaveUserRemoteId(user) || String(row.remote_uuid || ''),
+              normalizeRemnawaveSubscriptionUrl(node, user?.subscriptionUrl || row.remote_sub_url || ''),
+              usedBytes,
+              usedBytes,
+              row.id
+            );
+            recordClientTrafficSnapshot(row.client_id, node.id, { uploadBytes: 0, downloadBytes: usedBytes, usedBytes });
+          })();
         }
       } catch (err) {
         for (const row of rows) nodeTraffic.markError(row.client_id,node.id,String(err.message || err));
@@ -12454,7 +12493,11 @@ async function collectAllClientUsageFromNodes() {
 
     if (!inbound && !trafficList.length) return;
     const nowMs = Date.now();
-    for (const row of rows) {
+    // Small local-only transactions amortize disk syncs. Never hold a SQLite
+    // write transaction while awaiting a remote API.
+    for (let offset = 0; offset < rows.length; offset += 25) {
+    db.transaction(() => {
+    for (const row of rows.slice(offset, offset + 25)) {
       const inboundStat = inbound && findClientStat(inbound, row.remote_uuid || row.client_uuid, row.remote_email || row.client_login);
       const inboundUsage = inboundStat && hasTrafficStatFields(inboundStat) ? extractTrafficInfoFromClientTraffic(inboundStat) : null;
 
@@ -12472,6 +12515,9 @@ async function collectAllClientUsageFromNodes() {
       updateClientNodeUsage(row.id, usage);
       nodeTraffic.recordCounter(row.client_id, node.id, usage);
       recordClientTrafficSnapshot(row.client_id, node.id, usage, nowMs);
+    }
+    })();
+    await yieldToRequests();
     }
   });
   results.forEach((result, index) => {
@@ -12799,7 +12845,12 @@ async function getClientRealtimeConnectivity(client, mappings = []) {
   return { connected: false, connectedNodeId: 0, lastOnlineAt: String(client?.last_online_at || '').trim(), errors };
 }
 
-async function getOnlineClientsForDashboard() {
+const cachedOnlineClients = createAsyncReadCache({ ttlMs: 5000, maxEntries: 1 });
+function getOnlineClientsForDashboard() {
+  return cachedOnlineClients('online', collectOnlineClientsForDashboard);
+}
+
+async function collectOnlineClientsForDashboard() {
   const nodes = db.prepare(`SELECT * FROM nodes WHERE enabled = 1 ORDER BY ${nodeOrderSql()}`).all();
   const items = new Map();
   const errors = [];
@@ -13316,9 +13367,9 @@ app.get('/login', requireAllowedAdminIp, (req, res) => {
   render(res, 'login', { error: req.query.message || null });
 });
 
-app.post('/login', requireAllowedAdminIp, (req, res) => {
+app.post('/login', requireAllowedAdminIp, async (req, res, next) => {
   const username = String(req.body.username || '');
-  const failure = getLoginFailure(req, username);
+  let failure = getLoginFailure(req, username);
 
   if (failure.lockedUntil && Date.now() < failure.lockedUntil) {
     const minutes = Math.ceil((failure.lockedUntil - Date.now()) / 60000);
@@ -13327,7 +13378,15 @@ app.post('/login', requireAllowedAdminIp, (req, res) => {
 
   const user = access.control.prepare('SELECT * FROM users WHERE username = ? COLLATE NOCASE').get(username);
 
-  if (!user || user.disabled || !bcrypt.compareSync(req.body.password || '', user.password_hash)) {
+  let passwordMatches = false;
+  try {
+    passwordMatches = !!user && !user.disabled && await bcrypt.compare(String(req.body.password || ''), user.password_hash);
+  } catch (err) { return next(err); }
+  // Concurrent password checks must not lose attempts or bypass a new lock.
+  failure = getLoginFailure(req, username);
+  if (failure.lockedUntil && Date.now() < failure.lockedUntil) return render(res, 'login', { error: 'Слишком много попыток входа. Повтори позже.' });
+  const currentUser = user && access.user(user.id);
+  if (!passwordMatches || !currentUser || currentUser.disabled || currentUser.password_hash !== user.password_hash) {
     const count = Number(failure.count || 0) + 1;
     const lockedUntil = count >= LOGIN_MAX_ATTEMPTS ? Date.now() + LOGIN_LOCK_MINUTES * 60 * 1000 : 0;
     loginFailures.set(failure.key, { count, lockedUntil });
@@ -13337,7 +13396,7 @@ app.post('/login', requireAllowedAdminIp, (req, res) => {
   loginFailures.delete(failure.key);
   req.session.regenerate((err) => {
     if (err) return render(res, 'login', { error: 'Не удалось создать сессию' });
-    access.authenticate(req, user);
+    access.authenticate(req, currentUser);
     req.session.loginIp = getClientIp(req);
     req.session.lastActivity = Date.now();
     req.session.cookie.maxAge = 30 * 24 * 60 * 60 * 1000;
@@ -13969,6 +14028,24 @@ app.get('/dashboard/traffic-series.json', requireAuth, (req, res) => {
   }
 });
 
+app.get('/dashboard/traffic-summary.json', requireAuth, (req, res) => {
+  try {
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ ok: true, ...buildTrafficReport(req.query.period, req.query.metric) });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: String(err.message || err) });
+  }
+});
+
+app.get('/dashboard/limits.json', requireAuth, (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ ok: true, rows: getDashboardLimitRows().map(row => ({
+    clientId: row.client_id, login: row.login, comment: row.comment,
+    nodeName: getNodeDisplayName(row), usedText: formatTrafficBytes(row.used_bytes),
+    limitGb: row.traffic_gb, remainingText: formatTrafficBytes(row.remaining_bytes)
+  })) });
+});
+
 app.get('/dashboard/node-usage.json', requireAuth, (req, res) => {
   // Per-node traffic over an arbitrary inclusive calendar-date range.
   // Values are derived from stored client-counter snapshots, not CDN billing.
@@ -14079,7 +14156,7 @@ app.get('/dashboard/live-client-traffic.json', requireAuth, async (req, res) => 
       refreshResult = await refreshAllClientUsageFromNodes();
       recordTrafficSnapshot(true, 'live');
     }
-    const report = buildLiveClientTrafficReport(limit, minMbps);
+    const report = await buildLiveClientTrafficReport(limit, minMbps);
     res.json({ ok: true, ...report, errors: refreshResult.errors || [] });
   } catch (err) {
     res.status(500).json({ ok: false, error: String(err.message || err) });
@@ -14103,7 +14180,7 @@ app.get('/dashboard/live-client-traffic-probe.json', requireAuth, async (req, re
     const after = await refreshAllClientUsageFromNodes();
     recordTrafficSnapshot(true, 'live_probe_end');
 
-    const report = buildLiveClientTrafficReport(limit, minMbps);
+    const report = await buildLiveClientTrafficReport(limit, minMbps);
     const errors = [...(before.errors || []), ...(after.errors || [])].slice(0, 12);
     res.json({
       ok: true,
@@ -14151,12 +14228,14 @@ app.get('/dashboard/online-clients.json', requireAuth, async (req, res) => {
   }
 });
 
+const cachedTopClientUsage = createAsyncReadCache({ ttlMs: 5000, maxEntries: 8 });
 app.get('/dashboard/top-client-usage.json', requireAuth, async (req, res) => {
   try {
-    const refresh = String(req.query.refresh || '1') !== '0';
+    const refresh = String(req.query.refresh || '0') === '1';
     let refreshResult = { errors: [] };
     if (refresh) refreshResult = await refreshAllClientUsageFromNodes();
-    const report = buildTopClientPeriodUsageReport(req.query.period, 500);
+    const key = `${getTopClientUsagePeriod(req.query.period)}|${db.prepare('SELECT total_changes() AS n').get().n}`;
+    const report = await cachedTopClientUsage(key, () => buildTopClientPeriodUsageReport(req.query.period, 500));
     res.setHeader('Cache-Control', 'no-store');
     res.json({ ok: true, ...report, errors: refreshResult.errors || [] });
   } catch (err) {
@@ -14219,19 +14298,23 @@ app.get('/dashboard', requireAuth, async (req, res) => {
   }));
 
   const showOnlineClients = req.query.online === '1';
-  const onlineResult = showOnlineClients
-    ? await getOnlineClientsForDashboard()
-    : { clients: [], errors: [] };
+  // HTML must not wait for remote nodes; the browser loads online separately.
+  const onlineResult = { clients: [], errors: [] };
 
-  const limitedClients = getDashboardLimitRows();
+  const limitedClients = null; // Loaded only when the Limits dialog opens.
   const pulseNodes = db.prepare(`SELECT id, name, node_type, country_code, country_name_ru, country_flag, label_suffix, enabled, last_status FROM nodes ORDER BY ${nodeOrderSql()}`).all().map(enrichNodeFlagFields);
-  recordTrafficSnapshot(false, 'passive');
-  const trafficReport = buildTrafficReport(req.query.traffic_period, req.query.traffic_metric);
-  const nodeTrafficReport = buildNodeTrafficReport(req.query.traffic_period, req.query.traffic_metric);
-  const liveClientTrafficReport = buildLiveClientTrafficReport(10, 0.1);
-  const topClientUsageReport = buildTopClientPeriodUsageReport(req.query.top_period, 500);
+  const trafficPeriod = ['day', 'week', 'month', 'this_month', 'all'].includes(req.query.traffic_period) ? req.query.traffic_period : 'this_month';
+  const trafficMetric = ['download', 'upload', 'total'].includes(req.query.traffic_metric) ? req.query.traffic_metric : 'download';
+  const trafficReport = { period: trafficPeriod, metric: trafficMetric, deferred: true,
+    periodLabel: { day: 'за 24 часа', week: 'за 7 дней', month: 'за 30 дней', this_month: 'в этом месяце', all: 'за всё время наблюдений' }[trafficPeriod] };
+  // The template already loads its node date-range report over HTTP. The old
+  // synchronous node report was calculated here but never displayed.
+  const nodeTrafficReport = null;
+  const liveClientTrafficReport = { clients: [], topNodes: [], deferred: true };
+  const topPeriod = getTopClientUsagePeriod(req.query.top_period);
+  const topClientUsageReport = { period: topPeriod, periodLabel: TOP_CLIENT_USAGE_PERIODS[topPeriod].label, rows: [], deferred: true };
   const topClientUsageRows = topClientUsageReport.rows;
-  const dashboardHealth = buildHealthOverview();
+  const dashboardHealth = null; // Health UI uses cached node state and its API.
   const redirectStatus = (() => {
     try { return getRedirectStatus(); } catch (err) { return { ok: false, message: String(err.message || err) }; }
   })();
@@ -14405,12 +14488,11 @@ app.post('/routing', requireAuth, (req, res) => {
 });
 
 
+const cachedGitValue = createAsyncReadCache({ ttlMs: 60000, maxEntries: 4 });
 function getGitValue(args, fallback = '') {
-  try {
-    return String(execFileSync('git', args, { cwd: APP_DIR_HINT, timeout: 8000, encoding: 'utf8' }) || '').trim();
-  } catch (_) {
-    return fallback;
-  }
+  return cachedGitValue(JSON.stringify([APP_DIR_HINT, args, fallback]), () => new Promise(resolve => {
+    execFile('git', args, { cwd: APP_DIR_HINT, timeout: 1500, encoding: 'utf8', windowsHide: true }, (error, output) => resolve(error ? fallback : String(output || '').trim()));
+  }));
 }
 
 function getUpdateRepoSlug() {
@@ -14436,8 +14518,10 @@ function compareVersions(a, b) {
 }
 
 async function getProjectUpdateStatus(checkRemote = false) {
-  const current = getGitValue(['rev-parse', '--short', 'HEAD'], process.env.BUILD_COMMIT ? String(process.env.BUILD_COMMIT).slice(0, 12) : 'unknown');
-  const branch = getGitValue(['rev-parse', '--abbrev-ref', 'HEAD'], process.env.UPDATE_BRANCH || 'main');
+  const [current, branch] = await Promise.all([
+    getGitValue(['rev-parse', '--short', 'HEAD'], process.env.BUILD_COMMIT ? String(process.env.BUILD_COMMIT).slice(0, 12) : 'unknown'),
+    getGitValue(['rev-parse', '--abbrev-ref', 'HEAD'], process.env.UPDATE_BRANCH || 'main')
+  ]);
   const repo = getUpdateRepoSlug();
   const currentVersion = readLocalVersion();
   let remote = '';
@@ -20838,6 +20922,8 @@ const nexusServer = app.listen(PORT, WORKSPACE_ID === 'main' ? '0.0.0.0' : '127.
   // Accounting and quota enforcement must continue with no browser open.
   setTimeout(() => refreshAllClientUsageFromNodes().catch(err => console.error('Node usage:',err.message)),10000).unref();
   setInterval(() => refreshAllClientUsageFromNodes().catch(err => console.error('Node usage:',err.message)),60000).unref();
+  setTimeout(() => { try { pruneTrafficHistory(); } catch (err) { console.error('Traffic retention:', err.message); } }, 30000).unref();
+  setInterval(() => { try { pruneTrafficHistory(); } catch (err) { console.error('Traffic retention:', err.message); } }, 3600000).unref();
   setInterval(scheduleSupportReconcile, 60000).unref();
   setTimeout(() => { enforceVpnClientExpirations().catch(err => console.error('VPN expiry sweep failed:', err)); }, 15000);
   setInterval(() => { enforceVpnClientExpirations().catch(err => console.error('VPN expiry sweep failed:', err)); }, 60000).unref();
