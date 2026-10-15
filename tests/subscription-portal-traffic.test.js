@@ -439,9 +439,9 @@ test('per-node quota never includes traffic spent on another node', { timeout: 6
   });
   assert.deepEqual(jsonConfigs[0].routing.balancers, [{
     tag: 'auto-1-balancer',
-    selector: ['auto-1-node-'],
+    selector: ['auto-1-node-1', 'auto-1-node-2'],
     strategy: { type: 'leastPing' },
-    fallbackTag: 'auto-1-node-1'
+    fallbackTag: 'auto-1-unavailable'
   }]);
   const candidateTags = jsonConfigs[0].outbounds
     .filter(outbound => String(outbound.tag || '').startsWith('auto-1-node-'))
@@ -462,4 +462,126 @@ test('per-node quota never includes traffic spent on another node', { timeout: 6
   assert.ok(lteNode);
   assert.equal(lteNode.usedBytes, 7 * gib);
   assert.equal(lteNode.totalBytes, 50 * gib);
+});
+
+test('multiple auto-connections create, edit, toggle and delete independently via HTTP and survive restart', { timeout:60000 }, async t => {
+  const dataDir=fs.mkdtempSync(path.join(projectRoot,'.tmp-multi-auto-'));
+  const mock=await startMock3xui();let app,db;
+  t.after(async()=>{await stopApp(app);db?.close();await new Promise(r=>mock.server.close(r));fs.rmSync(dataDir,{recursive:true,force:true});});
+  app=await startApp(dataDir);seedSubscription(dataDir,mock.port);
+  db=new Database(path.join(dataDir,'app.db'));
+  const c=db.prepare('SELECT * FROM clients').get();
+  db.prepare('UPDATE clients SET traffic_gb=0 WHERE id=?').run(c.id);
+  const node2=addSubscriptionNode(db,{mockPort:mock.port,name:'Finland',countryCode:'FI',countryName:'Финляндия',clientId:c.id,uuid:c.uuid,trafficGb:0});
+  const node3=addSubscriptionNode(db,{mockPort:mock.port,name:'Sweden',countryCode:'SE',countryName:'Швеция',clientId:c.id,uuid:c.uuid,trafficGb:0});
+  const node1=db.prepare('SELECT id FROM nodes ORDER BY id LIMIT 1').get().id;
+  const cookieJar=new Map();
+  const request=async(route,options={})=>{
+    const headers=new Headers(options.headers||{});headers.set('X-Nexus-Workspace','main');
+    if(cookieJar.size)headers.set('Cookie',[...cookieJar].map(([k,v])=>`${k}=${v}`).join('; '));
+    const r=await fetch(`http://127.0.0.1:${app.port}${route}`,{...options,headers,redirect:'manual'});
+    for(const value of r.headers.getSetCookie()){const pair=value.split(';')[0],i=pair.indexOf('=');cookieJar.set(pair.slice(0,i),pair.slice(i+1));}return r;
+  };
+  const readCsrf=html=>{const m=html.match(/name="csrf-token" content="([^"]+)"/);assert.ok(m);return m[1];};
+  const loginCsrf=readCsrf(await(await request('/login')).text());
+  const post=(route,body)=>request(route,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body instanceof URLSearchParams?body:new URLSearchParams(body)});
+  const login=await post('/login',{_csrf:loginCsrf,username:'admin',password:'test-password-strong'});
+  assert.equal(login.headers.get('location'),'/dashboard');
+  const html=await(await request('/nodes?create=auto_select')).text();
+  assert.match(html,/Новое автоподключение/);assert.match(html,/<option value="auto_select" selected>/);
+  assert.match(html,/data-create-auto-select/);
+  const csrf=readCsrf(html);
+  const forms=[
+    {name:'Европа',nodes:[node1,node2],seconds:10},
+    {name:'CDN',nodes:[node1,node3],seconds:60},
+    {name:'Резерв',nodes:[node2,node3],seconds:120}
+  ];
+  function form(spec){
+    const body=new URLSearchParams({_csrf:csrf,node_type:'auto_select',auto_select_name:spec.name,auto_select_icon:'⚡',auto_select_probe_interval_seconds:String(spec.seconds),auto_select_probe_url:'https://cp.cloudflare.com/generate_204'});
+    for(const id of spec.nodes)body.append('auto_select_node_ids',String(id));return body;
+  }
+  for(const spec of forms){
+    const r=await post('/nodes',form(spec));assert.equal(r.status,302);
+    const location=new URL(r.headers.get('location'),'http://local');assert.equal(location.searchParams.get('create'),'auto_select');assert.ok(!location.searchParams.has('error'),location.toString());
+  }
+  const profiles=db.prepare('SELECT * FROM auto_select_profiles ORDER BY id').all();
+  assert.equal(profiles.length,3);assert.deepEqual(profiles.map(p=>p.name),forms.map(f=>f.name));
+  assert.equal(new Set(profiles.map(p=>p.id)).size,3);
+  const configs=async()=>{const r=await request('/json/portal-user?download=1');assert.equal(r.status,200);return r.json();};
+  const first=await configs(), autos=first.filter(x=>x.autoSelect?.enabled);
+  assert.deepEqual(autos.map(x=>x.title),forms.map(f=>'⚡ '+f.name));
+  assert.equal(first.filter(x=>!x.autoSelect).length,4,'ordinary regions including two external proxies remain visible');
+  for(let i=0;i<autos.length;i++){
+    const cfg=autos[i],p=profiles[i],spec=forms[i];
+    assert.deepEqual(cfg.autoSelect.normalNodeIds,spec.nodes);assert.equal(cfg.observatory.probeInterval,`${spec.seconds}s`);
+    assert.deepEqual(cfg.observatory.subjectSelector,[`auto-${p.id}-node-`]);
+    const tags=new Set(cfg.outbounds.map(o=>o.tag));
+    for(const balancer of cfg.routing.balancers){assert.ok(balancer.selector.every(tag=>tags.has(tag)));assert.ok(tags.has(balancer.fallbackTag));}
+    assert.ok(cfg.routing.balancers.every(b=>b.tag.startsWith(`auto-${p.id}-`)));
+  }
+  const invalid=await post('/nodes',form({name:'Bad',nodes:[node1],seconds:30}));
+  assert.equal(new URL(invalid.headers.get('location'),'http://local').searchParams.get('create'),'auto_select');
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM auto_select_profiles').get().n,3);
+  assert.equal((await post('/nodes',new URLSearchParams({node_type:'auto_select'}))).status,403);
+  const edited={name:'Европа 2',nodes:[node2,node3],seconds:30};
+  await post(`/auto-select-profiles/${profiles[0].id}/edit`,form(edited));
+  assert.deepEqual(db.prepare('SELECT * FROM auto_select_profiles WHERE id=?').get(profiles[1].id),profiles[1]);
+  assert.deepEqual(db.prepare('SELECT * FROM auto_select_profiles WHERE id=?').get(profiles[2].id),profiles[2]);
+  assert.deepEqual((await configs()).filter(x=>x.autoSelect).map(x=>x.title),['⚡ Европа 2','⚡ CDN','⚡ Резерв']);
+  await post(`/auto-select-profiles/${profiles[1].id}/toggle`,{_csrf:csrf});
+  assert.deepEqual((await configs()).filter(x=>x.autoSelect).map(x=>x.title),['⚡ Европа 2','⚡ Резерв']);
+  await post(`/auto-select-profiles/${profiles[2].id}/delete`,{_csrf:csrf});
+  assert.deepEqual((await configs()).filter(x=>x.autoSelect).map(x=>x.title),['⚡ Европа 2']);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM nodes').get().n,3);assert.equal(db.prepare('SELECT COUNT(*) AS n FROM clients').get().n,1);
+  const sub=await(await request('/sub/portal-user?raw=1')).text();
+  assert.ok(!sub.includes('Европа 2'),'auto profiles must not become fake VLESS/SUB endpoints');
+  await stopApp(app);app=await startApp(dataDir);
+  assert.deepEqual((await configs()).filter(x=>x.autoSelect).map(x=>x.title),['⚡ Европа 2']);
+  assert.equal(db.prepare('SELECT enabled FROM auto_select_profiles WHERE id=?').get(profiles[1].id).enabled,0);
+  if(process.env.NEXUS_PLAYWRIGHT_MODULE){
+    const {chromium}=require(process.env.NEXUS_PLAYWRIGHT_MODULE);
+    const browser=await chromium.launch({headless:true,channel:'msedge'});
+    try{
+      const page=await browser.newPage();const errors=[],uiPosts=[];page.on('pageerror',e=>errors.push(e.message));
+      page.on('request',r=>{if(r.method()==='POST' && new URL(r.url()).pathname==='/nodes')uiPosts.push(new URLSearchParams(r.postData()));});
+      await page.route('**/*',route=>new URL(route.request().url()).hostname==='127.0.0.1'?route.continue():route.abort());
+      await page.goto(`http://127.0.0.1:${app.port}/login`);
+      await page.locator('[name=username]').fill('admin');await page.locator('[name=password]').fill('test-password-strong');
+      await Promise.all([page.waitForURL('**/dashboard'),page.locator('button[type=submit]').click()]);
+      for(const width of [1440,390]){
+        await page.setViewportSize({width,height:900});
+        await page.goto(`http://127.0.0.1:${app.port}/nodes?tab=list`);
+        await Promise.all([page.waitForURL(url=>url.searchParams.get('create')==='auto_select'),page.locator('[data-create-auto-select]').click()]);
+        const form=page.locator('#node-create-form');
+        await form.locator('[name=auto_select_name]').waitFor({state:'visible'});
+        assert.equal(await form.locator('[name=node_type]').inputValue(),'auto_select');
+        assert.equal(await form.locator('[name=country_code]').isDisabled(),true);
+        assert.equal(await form.locator('[name=panel_url]').isDisabled(),true);
+        await form.locator('[name=node_type]').selectOption('3xui');
+        assert.equal(await form.locator('[name=api_token]').isEnabled(),true);
+        await form.locator('[name=node_type]').selectOption('remnawave');
+        assert.equal(await form.locator('[name=api_token]').isEnabled(),true);
+        await form.locator('[name=node_type]').selectOption('auto_select');
+        await page.waitForTimeout(300); // Exercise the late legacy auth pass.
+        assert.equal(await form.locator('[name=api_token]').isDisabled(),true);
+        await form.locator('[name=auto_select_name]').fill(`UI ${width}`);
+        for(const id of [node2,node3])await form.locator(`[name=auto_select_node_ids][value="${id}"]`).check();
+        try {
+          await Promise.all([page.waitForURL(url=>url.searchParams.has('message'),{timeout:10000}),form.locator('[type=submit]').click()]);
+        } catch(error) {
+          const details=await page.evaluate(()=>({url:location.href,alerts:[...document.querySelectorAll('.alert,dialog[open]')].map(e=>e.innerText),invalid:[...document.querySelectorAll('#node-create-form :invalid')].map(e=>({name:e.name,disabled:e.disabled})),buttons:[...document.querySelectorAll('#node-create-form button')].map(e=>({text:e.innerText,disabled:e.disabled}))}));
+          throw Error(error.message+'\n'+JSON.stringify(details));
+        }
+        assert.match(await page.locator('.alert.ok').filter({hasText:'автоподключение создано'}).innerText(),/автоподключение создано/);
+        assert.equal(await page.locator('#node-create-form [name=node_type]').inputValue(),'auto_select');
+        assert.equal(await page.locator('#node-create-form [name=auto_select_name]').inputValue(),'');
+        assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1),false);
+        if(process.env.NEXUS_UI_SCREENSHOT_DIR)await page.screenshot({path:path.join(process.env.NEXUS_UI_SCREENSHOT_DIR,`multi-auto-${width}.png`),fullPage:true});
+      }
+      assert.equal(errors.length,0,errors.join('\n'));
+      assert.equal(uiPosts.length,2);
+      for(const body of uiPosts)for(const name of ['panel_url','api_token','username','password','inbound_id'])assert.equal(body.has(name),false,name);
+      assert.equal(db.prepare('SELECT COUNT(*) AS n FROM auto_select_profiles').get().n,4);
+    }finally{await browser.close();}
+  }
 });

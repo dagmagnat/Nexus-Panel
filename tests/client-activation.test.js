@@ -140,6 +140,7 @@ test('provider entry points force pending credentials disabled even when called 
   const h = harness(t);
   const provider = vm.createContext({
     supportOptionsForNode: (node, client, opts) => opts,
+    supportRemoteClient: (node, client, opts) => ({ client, opts }),
     isClientActivationPending: h.ctx.isClientActivationPending,
     isRemnawaveNode: () => true,
     ensureRemnawaveUserOnNode: async (n, c, opts) => opts,

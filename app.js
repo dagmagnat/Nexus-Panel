@@ -3137,7 +3137,7 @@ function getExpiredGraceState(clientRow, nowMs = Date.now()) {
   };
 }
 
-function validateSupportIsolation(node) {
+function validateSupportIsolation(node, clientId = 0) {
   const base = value => {
     const text = String(value || '').trim().replace(/\/+$/, '');
     try { return new URL(text).origin.toLowerCase(); } catch { return text.toLowerCase(); }
@@ -3151,9 +3151,60 @@ function validateSupportIsolation(node) {
     // Any later provisioning or enabling of that clone is validated separately.
     if (Number(other.enabled) === 0 && !getSubscriptionExpiredGraceNodeIds().includes(Number(other.id)) &&
         !db.prepare('SELECT 1 FROM client_nodes WHERE node_id = ? LIMIT 1').get(other.id)) continue;
-    // Both Remnawave and 3x-ui's new API can update a user globally.
-    // A different inbound/squad alone does not isolate expiry or enable state.
+    // 3x-ui service accounts have independent UUID/email/subId, not just another
+    // inbound attachment of the paid account. Old mappings must not be reused.
+    if (normalizeNodeTypeValue(node.node_type) === NODE_TYPE_3XUI && normalizeNodeTypeValue(other.node_type) === NODE_TYPE_3XUI) {
+      if (!(Number(node.inbound_id) > 0 && Number(other.inbound_id) > 0) || Number(node.inbound_id) === Number(other.inbound_id)) {
+        throw new Error('Для служебного доступа выберите другой inbound 3x-ui с отдельным портом, а не inbound обычной подписки.');
+      }
+      const supportNodes = [node, other].filter(n => n.expired_support || getSubscriptionExpiredGraceNodeIds().includes(Number(n.id)));
+      for (const supportNode of supportNodes) {
+        const unsafe = db.prepare(`SELECT 1 FROM client_nodes m LEFT JOIN client_support_identities s
+          ON s.client_id=m.client_id AND s.node_id=m.node_id
+          WHERE m.node_id=? ${clientId ? 'AND m.client_id=?' : ''}
+          AND (s.uuid IS NULL OR COALESCE(m.remote_uuid,'') != s.uuid OR COALESCE(m.remote_email,'') != s.email) LIMIT 1`)
+          .get(...(clientId ? [Number(supportNode.id || 0), Number(clientId)] : [Number(supportNode.id || 0)]));
+        if (unsafe) throw new Error('У служебного узла остались старые общие учётные записи. Создайте пустой отдельный inbound и добавьте его как новый служебный узел; обычные подключения не удаляйте.');
+      }
+      continue;
+    }
+    // Remnawave squads do not isolate a globally shared user.
     throw new Error('Служебному узлу нужна отдельная панель 3x-ui или Remnawave, не используемая другими узлами Nexus. Другого inbound или Squad недостаточно: общая удалённая учётная запись может открыть обычный VPN.');
+  }
+}
+
+function supportRemoteClient(node, client, opts) {
+  if (!client?.id || normalizeNodeTypeValue(node.node_type) !== NODE_TYPE_3XUI) return { client, opts };
+  let identity = db.prepare('SELECT * FROM client_support_identities WHERE client_id=? AND node_id=?').get(client.id, node.id);
+  const map = db.prepare('SELECT * FROM client_nodes WHERE client_id=? AND node_id=?').get(client.id, node.id);
+  if (!identity && getSubscriptionExpiredGraceNodeIds().includes(Number(node.id)) && !map) {
+    // Persist before the first network call, including failures/retries/restarts.
+    const uuid = randomUUID();
+    db.prepare('INSERT OR IGNORE INTO client_support_identities(client_id,node_id,uuid,email,sub_id) VALUES(?,?,?,?,?)')
+      .run(client.id, node.id, uuid, `nexus-support-${uuid}`, randomUUID().replace(/-/g, ''));
+    identity = db.prepare('SELECT * FROM client_support_identities WHERE client_id=? AND node_id=?').get(client.id, node.id);
+  }
+  if (!identity) return { client, opts }; // Existing isolated-panel installations keep their accounts.
+  if (map && (map.remote_uuid !== identity.uuid || map.remote_email !== identity.email)) {
+    throw new Error('Учётная запись служебного узла не совпадает с изолированной записью; обновление отменено.');
+  }
+  // All remote lookup fallbacks must see ONLY this identity, never the paid one.
+  return { client: { ...client, uuid: identity.uuid, login: identity.email, sub_slug: identity.sub_id },
+    opts: { ...opts, uuid: identity.uuid, email: identity.email, subId: identity.sub_id, support_identity_only: true, skip_existing: false,
+      ...(!getSubscriptionExpiredGraceNodeIds().includes(Number(node.id)) ? { enabled: false, node_enabled: false } : {}) } };
+}
+
+function assertSupportRemoteIdentity(node, current, requested) {
+  const identity = db.prepare('SELECT * FROM client_support_identities WHERE node_id=? AND (uuid=? OR email=?)')
+    .get(node.id, String(requested.id || requested.uuid || ''), String(requested.email || ''));
+  if (!identity) return;
+  if (String(current.id || current.uuid || '') !== identity.uuid || current.email !== identity.email ||
+      String(requested.id || requested.uuid || '') !== identity.uuid || requested.email !== identity.email) {
+    throw new Error('Изоляция служебной учётной записи нарушена; обновление отменено.');
+  }
+  const ids = extractLinkedInboundValues(current).inboundIds;
+  if (ids.length !== 1 || Number(ids[0]) !== Number(node.inbound_id)) {
+    throw new Error('Служебная учётная запись привязана не только к своему inbound или API не подтвердил привязку; обновление отменено.');
   }
 }
 
@@ -3172,7 +3223,7 @@ function setExpiredSupportNode(node, enabled) {
 
 function supportOptionsForNode(node, client, opts = {}) {
   const nodeId = Number(node.id || node.node_id || 0);
-  if (client?.id && getSubscriptionExpiredGraceNodeIds().length) validateSupportIsolation(node);
+  if (client?.id && getSubscriptionExpiredGraceNodeIds().length) validateSupportIsolation(node, client.id);
   if (!client?.id || !getSubscriptionExpiredGraceNodeIds().includes(nodeId)) return opts;
   const current = db.prepare('SELECT * FROM clients WHERE id = ?').get(client.id) || client;
   const grant = db.prepare('SELECT * FROM client_support_grants WHERE client_id = ? AND node_id = ?').get(client.id, nodeId);
@@ -3207,7 +3258,7 @@ async function performSupportPairSync(node, client, reserved) {
   let error = '';
   try {
     if (reserved) {
-      validateSupportIsolation(node);
+      validateSupportIsolation(node, client.id);
       const options = { enabled: active, node_enabled: true, expiry_time: state.expiryTime, traffic_gb: 0, limit_ip: 0 };
       if (map) await updateClientOnNode(node, map, client, options);
       else await ensureAggregatorClientOnNode(node, client, options);
@@ -6981,6 +7032,7 @@ async function updateClientViaNewApi(node, clientUuidOrEmail, payload) {
   if (!lookupEmail || !email) throw new Error('3x-ui вернул запись клиента без email/login; обновление отменено.');
 
   const client = normalizeClientFlowForInbound(node, normalizeClientFor3xuiV3({ ...current, ...requested, email }));
+  assertSupportRemoteIdentity(node, current, requested);
   for (const key of ['recordId', 'inboundIds', 'inboundTags', 'traffic', 'externalLinks']) delete client[key];
   return apiPost(node, `/panel/api/clients/update/${encodeURIComponent(lookupEmail)}`, client, false);
 }
@@ -10305,8 +10357,9 @@ function buildClientPayloadForImport(node, inbound, rc, clientRow, oldRemote) {
 }
 
 async function ensureImportedClientOnNode(node, clientRow, rc) {
-  if (getSubscriptionExpiredGraceNodeIds().length) validateSupportIsolation(node);
-  if (getSubscriptionExpiredGraceNodeIds().includes(Number(node.id))) {
+  if (getSubscriptionExpiredGraceNodeIds().length) validateSupportIsolation(node, clientRow.id);
+  if (getSubscriptionExpiredGraceNodeIds().includes(Number(node.id)) ||
+      db.prepare('SELECT 1 FROM client_support_identities WHERE client_id=? AND node_id=?').get(clientRow.id, node.id)) {
     return ensureAggregatorClientOnNode(node, clientRow);
   }
   if (isRemnawaveNode(node)) {
@@ -10453,6 +10506,12 @@ function chooseSubSlugForRemote(rc, existingClientId = 0) {
 }
 
 function upsertLocalClientFromRemote(rc, sourceNode = null) {
+  // A service credential must never become/rename a paid local user, even if
+  // someone manually attached it to another inbound in the remote panel.
+  if ((sourceNode && getSubscriptionExpiredGraceNodeIds().includes(Number(sourceNode.id))) ||
+      db.prepare('SELECT 1 FROM client_support_identities WHERE uuid=? OR email=? LIMIT 1').get(String(rc.uuid || ''), String(rc.email || ''))) {
+    throw new Error('Импорт служебных учётных записей запрещён: они создаются Nexus отдельно от обычных пользователей.');
+  }
   const remoteTrafficGb = trafficGbFromRemoteValue(rc.totalGB);
   const remoteDurationDays = durationDaysFromRemoteClient(rc, null);
   const remoteLogin = String(rc.email || '').trim() || 'imported';
@@ -10690,6 +10749,16 @@ async function createExistingClientsOnNode(targetNode, operation = null, options
   for (const client of clients) {
     if (operation?.isCancelled()) { cancelled = true; break; }
     try {
+      if (getSubscriptionExpiredGraceNodeIds().includes(Number(targetNode.id))) {
+        const result = await ensureAggregatorClientOnNode(targetNode, client);
+        if (result.mapCreated) mappingsCreated++;
+        if (result.remoteCreated) remoteCreated++;
+        if (result.remoteUpdated) remoteUpdated++;
+        consecutiveTransportFailures = 0;
+        completed++;
+        operation?.setProgress(completed, clients.length, `Служебная запись: ${client.login}`);
+        continue;
+      }
       const match = findRemoteClientForLocalClient(remoteLookup, client);
       if (match.row) {
         if (hasUnsafeRemoteClientIdentityConflict(client, match.row, match.matchedBy)) {
@@ -11261,6 +11330,7 @@ function updateLocalClientNodeState(node, map, values = {}) {
 
 async function updateClientOnNode(node, map, client, opts = {}) {
   opts = supportOptionsForNode(node, client, opts);
+  ({ client, opts } = supportRemoteClient(node, client, opts));
   if (isClientActivationPending(client)) opts = { ...opts, enabled: false, expiry_time: 0 };
   if (isRemnawaveNode(node)) return updateRemnawaveUserOnNode(node, map, client, opts);
   if (isH1CloudNode(node)) return updateH1CloudClientOnNode(node, map, client, opts);
@@ -11920,6 +11990,7 @@ async function buildTopClientPeriodUsageReport(period = 'week', limit = 500) {
 
 async function ensureAggregatorClientOnNode(node, client, opts = {}) {
   opts = supportOptionsForNode(node, client, opts);
+  ({ client, opts } = supportRemoteClient(node, client, opts));
   if (isClientActivationPending(client)) opts = { ...opts, enabled: false, expiry_time: 0 };
   if (isRemnawaveNode(node)) return ensureRemnawaveUserOnNode(node, client, opts);
   if (isH1CloudNode(node)) return ensureH1CloudClientOnNode(node, client, opts);
@@ -11943,6 +12014,7 @@ async function ensureAggregatorClientOnNode(node, client, opts = {}) {
       if (!isMissingApiEndpointError(err) && !isRemoteEntityMissingError(err)) throw err;
     }
     if (globalClient) {
+      assertSupportRemoteIdentity(node, globalClient, { id: expectedUuid, email });
       const globalUuid = String(globalClient.id || globalClient.uuid || '').trim();
       if (globalUuid && expectedUuid && !sameText(globalUuid, expectedUuid)) {
         throw makeRemoteClientConflictError(node, email, globalClient, { uuid: expectedUuid, email });
@@ -12046,7 +12118,7 @@ async function ensureAggregatorClientOnNode(node, client, opts = {}) {
   const usage = readUsageForClientNode(node, client, map || {}, inbound);
 
   if (!map) {
-    const info = db.prepare('INSERT INTO client_nodes (client_id,node_id,remote_email,remote_uuid,remote_sub_url,traffic_gb,limit_ip,upload_bytes,download_bytes,used_bytes,enabled) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
+    const info = db.prepare('INSERT INTO client_nodes (client_id,node_id,remote_email,remote_uuid,remote_sub_url,traffic_gb,limit_ip,upload_bytes,download_bytes,used_bytes,enabled,subscription_policy_only) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')
       .run(
         client.id,
         node.id,
@@ -12058,7 +12130,8 @@ async function ensureAggregatorClientOnNode(node, client, opts = {}) {
         usage.uploadBytes,
         usage.downloadBytes,
         usage.usedBytes,
-        nodeEnabled ? 1 : 0
+        nodeEnabled ? 1 : 0,
+        opts.support_identity_only ? 1 : 0
       );
     map = db.prepare('SELECT * FROM client_nodes WHERE id = ?').get(info.lastInsertRowid);
     return { mapCreated: true, remoteCreated, remoteUpdated, remoteAttached };
@@ -13693,6 +13766,7 @@ function buildClientDiscrepancyReport(limit = 200) {
     JOIN nodes n ON n.enabled = 1
     LEFT JOIN client_nodes cn ON cn.client_id = c.id AND cn.node_id = n.id
     WHERE c.enabled = 1
+      AND NOT EXISTS (SELECT 1 FROM client_support_identities s WHERE s.client_id=c.id AND s.node_id=n.id)
       AND (cn.id IS NULL OR cn.enabled = 0 OR LOWER(COALESCE(cn.remote_uuid, '')) != LOWER(COALESCE(c.uuid, '')))
     ORDER BY c.id DESC, ${nodeOrderSql('n')}
     LIMIT ?
@@ -15571,7 +15645,7 @@ app.post('/settings/telegram-test', requireAuth, async (req, res) => {
 });
 
 function exportBackupPayload(req = null) {
-const tables = ['client_support_grants', 'client_support_sync', 'app_users', 'app_settings', 'nodes', 'auto_select_profiles', 'client_groups', 'client_tags', 'clients', 'subscription_devices', 'client_tag_assignments', 'client_nodes', 'node_inbound_cache', 'sni_profiles', 'telegram_users', 'telegram_orders', 'telegram_tickets', 'telegram_ticket_messages', 'telegram_announcements', 'vpn_hosts', 'vpn_services', 'vpn_clients', 'vpn_jobs'];
+const tables = ['client_support_identities', 'client_support_grants', 'client_support_sync', 'app_users', 'app_settings', 'nodes', 'auto_select_profiles', 'client_groups', 'client_tags', 'clients', 'subscription_devices', 'client_tag_assignments', 'client_nodes', 'node_inbound_cache', 'sni_profiles', 'telegram_users', 'telegram_orders', 'telegram_tickets', 'telegram_ticket_messages', 'telegram_announcements', 'vpn_hosts', 'vpn_services', 'vpn_clients', 'vpn_jobs'];
   const data = {};
   for (const table of tables) data[table] = db.prepare(`SELECT * FROM ${table}`).all();
   return {
@@ -15597,8 +15671,8 @@ function ensureAdminUserExists() {
 
 function restoreBackupPayload(payload) {
   if (!payload || payload.app !== '3xui-aggregator' || !payload.data) throw new Error('Неверный файл резервной копии');
-  const deleteTables = ['client_support_grants', 'client_support_sync', 'vpn_jobs', 'vpn_clients', 'vpn_services', 'vpn_hosts', 'telegram_ticket_messages', 'telegram_tickets', 'telegram_orders', 'telegram_announcements', 'telegram_users', 'sni_profiles', 'node_inbound_cache', 'client_nodes', 'client_tag_assignments', 'subscription_devices', 'clients', 'client_tags', 'client_groups', 'auto_select_profiles', 'nodes', 'app_settings', 'app_users'];
-  const restoreTables = ['client_support_grants', 'client_support_sync', 'app_users', 'app_settings', 'nodes', 'auto_select_profiles', 'client_groups', 'client_tags', 'clients', 'subscription_devices', 'client_tag_assignments', 'client_nodes', 'node_inbound_cache', 'sni_profiles', 'telegram_users', 'telegram_orders', 'telegram_tickets', 'telegram_ticket_messages', 'telegram_announcements', 'vpn_hosts', 'vpn_services', 'vpn_clients', 'vpn_jobs'];
+  const deleteTables = ['client_support_identities', 'client_support_grants', 'client_support_sync', 'vpn_jobs', 'vpn_clients', 'vpn_services', 'vpn_hosts', 'telegram_ticket_messages', 'telegram_tickets', 'telegram_orders', 'telegram_announcements', 'telegram_users', 'sni_profiles', 'node_inbound_cache', 'client_nodes', 'client_tag_assignments', 'subscription_devices', 'clients', 'client_tags', 'client_groups', 'auto_select_profiles', 'nodes', 'app_settings', 'app_users'];
+  const restoreTables = ['client_support_grants', 'client_support_sync', 'app_users', 'app_settings', 'nodes', 'auto_select_profiles', 'client_groups', 'client_tags', 'clients', 'client_support_identities', 'subscription_devices', 'client_tag_assignments', 'client_nodes', 'node_inbound_cache', 'sni_profiles', 'telegram_users', 'telegram_orders', 'telegram_tickets', 'telegram_ticket_messages', 'telegram_announcements', 'vpn_hosts', 'vpn_services', 'vpn_clients', 'vpn_jobs'];
   const columnCache = new Map();
   const tx = db.transaction(() => {
     for (const table of deleteTables) db.prepare(`DELETE FROM ${table}`).run();
@@ -15798,7 +15872,8 @@ app.get('/nodes', requireAuth, (req, res) => {
     nodePageSize: getNodesPageSize(),
     nodeAutoRefreshSeconds: getNodeAutoRefreshSeconds(),
     sniProfiles: getSniProfiles(),
-    nodeActiveTab: ['list', 'add', 'help'].includes(requestedTab) ? requestedTab : 'list',
+    nodeActiveTab: req.query.create === 'auto_select' ? 'add' : (['list', 'add', 'help'].includes(requestedTab) ? requestedTab : 'list'),
+    autoSelectCreate: req.query.create === 'auto_select',
     autoSelectEditId: Math.max(0, Number(req.query.auto_select_edit || 0)),
     message: req.query.message || '',
     error: req.query.error || ''
@@ -15837,7 +15912,7 @@ app.post('/nodes', requireAuth, async (req, res) => {
 
     if (String(node_type || '').trim().toLowerCase() === NODE_TYPE_AUTO_SELECT) {
       const profile = createAutoSelectProfileFromBody(req.body || {});
-      return res.redirect('/nodes?tab=add&message=' + encodeURIComponent(`${profile.title}: профиль автовыбора создан. Он появится в JSON-подписках клиентов, у которых доступен хотя бы один из выбранных узлов.`));
+      return res.redirect('/nodes?tab=add&create=auto_select&message=' + encodeURIComponent(`${profile.title}: автоподключение создано. Можно сразу создать следующее с другим названием и набором узлов. Существующие профили сохранены; все включённые профили выдаются в JSON-подписке для доступных клиенту узлов.`) + '#node-create-form');
     }
 
     const normalizedNodeType = normalizeNodeTypeValue(node_type || NODE_TYPE_3XUI);
@@ -15914,6 +15989,9 @@ app.post('/nodes', requireAuth, async (req, res) => {
               : ''));
 
     access.claimRemote(storedPanelUrl);
+    if (req.body.expired_support === '1' && req.body.import_clients_from_node === '1') {
+      throw new Error('Для служебного узла отключите импорт пользователей из панели. Nexus создаёт отдельные служебные учётные записи сам.');
+    }
     validateSupportIsolation({ id: 0, expired_support: req.body.expired_support === '1', panel_url: storedPanelUrl, panel_path: storedPanelPath, inbound_id, node_type: normalizedNodeType });
     const storedPasswordEnc = encrypt(apiMode === 'password' ? String(password || '').trim() : '', APP_SECRET);
     const storedApiTokenEnc = apiMode === 'token' ? encrypt(String(api_token || '').trim(), APP_SECRET) : '';
@@ -16086,7 +16164,7 @@ app.post('/nodes', requireAuth, async (req, res) => {
     qs.set('tab', 'list');
     res.redirect('/nodes?' + qs.toString());
   } catch (err) {
-    res.redirect('/nodes?tab=add&error=' + encodeURIComponent(String(err.message || err)));
+    res.redirect('/nodes?tab=add' + (req.body.node_type === NODE_TYPE_AUTO_SELECT ? '&create=auto_select' : '') + '&error=' + encodeURIComponent(String(err.message || err)));
   }
 });
 
@@ -19463,7 +19541,7 @@ app.get('/json/:slug', async (req, res) => {
       const vlessEntries = entries.filter(e => String(e.line).startsWith('vless://'));
       // Virtual auto-select profiles are intentionally JSON-only: a plain
       // vless:// link cannot carry an Xray balancer or an observatory. Put the
-      // single easy-to-use profile before the individual regions in Happ.
+      // independently configured profiles before the individual regions in Happ.
       const resultConfigs = isClientExpired(client) ? [] : buildAutoSelectJsonConfigs(client, vlessEntries, subscriptionName);
       const nativeJsonCache = new Map();
       for (let index = 0; index < vlessEntries.length; index += 1) {

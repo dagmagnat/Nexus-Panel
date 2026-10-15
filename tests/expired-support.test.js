@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const { supportAccess, parseSupportDays, initSupportSchema } = require('../lib_expired_support');
-const { createHash } = require('node:crypto');
+const { createHash, randomUUID } = require('node:crypto');
 let Database;
 try { Database = require('node:sqlite').DatabaseSync; } catch { Database = require('better-sqlite3'); }
 const source = fs.readFileSync(require('node:path').join(__dirname, '../app.js'), 'utf8');
@@ -46,12 +46,13 @@ function harness(t) {
   initSupportSchema(db); initSupportSchema(db);
   db.exec(`CREATE TABLE clients(id INTEGER PRIMARY KEY, enabled INTEGER, expiry_time INTEGER, uuid TEXT, login TEXT);
     CREATE TABLE nodes(id INTEGER PRIMARY KEY, enabled INTEGER, panel_url TEXT, panel_path TEXT, inbound_id INTEGER, node_type TEXT);
-    CREATE TABLE client_nodes(id INTEGER PRIMARY KEY, client_id INTEGER, node_id INTEGER, subscription_policy_only INTEGER DEFAULT 0);
+    CREATE TABLE client_nodes(id INTEGER PRIMARY KEY, client_id INTEGER, node_id INTEGER, subscription_policy_only INTEGER DEFAULT 0, remote_uuid TEXT, remote_email TEXT);
     INSERT INTO clients VALUES(1,1,${client.expiry_time},'id-1','one'),(2,1,${now+DAY},'id-2','two');
     INSERT INTO nodes VALUES(10,1,'https://panel.invalid','',1,'3xui'),(11,1,'https://panel.invalid','',2,'3xui');`);
   if (!db.transaction) db.transaction = fn => () => { db.exec('BEGIN'); try { const r = fn(); db.exec('COMMIT'); return r; } catch(e) { db.exec('ROLLBACK'); throw e; } };
   const calls = []; let fail = false;
-  const ctx = vm.createContext({ db, createHash, supportAccess, parseSupportDays,
+  const ctx = vm.createContext({ db, createHash, randomUUID, supportAccess, parseSupportDays,
+    normalizeNodeTypeValue: v => v || '3xui', NODE_TYPE_3XUI: '3xui',
     getSubscriptionExpiredGraceDays: () => 7, getSubscriptionExpiredGraceNodeIds: () => [10,11],
     scheduleSupportReconcile: () => {}, validateSupportIsolation: () => {},
     ensureAggregatorClientOnNode: async (n,c,opts) => { if (fail) throw new Error('offline'); calls.push(opts); db.prepare('INSERT INTO client_nodes(client_id,node_id) VALUES(?,?)').run(c.id,n.id); },
@@ -99,21 +100,67 @@ test('retired role does not disable a new ordinary mapping on the same Nexus nod
   assert.equal(h.calls.length,0);
 });
 
-test('support refuses shared panel identities even with different inbound, path, scheme casing or default port', t => {
+test('shared 3x-ui permits another inbound but rejects the same inbound, old accounts and Remnawave', t => {
   const h = harness(t);
   h.ctx.URL = URL;
   vm.runInContext(extract('validateSupportIsolation'),h.ctx);
   const n = h.db.prepare('SELECT * FROM nodes WHERE id=10').get();
-  assert.throws(() => h.ctx.validateSupportIsolation(n), /отдельная панель/);
-  assert.throws(() => h.ctx.validateSupportIsolation({...n,panel_url:'HTTPS://PANEL.INVALID:443/another-path'}), /отдельная панель/);
+  assert.doesNotThrow(() => h.ctx.validateSupportIsolation(n));
+  assert.doesNotThrow(() => h.ctx.validateSupportIsolation({...n,panel_url:'HTTPS://PANEL.INVALID:443/another-path'}));
+  assert.throws(() => h.ctx.validateSupportIsolation({...n,inbound_id:2}), /другой inbound/);
+  assert.throws(() => h.ctx.validateSupportIsolation({...n,node_type:'remnawave'}), /отдельная панель/);
   assert.doesNotThrow(() => h.ctx.validateSupportIsolation({...n,panel_url:'https://support-panel.invalid'}));
   h.ctx.getSubscriptionExpiredGraceNodeIds = () => [];
   assert.doesNotThrow(() => h.ctx.validateSupportIsolation(n));
-  assert.throws(() => h.ctx.validateSupportIsolation({...n,expired_support:true}), /отдельная панель/);
+  assert.doesNotThrow(() => h.ctx.validateSupportIsolation({...n,expired_support:true}));
   h.db.prepare('UPDATE nodes SET enabled=0 WHERE id=11').run();
   assert.doesNotThrow(() => h.ctx.validateSupportIsolation({...n,expired_support:true}));
   h.db.prepare('INSERT INTO client_nodes(client_id,node_id) VALUES(1,11)').run();
-  assert.throws(() => h.ctx.validateSupportIsolation({...n,expired_support:true}), /отдельная панель/);
+  assert.doesNotThrow(() => h.ctx.validateSupportIsolation({...n,expired_support:true}));
+  h.db.prepare('INSERT INTO client_nodes(client_id,node_id) VALUES(1,10)').run();
+  assert.throws(() => h.ctx.validateSupportIsolation({...n,expired_support:true}), /старые общие/);
+});
+
+test('service identity is independent, stable across retries, ignores caller overrides and fails on a stale mapping', t => {
+  const h = harness(t), n = h.db.prepare('SELECT * FROM nodes WHERE id=10').get();
+  vm.runInContext(extract('supportRemoteClient'), h.ctx);
+  const c = {...h.db.prepare('SELECT * FROM clients WHERE id=1').get(), sub_slug:'paid-secret'};
+  const first = h.ctx.supportRemoteClient(n,c,{ uuid:c.uuid, email:c.login, subId:c.sub_slug });
+  assert.notEqual(first.client.uuid,c.uuid); assert.notEqual(first.client.login,c.login); assert.notEqual(first.client.sub_slug,c.sub_slug);
+  assert.equal(first.client.id,c.id); assert.equal(first.opts.uuid,first.client.uuid);
+  initSupportSchema(h.db);
+  const retry = h.ctx.supportRemoteClient(n,c,{});
+  assert.equal(retry.client.uuid,first.client.uuid); assert.equal(retry.client.sub_slug,first.client.sub_slug);
+  h.ctx.getSubscriptionExpiredGraceNodeIds = () => [];
+  const retired = h.ctx.supportRemoteClient(n,c,{ enabled:true });
+  assert.equal(retired.opts.enabled,false); assert.equal(retired.opts.node_enabled,false);
+  h.db.prepare('INSERT INTO client_nodes(client_id,node_id,remote_uuid,remote_email) VALUES(?,?,?,?)').run(c.id,n.id,c.uuid,c.login);
+  assert.throws(() => h.ctx.supportRemoteClient(n,c,{}), /не совпадает/);
+  assert.equal(h.db.prepare('SELECT uuid FROM clients WHERE id=1').get().uuid,c.uuid);
+});
+
+test('v3 service updates fail closed if remote UUID/email or inbound attachments differ', t => {
+  const h = harness(t), n = h.db.prepare('SELECT * FROM nodes WHERE id=10').get(), c=h.db.prepare('SELECT * FROM clients WHERE id=1').get();
+  h.ctx.extractLinkedInboundValues = row => ({ inboundIds:row.inboundIds || [] });
+  vm.runInContext(extract('supportRemoteClient')+'\n'+extract('assertSupportRemoteIdentity'), h.ctx);
+  const {client:s} = h.ctx.supportRemoteClient(n,c,{}), requested={id:s.uuid,email:s.login};
+  const current={...requested,inboundIds:[1]};
+  assert.doesNotThrow(() => h.ctx.assertSupportRemoteIdentity(n,current,requested));
+  for (const change of [{inboundIds:[1,2]},{inboundIds:[]},{inboundIds:[2]},{id:c.uuid},{email:c.login}]) {
+    assert.throws(() => h.ctx.assertSupportRemoteIdentity(n,{...current,...change},requested), /отменено/);
+  }
+  assert.doesNotThrow(() => h.ctx.assertSupportRemoteIdentity(n,{id:c.uuid,email:c.login},{id:c.uuid,email:c.login}));
+});
+
+test('imports cannot turn service identities into paid local users', t => {
+  const h=harness(t), n=h.db.prepare('SELECT * FROM nodes WHERE id=10').get(), c=h.db.prepare('SELECT * FROM clients WHERE id=1').get();
+  vm.runInContext(extract('supportRemoteClient')+'\n'+extract('upsertLocalClientFromRemote'),h.ctx);
+  const {client:s}=h.ctx.supportRemoteClient(n,c,{});
+  assert.throws(()=>h.ctx.upsertLocalClientFromRemote({uuid:s.uuid,email:s.login},n),/Импорт служебных/);
+  h.ctx.getSubscriptionExpiredGraceNodeIds=()=>[];
+  assert.throws(()=>h.ctx.upsertLocalClientFromRemote({uuid:s.uuid,email:s.login},{id:99}),/Импорт служебных/);
+  assert.equal(h.db.prepare('SELECT COUNT(*) AS n FROM clients').get().n,2);
+  assert.equal(h.db.prepare('SELECT uuid FROM clients WHERE id=1').get().uuid,c.uuid);
 });
 
 test('provider guard ignores an ordinary enable request and uses current main state and support deadline', t => {

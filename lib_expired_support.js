@@ -26,6 +26,11 @@ function initSupportSchema(db) {
     until_ms INTEGER NOT NULL, base_expiry INTEGER NOT NULL, PRIMARY KEY(client_id,node_id));
     CREATE TABLE IF NOT EXISTS client_support_sync (
     client_id INTEGER NOT NULL, node_id INTEGER NOT NULL, signature TEXT NOT NULL DEFAULT '',
-    updated_at INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '', PRIMARY KEY(client_id,node_id));`);
+    updated_at INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '', PRIMARY KEY(client_id,node_id));
+    CREATE TABLE IF NOT EXISTS client_support_identities (
+    client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+    uuid TEXT NOT NULL UNIQUE, email TEXT NOT NULL UNIQUE, sub_id TEXT NOT NULL UNIQUE,
+    PRIMARY KEY(client_id,node_id));`);
 }
 module.exports = { supportAccess, parseSupportDays, initSupportSchema };

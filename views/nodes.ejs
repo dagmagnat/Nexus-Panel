@@ -3,6 +3,7 @@
     ? String(typeof nodeActiveTab !== 'undefined' ? nodeActiveTab : 'list')
     : 'list';
   const autoProfiles = Array.isArray(typeof autoSelectProfiles !== 'undefined' ? autoSelectProfiles : []) ? autoSelectProfiles : [];
+  const creatingAutoSelect = typeof autoSelectCreate !== 'undefined' && autoSelectCreate === true;
   function flagEmojiFromCode(code) {
     const cc = String(code || '').trim().toUpperCase();
     if (!/^[A-Z]{2}$/.test(cc) || ['ZZ','XX'].includes(cc)) return '';
@@ -80,11 +81,14 @@
   <a href="/nodes?tab=help" class="<%= activeNodeTab === 'help' ? 'is-active' : '' %>">Подсказка</a>
 </nav>
 
+<div class="actions">
+  <a href="/nodes?tab=add&amp;create=auto_select#node-create-form" class="link-btn secondary" data-create-auto-select>＋ Добавить автоподключение</a>
+</div>
 
 <div class="grid">
   <section class="card span-12 tab-panel <%= activeNodeTab === 'add' ? 'is-active' : '' %>" data-tab-panel="add">
-    <h2>Добавить узел</h2>
-    <form method="post" action="/nodes" class="js-long-action auth-token-active" data-node-add-form data-loading-title="Добавляю узел" data-loading-text="Проверяю подключение, читаю параметры выбранного inbound и сохраняю узел.">
+    <h2><%= creatingAutoSelect ? 'Новое автоподключение' : 'Добавить узел' %></h2>
+    <form id="node-create-form" method="post" action="/nodes" class="js-long-action auth-token-active" data-node-add-form data-loading-title="Сохраняю подключение" data-loading-text="Создаю новое подключение; существующие узлы и профили не заменяются.">
       <div class="form-grid">
         <div class="field half">
           <label>Страна</label>
@@ -115,9 +119,9 @@
         <div class="field half">
           <label>Тип узла</label>
           <select name="node_type" class="js-node-type-select">
-            <option value="3xui" selected>3x-ui</option>
+            <option value="3xui" <%= creatingAutoSelect ? '' : 'selected' %>>3x-ui</option>
             <option value="remnawave">Remnawave Panel (API)</option>
-            <option value="auto_select">Автовыбор — самый быстрый рабочий узел</option>
+            <option value="auto_select" <%= creatingAutoSelect ? 'selected' : '' %>>Автовыбор — самый быстрый рабочий узел</option>
           </select>
           <small class="hint" data-node-type-summary>Выбери обычное подключение панели либо виртуальный профиль «Автовыбор» для JSON-подписки.</small>
         </div>
@@ -125,6 +129,7 @@
         <div class="field full js-node-auto-select-only hidden" hidden style="display:none!important">
           <div class="alert ok auto-select-explainer">
             <strong>Автовыбор работает в Xray-клиенте и доступен в JSON-подписке.</strong>
+            Можно создать несколько независимых автоподключений: например «Европа», «CDN», «Резерв». У каждого своё название, пул, приоритет и аварийный узел. Один физический узел может участвовать в нескольких профилях; существующие профили не заменяются.
             Приоритетный узел используется, пока проверка через него проходит. Затем Xray выбирает по минимальной задержке среди основного пула. Аварийный узел включается только когда основной пул недоступен. Без приоритетного и аварийного узлов сохраняется обычный leastPing.
           </div>
         </div>
@@ -213,7 +218,7 @@
           <small class="hint">Для 3x-ui выбери новый API Token или старый способ с логином и паролем.</small>
         </div>
 
-        <div id="add-node-auth-fields" class="auth-mode-fields field half">
+        <fieldset id="add-node-auth-fields" class="auth-mode-fields field half" style="border:0;margin:0;padding:0;min-width:0" aria-label="Доступ к панели" <%= creatingAutoSelect ? 'disabled' : '' %>>
           <div class="auth-password-fields form-grid hidden" style="display:none">
             <div class="field half">
               <label>Логин панели</label>
@@ -231,7 +236,7 @@
             <input name="api_token" type="password" placeholder="API Token удалённой панели 3x-ui" data-required-when="token" data-node-token-input />
             <small class="hint" data-node-token-hint>В 3x-ui v3.4.0 токен показывается только при создании и затем хранится в панели как хеш. Вставь сохранённый полный токен; агрегатор хранит его зашифрованно.</small>
           </div>
-        </div>
+        </fieldset>
 
         <div class="field full js-node-remnawave-only hidden" hidden style="display:none!important">
           <div class="alert ok" style="margin:0;">
@@ -346,7 +351,7 @@
       </label>
 
       <div class="actions node-actions add-node-actions">
-        <label class="switch-row compact js-node-not-auto-select"><input type="checkbox" name="expired_support" value="1" /><span><strong>Только для истёкших подписок</strong><small>Служебный доступ на 3/7 дней из настроек. Назначается всем клиентам в фоне, у активных скрыт и выключен. Нужна отдельная панель 3x-ui / Remnawave, не общая с обычными узлами. Настройте маршрутизацию отдельно.</small></span></label>
+        <label class="switch-row compact js-node-not-auto-select"><input type="checkbox" name="expired_support" value="1" /><span><strong>Только для истёкших подписок</strong><small>Служебный доступ на 3/7 дней из настроек, у активных скрыт и выключен. 3x-ui: можно тот же сервер и панель, но другой пустой inbound с отдельным портом; Nexus создаст отдельные учётные записи. Не включайте импорт клиентов. Remnawave: отдельная панель. Только Telegram разрешите серверной маршрутизацией — сама эта галочка интернет не ограничивает.</small></span></label>
         <button type="submit" class="btn-main add-node-submit" data-node-submit-label>Добавить узел</button>
       </div>
     </form>
@@ -356,9 +361,9 @@
         <div class="auto-select-profile-manager-head">
           <div>
             <h3>Созданные профили «Автовыбор»</h3>
-            <p class="muted">Они добавляются первыми в JSON-подписку. Обычная SUB-ссылка остаётся без изменений.</p>
+            <p class="muted">Все включённые профили добавляются отдельно в JSON-подписку для доступных клиенту узлов. Можно использовать одни и те же узлы в разных профилях. Обычная SUB-ссылка остаётся без изменений.</p>
           </div>
-          <span class="count-chip"><%= autoProfiles.length %></span>
+          <div class="actions"><span class="count-chip"><%= autoProfiles.length %></span><a href="/nodes?tab=add&amp;create=auto_select#node-create-form" class="link-btn secondary">＋ Создать ещё</a></div>
         </div>
 
         <div class="auto-select-profile-list">
@@ -1375,6 +1380,9 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   function setNodeTypeElement(el, visible) {
     if (!el) return;
+    // Late legacy auth handlers may re-enable individual inputs. The native
+    // fieldset guard keeps irrelevant credentials out of validation/POST.
+    if (el.tagName === 'FIELDSET') el.disabled = !visible;
     el.classList.toggle('hidden', !visible);
     el.hidden = !visible;
     if (visible) el.style.removeProperty('display');
@@ -1408,7 +1416,7 @@ document.addEventListener('DOMContentLoaded', () => {
       ? 'Создай токен в панели Remnawave с правами list/create/update/delete для Users; для выбора по Host UUID также разреши чтение Hosts. Aggregator отправляет его как <code>Authorization: Bearer</code> и хранит зашифрованно.'
       : 'Токен удалённой панели 3x-ui хранится зашифрованно.';
     if (summary) summary.textContent = isAutoSelect
-      ? 'Один виртуальный сервер в JSON-подписке: приоритетный узел, затем leastPing по HTTP-проверке, затем аварийный резерв.'
+      ? 'Каждое автоподключение — отдельный профиль JSON со своим названием и набором узлов. Можно создать несколько, в том числе с общими узлами.'
       : (isRemnawave ? 'Подключение к Remnawave Panel API.' : 'Подключение к обычной панели 3x-ui.');
   }
   function updateNodeType(select) {

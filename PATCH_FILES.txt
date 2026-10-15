@@ -3,6 +3,7 @@ lib_node_traffic.js
 lib_client_directory.js
 lib_device_refresh.js
 lib_performance.js
+lib_expired_support.js
 lib_access.js
 lib_client_traffic_reset.js
 package.json
@@ -29,6 +30,9 @@ tests/performance.test.js
 tests/performance-http.test.js
 tests/device-refresh.test.js
 tests/client-activation.test.js
+tests/expired-support.test.js
+tests/support-shared-panel-http.test.js
+tests/subscription-portal-traffic.test.js
 tests/node-traffic-http.test.js
 tests/node-quota-preservation.test.js
 tests/remnawave-live-usage.test.js
@@ -41,3 +45,5 @@ docs/UPDATE_2.7.8.md
 docs/UPDATE_2.7.9.md
 docs/UPDATE_2.7.10.md
 docs/UPDATE_2.7.11.md
+docs/UPDATE_2.7.12.md
+docs/UPDATE_2.7.13.md
