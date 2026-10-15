@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
-const { supportAccess, parseSupportDays, initSupportSchema } = require('../lib_expired_support');
+const { supportAccess, supportReasonText, parseSupportDays, initSupportSchema } = require('../lib_expired_support');
 const { createHash, randomUUID } = require('node:crypto');
 let Database;
 try { Database = require('node:sqlite').DatabaseSync; } catch { Database = require('better-sqlite3'); }
@@ -18,6 +18,36 @@ test('support is invisible before expiry, available for 7 days and expires exact
   assert.equal(supportAccess(client, null, 7, now).active, true);
   assert.equal(supportAccess(client, null, 7, client.expiry_time + 7 * DAY).active, false);
   assert.equal(supportAccess({ ...client, expiry_time: 0 }, null, 7, now).active, false);
+});
+
+test('service uses the same seconds/milliseconds expiry normalization as the subscription notice', () => {
+  const expiry=Math.floor((now-DAY)/1000)*1000;
+  const seconds={...client,expiry_time:expiry/1000};
+  assert.equal(supportAccess(seconds,null,7,now).active,true);
+  assert.equal(supportAccess(seconds,null,7,now).expiryTime,expiry+7*DAY);
+  assert.equal(supportAccess({...seconds,expiry_time:Math.floor((now+DAY)/1000)},null,0,now).active,false);
+});
+
+test('global until-renewal mode is not silently changed back to seven days', () => {
+  const ctx=vm.createContext({getSetting:()=> '0'});
+  vm.runInContext(extract('getSubscriptionExpiredGraceDays'),ctx);
+  assert.equal(ctx.getSubscriptionExpiredGraceDays(),0);
+});
+
+test('old expired clients get until-renewal access while active, disabled and pending clients do not', () => {
+  const old={...client,expiry_time:now-100*DAY};
+  assert.equal(supportAccess(old,null,7,now).reason,'window-ended');
+  const state=supportAccess(old,null,0,now);
+  assert.equal(state.active,true);assert.equal(state.expiryTime,0);assert.equal(state.reason,'available');
+  assert.equal(supportAccess({...old,expiry_time:now+DAY},null,0,now).reason,'not-expired');
+  assert.equal(supportAccess({...old,enabled:0},null,0,now).active,false);
+  assert.equal(supportAccess({...old,start_on_activation:1},null,0,now).active,false);
+  const individual={days:3,base_expiry:old.expiry_time,until_ms:old.expiry_time+3*DAY};
+  assert.equal(supportAccess(old,individual,0,now).active,false,'an explicit individual finite grant retains priority');
+  assert.match(supportReasonText('window-ended'),/срок закончился/);
+  assert.match(supportReasonText('disabled'),/администратором/);
+  const profile=require('../lib_settings_profile');
+  assert.equal(profile.validate('subscription_expired_grace_days','0'),'0');
 });
 test('disabled and activation-pending clients never get support, including unlimited grants', () => {
   for (const c of [{ ...client, enabled: 0 }, { ...client, start_on_activation: 1, activation_started_at: 0 }]) {

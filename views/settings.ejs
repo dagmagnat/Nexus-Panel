@@ -204,15 +204,17 @@
               <input name="subscription_expired_notice_title" maxlength="80" value="<%= subscriptionExpiredNoticeTitle || '' %>" placeholder="⛔ Продлите подписку" />
             </div>
 
-            <div class="field happ-help-source" data-help-title="Grace-период" data-help-text="На выбранных ниже узлах удалённый срок клиента временно продлевается только до конца grace-периода. Сам клиент в Nexus остаётся просроченным.">
+            <div class="field happ-help-source" data-help-title="Срок служебного доступа" data-help-text="3/7 дней считаются от даты окончания основной подписки, не от добавления узла. Если нужны все просроченные клиенты независимо от даты — выберите «До продления основной подписки». Основной VPN не продлевается. Индивидуальные сроки клиентов имеют приоритет.">
               <label>Служебный доступ после окончания</label>
               <select name="subscription_expired_grace_days">
+                <option value="0" <%= Number(subscriptionExpiredGraceDays) === 0 ? 'selected' : '' %>>До продления основной подписки</option>
                 <option value="3" <%= Number(subscriptionExpiredGraceDays) === 3 ? 'selected' : '' %>>3 дня</option>
-                <option value="7" <%= Number(subscriptionExpiredGraceDays) !== 3 ? 'selected' : '' %>>7 дней</option>
+                <option value="7" <%= ![0,3].includes(Number(subscriptionExpiredGraceDays)) ? 'selected' : '' %>>7 дней</option>
               </select>
+              <small class="hint">Для «Telegram для связи» всем просроченным — «До продления основной подписки». В режимах 3/7 дней отсчёт идёт от даты окончания, даже если служебный узел добавлен сегодня.</small>
             </div>
 
-            <div class="field span-2 subscription-policy-field happ-help-source" data-help-title="Grace-узлы после окончания" data-help-text="3x-ui: можно ту же панель, но отдельный пустой inbound/порт; Nexus создаст изолированные служебные учётные записи. Remnawave: отдельная панель. Ограничьте выход на сервере, например только Telegram. Узел скрыт у активных и появляется после окончания на 3/7 дней или индивидуальный срок.">
+            <div class="field span-2 subscription-policy-field happ-help-source" data-help-title="Grace-узлы после окончания" data-help-text="3x-ui: та же панель, отдельный пустой inbound/порт и изолированные аккаунты. Remnawave: отдельная панель. Узел скрыт у активных и выдаётся после окончания на выбранный выше срок, включая «До продления». Ограничьте выход на сервере, например только Telegram.">
               <label>Узлы, доступные после окончания подписки</label>
               <div class="subscription-policy-node-picker">
                 <% if (!(subscriptionPolicyNodes || []).length) { %>
@@ -225,7 +227,7 @@
                   </label>
                 <% }) %>
               </div>
-              <small class="hint">3x-ui: второй сервер не нужен — используйте другой пустой inbound с отдельным портом в той же панели. UUID/email служебных записей отдельные; не привязывайте их к обычным inbound вручную. Remnawave пока требует отдельную панель. Nexus снимает IP/трафик-лимит только у служебного аккаунта и задаёт 3/7 дней либо индивидуальный срок. Ограничьте выход серверной маршрутизацией: иначе здесь тоже будет доступен весь интернет. Отделить текст от видео внутри Telegram этими правилами нельзя.</small>
+              <small class="hint">3x-ui: второй сервер не нужен — используйте другой пустой inbound с отдельным портом в той же панели. UUID/email служебных записей отдельные; не привязывайте их к обычным inbound вручную. Remnawave пока требует отдельную панель. IP/трафик-лимит снимается только у служебного аккаунта на выбранный срок. Ограничьте выход серверной маршрутизацией: иначе здесь тоже будет доступен весь интернет. Отделить текст от видео внутри Telegram этими правилами нельзя.</small>
             </div>
           </div>
 

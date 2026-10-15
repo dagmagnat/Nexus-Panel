@@ -6,11 +6,13 @@
 
 Nexus Panel объединяет узлы **3x-ui** и **Remnawave** в одной панели: клиенты, подписки, лимиты, трафик, маршрутизация, перенаправление, Telegram и резервные копии.
 
-[![Version](https://img.shields.io/badge/version-2.7.13-blue)](https://github.com/dagmagnat/Nexus-Panel)
+[![Version](https://img.shields.io/badge/version-2.7.14-blue)](https://github.com/dagmagnat/Nexus-Panel)
 ![Node.js](https://img.shields.io/badge/node-%3E%3D22-gray)
 ![License](https://img.shields.io/badge/license-MIT-gray)
 
 ## Что умеет панель
+
+Служебный доступ всем просроченным до продления, даты и диагностика 2.7.14: [docs/UPDATE_2.7.14.md](docs/UPDATE_2.7.14.md).
 
 Несколько независимых автоподключений 2.7.13: [docs/UPDATE_2.7.13.md](docs/UPDATE_2.7.13.md).
 

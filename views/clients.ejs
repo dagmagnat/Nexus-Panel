@@ -1160,7 +1160,7 @@
       </div>
       <div class="client-detail-summary client-editor-summary">
         <% if (typeof supportAccessSummary === 'function') { supportAccessSummary(client).forEach(state => { %>
-          <div><span>Служебный: <%= state.name %></span><strong><%= state.active ? 'Доступен' : 'Не активен' %> · <%= state.unlimited ? 'без срока' : state.days + ' дн.' %></strong><small><%= state.individual ? 'Индивидуальное назначение' : 'По общим настройкам' %><% if (!state.unlimited && state.expiryTime > 0) { %> · до <%= new Date(state.expiryTime).toLocaleString('ru-RU') %><% } %></small></div>
+          <div><span>Служебный: <%= state.name %></span><strong><%= state.statusText || (state.active ? 'Доступен' : 'Не активен') %> · <%= state.unlimited ? 'до продления основной подписки' : state.days + ' дн.' %></strong><small><%= state.individual ? 'Индивидуальное назначение (имеет приоритет)' : 'По общим настройкам' %><% if (!state.unlimited && state.expiryTime > 0) { %> · до <%= new Date(state.expiryTime).toLocaleString('ru-RU') %><% } %></small><% if (state.syncStatus) { %><small><%= state.syncStatus %></small><% } %></div>
         <% }); } %>
         <div class="client-summary-id"><span>ID</span><strong><%= client.id %></strong></div>
         <div><span>Статус</span><strong class="badge <%= clientStatusMeta(client).key %>"><%= clientStatusMeta(client).label %></strong></div>

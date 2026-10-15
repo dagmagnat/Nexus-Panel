@@ -29,7 +29,7 @@ const { createNodeTraffic, dateRange: nodeTrafficDateRange } = require('./lib_no
 const { initClientDirectory, queryClientDirectory } = require('./lib_client_directory');
 const { deviceRefreshPolicy, applyDeviceRefreshPolicy } = require('./lib_device_refresh');
 const { createAsyncReadCache, cooperativeMap, yieldToRequests } = require('./lib_performance');
-const { supportAccess, parseSupportDays, initSupportSchema } = require('./lib_expired_support');
+const { supportAccess, supportReasonText, parseSupportDays, initSupportSchema } = require('./lib_expired_support');
 const { initNexusNodeControlSchema, attachNexusNodeControl } = require('./lib_nexus_node_control');
 
 const COUNTRIES = [
@@ -2113,9 +2113,14 @@ function render(res, view, params = {}) {
     expiredSupportNodeIds: getSubscriptionExpiredGraceNodeIds(),
     expiredSupportDays: getSubscriptionExpiredGraceDays(),
     supportSyncErrors: db.prepare("SELECT node_id, COUNT(*) AS count FROM client_support_sync WHERE error != '' GROUP BY node_id").all(),
-    supportAccessSummary: client => getExpiredGraceState(client).states.map(state => ({ ...state,
-      name: getNodeDisplayName(db.prepare('SELECT * FROM nodes WHERE id = ?').get(state.nodeId)),
-      individual: Boolean(db.prepare('SELECT 1 FROM client_support_grants WHERE client_id=? AND node_id=?').get(client.id, state.nodeId)) })),
+    supportAccessSummary: client => getExpiredGraceState(client).states.map(state => {
+      const sync=db.prepare('SELECT updated_at,error FROM client_support_sync WHERE client_id=? AND node_id=?').get(client.id,state.nodeId);
+      const mapped=db.prepare('SELECT 1 FROM client_nodes WHERE client_id=? AND node_id=?').get(client.id,state.nodeId);
+      return { ...state, statusText: supportReasonText(state.reason),
+        syncStatus: sync?.error ? `Ошибка синхронизации: ${sync.error}` : !mapped || !sync?.updated_at ? 'Ожидается фоновое создание/синхронизация' : 'Учётная запись синхронизирована',
+        name: getNodeDisplayName(db.prepare('SELECT * FROM nodes WHERE id = ?').get(state.nodeId)),
+        individual: Boolean(db.prepare('SELECT 1 FROM client_support_grants WHERE client_id=? AND node_id=?').get(client.id, state.nodeId)) };
+    }),
     currentAdminUsername,
     workspaceName: access.control.prepare('SELECT name FROM workspaces WHERE id=?').get(res.locals.workspaceId || WORKSPACE_ID)?.name || 'Основное',
     clientDefaults: Object.fromEntries(Object.entries(require('./lib_settings_profile').rules).filter(([key]) => key.startsWith('client_default_')).map(([key, rule]) => [key, getSetting(key, rule.fallback)])),
@@ -3096,7 +3101,9 @@ function getSubscriptionPolicyNodeIds(settingKey) {
 }
 
 function getSubscriptionExpiredGraceDays() {
-  const days = Number(getSetting('subscription_expired_grace_days', '7'));
+  const raw=String(getSetting('subscription_expired_grace_days', '7')).trim();
+  if (raw==='0') return 0;
+  const days = Number(raw);
   return days === 3 ? 3 : 7;
 }
 
@@ -3124,7 +3131,8 @@ function getExpiredGraceState(clientRow, nowMs = Date.now()) {
     if (!node) return [];
     const state = supportAccess(clientRow,
       db.prepare('SELECT * FROM client_support_grants WHERE client_id = ? AND node_id = ?').get(clientRow.id, nodeId), days, nowMs);
-    return [{ nodeId, ...state, active: state.active && Number(node.enabled) !== 0 }];
+    return [{ nodeId, ...state, active: state.active && Number(node.enabled) !== 0,
+      reason: Number(node.enabled)===0 ? 'node-disabled' : state.reason }];
   });
   const activeStates = states.filter(state => state.active);
   const graceExpiryTime = activeStates.some(state => state.unlimited) ? 0 : Math.max(0, ...activeStates.map(state => state.expiryTime));
@@ -15276,7 +15284,7 @@ app.post('/settings/happ-control', requireAuth, (req, res) => {
     setSetting('subscription_expired_notice_title', sanitizeSubscriptionDeviceText(req.body.subscription_expired_notice_title, 80) || '⛔ Продлите подписку');
     setSetting('subscription_device_limit_notice_title', sanitizeSubscriptionDeviceText(req.body.subscription_device_limit_notice_title, 80) || '⚠️ Превышен лимит устройств');
 
-    const graceDays = Number(req.body.subscription_expired_grace_days) === 3 ? 3 : 7;
+    const graceDays = String(req.body.subscription_expired_grace_days).trim() === '0' ? 0 : (Number(req.body.subscription_expired_grace_days) === 3 ? 3 : 7);
     const expiredGraceNodeIds = sanitizeSubscriptionPolicyNodeIdsFromBody(req.body.subscription_expired_grace_node_ids);
     for (const id of expiredGraceNodeIds) validateSupportIsolation({ ...db.prepare('SELECT * FROM nodes WHERE id = ?').get(id), expired_support: true });
     const deviceLimitNodeIds = sanitizeSubscriptionPolicyNodeIdsFromBody(req.body.subscription_device_limit_node_ids);
@@ -16618,7 +16626,8 @@ app.post('/nodes/:id/renew-support', requireAuth, (req, res) => {
     const ids = clients.filter(client => !isClientActivationPending(client) && !supportAccess(client,
       db.prepare('SELECT * FROM client_support_grants WHERE client_id=? AND node_id=?').get(client.id, nodeId), getSubscriptionExpiredGraceDays()).active).map(client => client.id);
     const count = ids.length ? assignSupportDays(ids, [nodeId], 'renew') : 0;
-    res.redirect('/nodes?tab=list&message=' + encodeURIComponent(`Продлён служебный доступ ${count} клиентам на ${getSubscriptionExpiredGraceDays()} дней от текущего времени. Действующие и бессрочные назначения сохранены. Синхронизация выполняется в фоне.`));
+    const term = getSubscriptionExpiredGraceDays()===0 ? 'до продления основной подписки' : `на ${getSubscriptionExpiredGraceDays()} дней от текущего времени`;
+    res.redirect('/nodes?tab=list&message=' + encodeURIComponent(`Продлён служебный доступ ${count} клиентам ${term}. Действующие и бессрочные назначения сохранены. Синхронизация выполняется в фоне.`));
   } catch (err) { res.redirect('/nodes?error=' + encodeURIComponent(err.message)); }
 });
 

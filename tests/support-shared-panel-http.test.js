@@ -37,10 +37,10 @@ async function waitFor(fn) {
   throw Error('Background service sync timed out');
 }
 
-for (const modern of [true,false]) test(`same-panel support lifecycle over HTTP (${modern?'global v3':'legacy inbound API'})`,{timeout:60000},async t=>{
+for (const [modern,ageDays] of [[true,1],[false,1],[true,30],[false,30]]) test(`same-panel support lifecycle over HTTP (${modern?'global v3':'legacy inbound API'}, expired ${ageDays}d)`,{timeout:60000},async t=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'nexus-support-'));
   const remote=new Map(), mutations=[];
-  const paid={id:'00000000-0000-4000-8000-000000000011',email:'paid-user',subId:'paid-sub',enable:false,expiryTime:Date.now()-DAY,totalGB:5*1024**3,inboundIds:[1]};
+  const paid={id:'00000000-0000-4000-8000-000000000011',email:'paid-user',subId:'paid-sub',enable:false,expiryTime:Date.now()-ageDays*DAY,totalGB:5*1024**3,inboundIds:[1]};
   remote.set(paid.email,structuredClone(paid));
   const inbound=id=>({id,port:id===1?1443:2443,protocol:'vless',enable:true,remark:id===1?'Paid':'Telegram',
     settings:JSON.stringify({clients:[...remote.values()].filter(c=>c.inboundIds.includes(id)).map(c=>({...c}))}),
@@ -106,10 +106,24 @@ for (const modern of [true,false]) test(`same-panel support lifecycle over HTTP 
   const serviceNode=db.prepare('SELECT * FROM nodes WHERE id!=1').get();assert.ok(serviceNode);
   const s=await waitFor(()=>db.prepare('SELECT * FROM client_nodes WHERE node_id=?').get(serviceNode.id));
   assert.notEqual(s.remote_uuid,paid.id);assert.notEqual(s.remote_email,paid.email);
+  if(ageDays>7){
+    await waitFor(()=>remote.get(s.remote_email)?.enable===false);
+    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM client_support_sync WHERE error!=?').get('').n,0,'zero sync errors does not imply eligibility');
+    assert.match(await(await request('/clients')).text(),/Служебный срок закончился/);
+    for(const route of ['/sub/local-sub','/json/local-sub?download=1']){
+      const absent=await(await request(route)).text();
+      assert.ok(!absent.includes(s.remote_uuid),'finite window ended: service must be absent before changing policy');
+    }
+    // Save through the real settings handler, not a direct DB override.
+    const change=await request('/settings/happ-control',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({_csrf:token,subscription_expired_grace_days:'0',subscription_expired_grace_node_ids:String(serviceNode.id),subscription_expired_notice_enabled:'1',subscription_userinfo_header:'1'})});
+    assert.equal(change.status,302);
+    assert.equal(db.prepare("SELECT value FROM app_settings WHERE key='subscription_expired_grace_days'").get().value,'0');
+  }
   await waitFor(()=>remote.get(s.remote_email)?.enable===true);
-  assert.deepEqual(remote.get(paid.email),paid,'service activation must not modify the paid global account');
+  assert.match(await(await request('/clients')).text(),/Служебный доступ разрешён/);
+  for(const key of Object.keys(paid))assert.deepEqual(remote.get(paid.email)[key],paid[key],`service activation must preserve paid ${key}`);
   assert.deepEqual(remote.get(s.remote_email).inboundIds,[2]);
-  assert.equal(remote.get(s.remote_email).expiryTime,paid.expiryTime+7*DAY);
+  assert.equal(remote.get(s.remote_email).expiryTime,ageDays>7?0:paid.expiryTime+7*DAY);
   assert.equal(remote.get(s.remote_email).totalGB,0);
   const backup=await(await request('/backup/download')).json();
   assert.equal(backup.data.client_support_identities.length,1);
@@ -117,8 +131,21 @@ for (const modern of [true,false]) test(`same-panel support lifecycle over HTTP 
   const sub=await(await request('/sub/local-sub')).text();
   const decoded=sub.includes('://')?sub:Buffer.from(sub,'base64').toString();
   assert.ok(decoded.includes(s.remote_uuid),decoded);assert.ok(!decoded.includes(paid.id),decoded);assert.ok(decoded.includes(':2443'),decoded);
-  const json=await(await request('/json/local-sub?download=1')).text();
+  const jsonResponse=await request('/json/local-sub?download=1');
+  if(ageDays>7){
+    assert.match(jsonResponse.headers.get('subscription-userinfo')||'',/upload=/);
+    assert.doesNotMatch(jsonResponse.headers.get('subscription-userinfo')||'',/expire=|total=/);
+  }
+  const json=await jsonResponse.text();
   assert.ok(json.includes(s.remote_uuid),json);assert.ok(!json.includes(paid.id),json);
+  const configs=JSON.parse(json);
+  assert.equal(configs.length,2,'notice followed by the real service config, no ordinary regions');
+  assert.ok(configs[0].outbounds.some(o=>o.protocol==='vless' && o.settings?.vnext?.[0]?.port===1));
+  assert.ok(configs[1].outbounds.some(o=>o.protocol==='vless' && o.settings?.vnext?.[0]?.port===2443));
+  db.prepare('UPDATE client_nodes SET enabled=0 WHERE node_id=?').run(serviceNode.id);
+  const repaired=await(await request('/json/local-sub?download=1')).text();
+  assert.ok(repaired.includes(s.remote_uuid),'expired refresh repairs a disabled service mapping');
+  assert.equal(db.prepare('SELECT enabled FROM client_nodes WHERE node_id=?').get(serviceNode.id).enabled,1);
   const paidAfterExpiry=structuredClone(remote.get(paid.email));
   assert.equal(paidAfterExpiry.enable,false);assert.equal(paidAfterExpiry.totalGB,paid.totalGB);assert.equal(paidAfterExpiry.expiryTime,paid.expiryTime);
   r=await request('/nodes',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({...form,inbound_id:'1'})});
@@ -131,6 +158,8 @@ for (const modern of [true,false]) test(`same-panel support lifecycle over HTTP 
   assert.deepEqual(remote.get(paid.email),paidAfterExpiry);
   assert.equal(db.prepare('SELECT uuid FROM clients WHERE id=1').get().uuid,paid.id);
   assert.equal(db.prepare('SELECT remote_uuid FROM client_nodes WHERE node_id=?').get(serviceNode.id).remote_uuid,s.remote_uuid);
+  const renewed=await(await request('/json/local-sub?download=1')).text();
+  assert.ok(!renewed.includes(s.remote_uuid),'service hidden after main renewal');
   if(modern){
     // Manual attachment of the service account to a paid inbound must not
     // turn into a global enable via the new API.

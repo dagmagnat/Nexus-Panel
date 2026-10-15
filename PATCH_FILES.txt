@@ -4,6 +4,7 @@ lib_client_directory.js
 lib_device_refresh.js
 lib_performance.js
 lib_expired_support.js
+lib_settings_profile.js
 lib_access.js
 lib_client_traffic_reset.js
 package.json
@@ -15,6 +16,7 @@ README.md
 PROJECT_HANDOFF.md
 views/clients.ejs
 views/settings.ejs
+views/preferences.ejs
 views/routing.ejs
 views/dashboard.ejs
 views/nodes.ejs
@@ -47,3 +49,4 @@ docs/UPDATE_2.7.10.md
 docs/UPDATE_2.7.11.md
 docs/UPDATE_2.7.12.md
 docs/UPDATE_2.7.13.md
+docs/UPDATE_2.7.14.md

@@ -13,7 +13,7 @@
 <form action="/preferences/options" method="post" class="management-form">
 <% Object.entries(rules).filter(([key]) => !key.startsWith('client_default_')).forEach(([key,rule]) => { const value = profile.settings[key] ?? rule.fallback; %>
 <label><%= preferenceLabels[key] || key %>
-<% if (rule.values) { %><select name="<%= key %>"><% rule.values.forEach(option => { %><option value="<%= option %>" <%= value === option ? 'selected' : '' %>><%= rule.values.length === 2 && rule.values[0] === '0' ? (option === '1' ? 'Включено' : 'Выключено') : option %></option><% }) %></select>
+<% if (rule.values) { %><select name="<%= key %>"><% rule.values.forEach(option => { %><option value="<%= option %>" <%= value === option ? 'selected' : '' %>><%= key === 'subscription_expired_grace_days' ? (option === '0' ? 'До продления основной подписки' : option + ' дней от окончания') : rule.values.length === 2 && rule.values[0] === '0' ? (option === '1' ? 'Включено' : 'Выключено') : option %></option><% }) %></select>
 <% } else { %><input type="number" name="<%= key %>" min="<%= rule.min %>" max="<%= rule.max %>" step="1" value="<%= value %>" required><% } %></label><% }) %>
 <div class="management-form-actions"><button class="btn" type="submit">Сохранить переключатели</button></div></form></details></section>
 <section class="card" style="margin-top:16px"><h2>Передать только настройки</h2>
