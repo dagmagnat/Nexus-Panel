@@ -132,11 +132,12 @@
   <section class="card span-6 routing-editor-card">
     <h2>Маршрутизация JSON</h2>
     <p class="muted">Правила встраиваются непосредственно в каждый выбранный JSON-конфиг. Отдельный Happ routing-профиль настраивается независимо в разделе «Подписки и приложения».</p>
+    <p class="hint">Работает для выбранных узлов 3x-ui и Remnawave через JSON-ссылку Nexus. Обычные VLESS/SUB-ссылки не содержат эти правила. Профили и серверная маршрутизация Remnawave не изменяются.</p>
 
     <form method="post" action="/routing" class="routing-form">
       <label class="switch-row">
         <input type="checkbox" name="routing_enabled" value="1" <%= routingEnabled ? 'checked' : '' %> />
-        <span><strong>Использовать маршрутизацию</strong><small>Если выключить, JSON будет без proxy-правил и почти всё пойдёт напрямую.</small></span>
+        <span><strong>Использовать маршрутизацию</strong><small>Если выключить, Nexus не добавляет свои правила; маршрут определяется конфигурацией и режимом приложения.</small></span>
       </label>
 
       <h3>Режимы и узлы</h3>

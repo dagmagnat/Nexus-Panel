@@ -19165,7 +19165,10 @@ function buildRoutingRules(routingOutboundTag = '', routingMode = '') {
 
 function isRoutingEnabledForNode(nodeId) {
   const node = db.prepare('SELECT node_type FROM nodes WHERE id = ?').get(Number(nodeId));
-  if (node && [NODE_TYPE_H1CLOUD, NODE_TYPE_REMNAWAVE].includes(getNodeType(node))) return false;
+  // Remnawave supplies the VLESS transport; Nexus still builds the client
+  // JSON. Its routing is governed by the same assignment as a 3x-ui node,
+  // without modifying the remote server's profile or cascade rules.
+  if (node && getNodeType(node) === NODE_TYPE_H1CLOUD) return false;
   const cfg = getRoutingConfig();
   if (cfg.enabled === false) return false;
   if (cfg.assignmentExplicit === true) return !!getRoutingModeForNode(nodeId, cfg);

@@ -1,11 +1,12 @@
 {
-  "version": "2.7.10",
-  "name": "Nexus Panel 2.7.10 — fast landing page and incremental traffic collection",
+  "version": "2.7.11",
+  "name": "Nexus Panel 2.7.11 — Remnawave client JSON routing",
   "repository": "https://github.com/dagmagnat/Nexus-Panel",
   "archive_url": "https://github.com/dagmagnat/Nexus-Panel/archive/refs/heads/main.zip",
   "archive": "Nexus-Panel-main.zip",
   "filename": "Nexus-Panel-main.zip",
   "notes": [
+    "Remnawave: убран ошибочный запрет маршрутизации JSON; применяются режим, исключения и блокировки выбранных в Nexus узлов без изменения серверного профиля.",
     "Вход и главная: история трафика и лимиты загружаются отдельно, без ожидания удалённых узлов и записи снимков на каждый переход.",
     "Remnawave: короткое окно обычного опроса, полная сверка раз в сутки и при сбросе; каталог общей панели читается один раз за сбор.",
     "Неблокирующая проверка пароля и git-метаданных; короткий серверный кэш онлайн, постраничные лимиты на главной и диагностика медленных запросов.",

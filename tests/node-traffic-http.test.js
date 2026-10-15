@@ -12,7 +12,8 @@ test('real HTTP: scoped reporting, individual/bulk/all reset, CSRF and viewer pr
     let response;
     if(route.startsWith('/sub/users/')) {
       const u=users.find(u=>route.endsWith('/'+u.id));
-      res.setHeader('content-type','text/plain');res.end(physical.flatMap((uuid,i)=>u.activeInternalSquads.includes(squads[i]) ? [`vless://${u.vlessUuid}@${i?'finland':'germany'}.invalid:443?security=tls&type=xhttp#${i?'Finland':'Germany'}`] : []).join('\n'));return;
+      const extra=encodeURIComponent(JSON.stringify({xPaddingBytes:'100-1000',xPaddingObfsMode:true,xPaddingPlacement:'queryInHeader'}));
+      res.setHeader('content-type','text/plain');res.end(physical.flatMap((uuid,i)=>u.activeInternalSquads.includes(squads[i]) ? [`vless://${u.vlessUuid}@${i?'finland':'germany'}.invalid:443?security=tls&type=xhttp&host=cdn.example.invalid&path=%2Fstreaming%2Fcontent%2Fmusic-cascade%2F&mode=packet-up&extra=${extra}#${i?'Finland':'Germany'}`] : []).join('\n'));return;
     }
     if(route==='/api/nodes')response={nodes:physical.map(uuid=>({uuid}))};
     else if(route==='/api/system/metadata')response={version:'3.3.0'};
@@ -69,6 +70,38 @@ test('real HTTP: scoped reporting, individual/bulk/all reset, CSRF and viewer pr
   r=await request('/clients/traffic/reset-selected',{client_ids:[1,1],reset_node_id:2});assert.equal(r.status,200,r.text);assert.match(outcome(r.text),/Сброшено счётчиков: 1 из 1/);assert.equal(db.prepare('SELECT used_bytes FROM client_nodes WHERE client_id=2 AND node_id=2').get().used_bytes,GB);assert.deepEqual(resets,[]);
   r=await request('/clients/traffic/reset-selected',{client_ids:[1],reset_node_id:'all'});assert.match(outcome(r.text),/Сброшено счётчиков: 2 из 2/);assert.deepEqual(resets,[17]);
   data=JSON.parse((await request('/node-traffic/data.json?from='+today+'&to='+today)).text);assert.equal(data.nodes[0].totalBytes,50*GB);assert.equal(data.nodes[1].totalBytes,3*GB);
+  // Routing saved in Nexus must apply to Remnawave JSON entries, not change
+  // server profiles or their XHTTP/TLS transport settings.
+  r=await request('/routing');assert.equal(r.status,200,r.text);assert.match(r.text,/data-node-id="1"/);assert.match(r.text,/data-node-id="2"/);
+  const routingForm={routing_enabled:'1',routing_modes:['proxy-except','node-selective'],routing_mode_nodes_proxy_except:[1],routing_mode_nodes_node_selective:[2],
+    except_domains:'domain:direct-only.example',custom_domains:'domain:proxy-only.example',adblock_enabled:'1',adblock_domains:'domain:ads-only.example'};
+  r=await request('/routing',routingForm);assert.equal(r.status,302,r.text);assert.ok(!r.location.includes('error='),r.location);
+  async function jsonConfigs(query='') {
+    const result=await request('/json/synthetic-0?download=1'+query);assert.equal(result.status,200,result.text);return JSON.parse(result.text);
+  }
+  let configs=await jsonConfigs();assert.equal(configs.length,2);
+  const configFor=(items,address)=>items.find(config=>config.outbounds.some(out=>out.settings?.vnext?.[0]?.address===address));
+  const germany=configFor(configs,'germany.invalid'),finland=configFor(configs,'finland.invalid');
+  assert.ok(germany.routing,'Remnawave Germany must receive assigned Nexus routing');
+  assert.ok(finland.routing,'Remnawave Finland must receive assigned Nexus routing');
+  assert.ok(germany.routing.rules.some(rule=>rule.domain?.includes('domain:direct-only.example')&&rule.outboundTag==='direct'));
+  assert.equal(germany.routing.rules.at(-1).outboundTag,'proxy');
+  assert.ok(finland.routing.rules.some(rule=>rule.domain?.includes('domain:proxy-only.example')&&rule.outboundTag==='proxy'));
+  assert.equal(finland.routing.rules.at(-1).outboundTag,'direct');
+  for(const config of configs) {
+    assert.ok(config.routing.rules.some(rule=>rule.domain?.includes('domain:ads-only.example')&&rule.outboundTag==='block'));
+    const proxy=config.outbounds.find(out=>out.tag==='proxy');assert.equal(proxy.streamSettings.network,'xhttp');assert.equal(proxy.streamSettings.security,'tls');
+    assert.equal(proxy.streamSettings.xhttpSettings.host,'cdn.example.invalid');assert.equal(proxy.streamSettings.xhttpSettings.path,'/streaming/content/music-cascade/');
+    assert.equal(proxy.streamSettings.xhttpSettings.mode,'packet-up');assert.equal(proxy.streamSettings.xhttpSettings.extra.xPaddingObfsMode,true);
+    assert.equal(proxy.settings.vnext[0].users[0].id,users[0].vlessUuid);
+  }
+  const single=await jsonConfigs('&node=1');assert.deepEqual(single.routing,configs[0].routing);
+  const previousTransport=germany.outbounds.find(out=>out.tag==='proxy');
+  r=await request('/routing',{...routingForm,routing_modes:['proxy-except']});assert.ok(!r.location.includes('error='),r.location);
+  configs=await jsonConfigs();assert.equal(configFor(configs,'finland.invalid').routing,undefined,'unassigned node must not inherit routing');
+  r=await request('/routing',{...routingForm,routing_enabled:'0'});assert.ok(!r.location.includes('error='),r.location);
+  configs=await jsonConfigs();assert.ok(configs.every(config=>!config.routing),'global off is respected');
+  assert.deepEqual(configFor(configs,'germany.invalid').outbounds.find(out=>out.tag==='proxy'),previousTransport);
   assert.equal((await request('/node-traffic/data.json?from=2026-02-30')).status,400);
   assert.equal((await request('/clients')).status,200,log);
   // Real HTTP directory: only page clients and their modals are serialized.

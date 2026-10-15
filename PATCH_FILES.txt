@@ -14,6 +14,7 @@ README.md
 PROJECT_HANDOFF.md
 views/clients.ejs
 views/settings.ejs
+views/routing.ejs
 views/dashboard.ejs
 views/nodes.ejs
 views/node_edit.ejs
@@ -31,6 +32,7 @@ tests/client-activation.test.js
 tests/node-traffic-http.test.js
 tests/node-quota-preservation.test.js
 tests/remnawave-live-usage.test.js
+tests/remnawave-routing.test.js
 tests/client-traffic-reset.test.js
 tests/usage-directory-2.7.3.test.js
 tests/spectrum-clear-2.1.test.js
@@ -38,3 +40,4 @@ tests/installer-source-migration.test.js
 docs/UPDATE_2.7.8.md
 docs/UPDATE_2.7.9.md
 docs/UPDATE_2.7.10.md
+docs/UPDATE_2.7.11.md

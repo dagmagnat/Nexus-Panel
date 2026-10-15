@@ -1,6 +1,6 @@
 # Nexus Panel — журнал продолжения разработки
 
-Последнее обновление: **2026-10-12**
+Последнее обновление: **2026-10-15**
 
 Этот файл нужно читать первым при продолжении работы из другой учётной записи или нового чата. После каждой доработки обновляйте разделы «Последнее изменение», «Изменённые файлы» и «Проверки».
 
@@ -11,6 +11,17 @@
 - Папка `node_modules` в исходный архив не входит и в итоговые архивы изменений попадать не должна.
 
 ## Последнее изменение
+
+2026-10-15 — Nexus 2.7.11, маршрутизация Remnawave в JSON:
+
+- Найден прямой hardcoded запрет Remnawave в isRoutingEnabledForNode: UI разрешал назначение, но JSON не содержал routing. Убран только Remnawave-запрет; логика режима/выбора узлов/global off сохранена. Это клиентские правила, серверные Config Profiles/relay/exit не меняются.
+- views/routing.ejs: явное пояснение 3x-ui/Remnawave и JSON Nexus; исправлено вводящее в заблуждение обещание direct при выключенной маршрутизации. SUB/VLESS не несут Xray routing; отдельный Happ-профиль не включается.
+- tests/remnawave-routing.test.js: 3 воспроизведения до исправления, затем 3 pass; aliases, assigned/unassigned, global off, legacy allNodes/exclusions. tests/node-traffic-http.test.js дополнен реальным POST routing, JSON array/single, двумя режимами на двух Remna узлах, block/direct/proxy, снятием назначения, выключением и равенством транспорта.
+- HTTP fixture Remnawave 3.3.0 теперь включает XHTTP host/path/mode/padding: проверено сохранение xPaddingObfsMode и пути music-cascade, VLESS UUID/TLS/address. Fixture не поддерживает мутации серверных Config Profiles. Свежий целевой набор 27/27, JS check и 20 EJS успешно; performance benchmark прежний порядок 16–29 мс главная. На телефоне/боевом сервере не проверялось.
+- Полный прогон: 218 тестов, 192 pass, 10 прежних fail, 16 platform skip. Категории совпадают с записью 2.7.10 (Python PATH ×3, VM subscriptionRequestBudget, старые assertions node-inbound/CSS/UX grace/device grace/autoselect quota, workspace RBAC). Полный набор не зелёный.
+- Пользователь подтвердил ускорение после установки предыдущей 2.7.10. 2.7.11 не установлена и не опубликована в GitHub. Версии package/lock/VERSION/update/README=2.7.11, инструкция docs/UPDATE_2.7.11.md, накопительный patch manifest + прежний Docker-helper (со ссылками на новую инструкцию), поддерживаемая исходная база 2.7.7–2.7.10.
+
+Изменены: app.js, views/routing.ejs, tests/remnawave-routing.test.js (новый), tests/node-traffic-http.test.js, tests/installer-source-migration.test.js, package.json/package-lock.json/VERSION/update.json/README.md, docs/UPDATE_2.7.11.md (новый), PROJECT_HANDOFF.md/PATCH_FILES.txt/apply-node-traffic-update.sh. Незавершённый вопрос переиспользования каскада panel-script-v1 при смене exit не смешивался с этим исправлением Nexus.
 
 2026-10-12 — Nexus 2.7.10, оптимизация входа/страниц (локально, не production):
 
