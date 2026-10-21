@@ -299,6 +299,12 @@
           <small class="hint">Параметры и порт берутся из выбранного inbound 3x-ui, а не создаются случайно. Если ID не найден, узел не будет добавлен. Для локальной Docker-панели также проверяется публикация VPN-порта; добавить её можно на сервере командой x-ui ports.</small>
         </div>
 
+        <div class="field full js-node-3xui-only js-node-3xui-editable-only">
+          <input type="hidden" name="udp443_controls" value="1" />
+          <label class="switch-row compact"><input type="checkbox" name="allow_udp443" value="1" checked /><span><strong>Разрешать UDP/443 · Vision / Mux</strong><small>Для обычной 3x-ui: включено по умолчанию. В ссылках и JSON Nexus снимает ограничение UDP/443 у VLESS Vision; в уже используемом Mux JSON выбирает skip. Mux не включается. Без галочки — стандартный Vision и reject в Mux. Для VLESS без Vision и без Mux галочка ничего не меняет; это не общий firewall.</small></span></label>
+          <small class="hint">Обнови подписку Nexus и переподключись. Настройки сервера, Remnawave и каскада не меняются; серверный запрет UDP не отменяется.</small>
+        </div>
+
         <div class="field full js-node-3xui-only source-subscription-controls">
           <div class="source-subscription-controls-head">
             <div><strong>Наследовать настройки JSON-подписки из этой 3x-ui</strong><small>При добавлении Nexus прочитает реальные <code>subJsonMux</code> и <code>subJsonFinalMask</code>. По умолчанию всё выключено: включай параметры по одному для проверки совместимости клиентов.</small></div>

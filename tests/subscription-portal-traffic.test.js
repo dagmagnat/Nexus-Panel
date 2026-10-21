@@ -89,6 +89,12 @@ async function startMock3xui(options = {}) {
   const server = http.createServer((req, res) => {
     requestedPaths.push(`${req.method} ${req.url}`);
     res.setHeader('Content-Type', 'application/json');
+    if (options.inbound) {
+      const send = obj => res.end(JSON.stringify({ success: true, obj }));
+      if (req.url === '/panel/api/server/status') return send({ version: '3.4.0' });
+      if (/^\/panel\/api\/inbounds\/get\/\d+$/.test(req.url)) return send(options.inbound(Number(req.url.split('/').at(-1))));
+      if (req.url === '/panel/api/setting/all') return send({ subJsonMux: JSON.stringify(options.mux || {}), subJsonFinalMask: '' });
+    }
     if (req.method === 'GET' && req.url === '/panel/api/clients/traffic/portal-user') {
       // A real 3x-ui compatibility failure often arrives as HTTP 200.
       res.end(JSON.stringify({ success: false, msg: 'unsupported endpoint', obj: null }));
@@ -462,6 +468,105 @@ test('per-node quota never includes traffic spent on another node', { timeout: 6
   assert.ok(lteNode);
   assert.equal(lteNode.usedBytes, 7 * gib);
   assert.equal(lteNode.totalBytes, 50 * gib);
+});
+
+test('ordinary 3x-ui UDP443 migrates, saves per node and survives JSON, SUB, auto pools and restart', { timeout:60000 }, async t => {
+  const dataDir = fs.mkdtempSync(path.join(projectRoot, '.tmp-node-udp443-'));
+  const uuid = '11111111-2222-4333-8444-555555555555';
+  const sourceMux = { enabled: true, concurrency: 8, xudpConcurrency: 16, xudpProxyUDP443: 'reject' };
+  const inbound = id => ({ id, port: 2052 + id, protocol: 'vless', enable: true,
+    settings: JSON.stringify({ decryption: 'none', clients: [{ id: uuid, email: 'portal-user', enable: true, flow: 'xtls-rprx-vision' }] }),
+    streamSettings: JSON.stringify({ network: 'tcp', security: 'reality', realitySettings: { publicKey: 'test-key', serverNames: ['example.test'], shortIds: ['abcd'] } }),
+    sniffing: '{}' });
+  const mock = await startMock3xui({ inbound, mux: sourceMux });
+  let app, db;
+  t.after(async () => { await stopApp(app); db?.close(); await new Promise(r => mock.server.close(r)); fs.rmSync(dataDir, { recursive: true, force: true }); });
+  app = await startApp(dataDir); seedSubscription(dataDir, mock.port);
+  await stopApp(app);
+  db = new Database(path.join(dataDir, 'app.db'));
+  // Simulate a 2.7.15 database with existing subscriptions, then run the real migration.
+  db.prepare('ALTER TABLE nodes DROP COLUMN allow_udp443').run();
+  app = await startApp(dataDir);
+  const node1 = db.prepare('SELECT * FROM nodes').get();
+  assert.equal(node1.allow_udp443, 1);
+  db.prepare('UPDATE node_inbound_cache SET inbound_json=? WHERE node_id=?').run(JSON.stringify(inbound(1)), node1.id);
+  const c = db.prepare('SELECT * FROM clients').get();
+  const node2 = addSubscriptionNode(db, { mockPort: mock.port, name: 'Finland', countryCode: 'FI', countryName: 'Финляндия', clientId: c.id, uuid, trafficGb: 0 });
+  db.prepare('UPDATE nodes SET sort_order=1 WHERE id=?').run(node1.id);
+  db.prepare('UPDATE nodes SET sort_order=2 WHERE id=?').run(node2);
+  db.prepare('UPDATE node_inbound_cache SET inbound_json=? WHERE node_id=?').run(JSON.stringify(inbound(1)), node2);
+  db.prepare('UPDATE nodes SET allow_udp443=0 WHERE id=?').run(node2);
+
+  const cookies = new Map();
+  async function request(route, options = {}) {
+    const headers = new Headers(options.headers || {}); headers.set('X-Nexus-Workspace', 'main');
+    if (cookies.size) headers.set('Cookie', [...cookies].map(([k,v]) => `${k}=${v}`).join('; '));
+    const r = await fetch(`http://127.0.0.1:${app.port}${route}`, { ...options, headers, redirect: 'manual' });
+    for (const value of r.headers.getSetCookie()) { const pair=value.split(';')[0], i=pair.indexOf('='); cookies.set(pair.slice(0,i),pair.slice(i+1)); }
+    return r;
+  }
+  const csrfFrom = html => { const m=html.match(/name="csrf-token" content="([^"]+)"/); assert.ok(m); return m[1]; };
+  const post = (route, body) => request(route, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body instanceof URLSearchParams ? body : new URLSearchParams(body) });
+  const loginToken = csrfFrom(await (await request('/login')).text());
+  assert.equal((await post('/login', { _csrf: loginToken, username: 'admin', password: 'test-password-strong' })).headers.get('location'), '/dashboard');
+  const html = await (await request(`/nodes/${node1.id}/edit`)).text();
+  assert.match(html, /name="allow_udp443" value="1" checked/);
+  const csrf = csrfFrom(html);
+  const baseForm = { _csrf: csrf, node_type: '3xui', panel_url: `http://127.0.0.1:${mock.port}`, panel_path: '', api_auth_mode: 'token', api_token: 'test-api-token', inbound_id: '1', country_code: 'DE', sni_mode: 'inbound' };
+  async function save(body) {
+    const r = await post(`/nodes/${node1.id}/edit`, { ...baseForm, ...body });
+    assert.equal(r.status, 302); assert.ok(!r.headers.get('location').includes('error='), decodeURIComponent(r.headers.get('location')));
+  }
+  const configs = async () => { const r = await request('/json/portal-user?download=1'); assert.equal(r.status, 200); return r.json(); };
+  const flows = configs => configs.filter(c => !c.autoSelect).map(c => c.outbounds.find(o => o.protocol === 'vless').settings.vnext[0].users[0].flow);
+  assert.deepEqual(flows(await configs()), ['xtls-rprx-vision-udp443', 'xtls-rprx-vision']);
+  const rawSub = async () => { const s = await (await request('/sub/portal-user?raw=1')).text(); return s.includes('vless://') ? s : Buffer.from(s, 'base64').toString(); };
+  assert.ok((await rawSub()).includes('flow=xtls-rprx-vision-udp443'));
+  const rev = () => db.prepare("SELECT value FROM app_settings WHERE key='subscription_revision'").get().value;
+  const beforeRev = rev();
+  await save({ udp443_controls: '1' });
+  assert.notEqual(rev(), beforeRev);
+  assert.equal(db.prepare('SELECT allow_udp443 FROM nodes WHERE id=?').get(node1.id).allow_udp443, 0);
+  assert.deepEqual(flows(await configs()), ['xtls-rprx-vision', 'xtls-rprx-vision']);
+  assert.ok(!(await rawSub()).includes('flow=xtls-rprx-vision-udp443'));
+  await save({}); // stale form must not silently enable the flag
+  assert.equal(db.prepare('SELECT allow_udp443 FROM nodes WHERE id=?').get(node1.id).allow_udp443, 0);
+  assert.equal((await post(`/nodes/${node1.id}/edit`, { ...baseForm, _csrf: '', udp443_controls: '1', allow_udp443: '1' })).status, 403);
+  await save({ udp443_controls: '1', allow_udp443: '1', inherit_3xui_mux: '1' });
+  const cfg = (await configs())[0], out = cfg.outbounds.find(o => o.protocol === 'vless');
+  assert.equal(out.settings.vnext[0].users[0].flow, 'xtls-rprx-vision-udp443');
+  assert.deepEqual(out.mux, { ...sourceMux, xudpProxyUDP443: 'skip' });
+  assert.deepEqual(JSON.parse(db.prepare('SELECT source_sub_json_mux FROM nodes WHERE id=?').get(node1.id).source_sub_json_mux), sourceMux);
+  assert.equal(JSON.parse(db.prepare('SELECT inbound_json FROM node_inbound_cache WHERE node_id=?').get(node1.id).inbound_json).settings, inbound(1).settings, 'server flow remains unchanged');
+  await save({ udp443_controls: '1', inherit_3xui_mux: '1' });
+  assert.equal((await configs())[0].outbounds[0].mux.xudpProxyUDP443, 'reject');
+  await save({ udp443_controls: '1', allow_udp443: '1' });
+  assert.equal((await configs())[0].outbounds[0].mux, undefined, 'UDP443 does not enable Mux');
+
+  for (const [id, controls, expected] of [[2, { udp443_controls: '1' }, 0], [3, {}, 1]]) {
+    const r = await post('/nodes', { ...baseForm, inbound_id: String(id), ...controls });
+    assert.ok(!r.headers.get('location').includes('error='), decodeURIComponent(r.headers.get('location')));
+    assert.equal(db.prepare('SELECT allow_udp443 FROM nodes WHERE inbound_id=? ORDER BY id DESC LIMIT 1').get(id).allow_udp443, expected);
+  }
+  const autoForm = new URLSearchParams({ _csrf: csrf, node_type: 'auto_select', auto_select_name: 'UDP pool', auto_select_icon: '⚡', auto_select_probe_interval_seconds: '30', auto_select_probe_url: 'https://cp.cloudflare.com/generate_204' });
+  for (const id of [node1.id, node2]) autoForm.append('auto_select_node_ids', String(id));
+  const autoSaved = await post('/nodes', autoForm); assert.ok(!autoSaved.headers.get('location').includes('error='));
+  const auto = (await configs()).find(c => c.autoSelect);
+  assert.ok(auto);
+  assert.deepEqual(auto.outbounds.filter(o => o.protocol === 'vless').map(o => o.settings.vnext[0].users[0].flow), ['xtls-rprx-vision-udp443', 'xtls-rprx-vision']);
+  const backup = await (await request('/backup/download')).json();
+  assert.equal(backup.data.nodes.find(n => n.id === node2).allow_udp443, 0);
+  assert.ok(mock.requestedPaths.every(p => p.startsWith('GET ') || p === 'POST /panel/api/setting/all'), 'no remote settings/client mutation is needed');
+  db.prepare('UPDATE nodes SET allow_udp443=1 WHERE id=?').run(node2);
+  const restored = await request('/backup/restore', { method: 'POST', headers: { 'Content-Type': 'text/plain', 'X-CSRF-Token': csrf }, body: JSON.stringify(backup) });
+  assert.equal(restored.status, 302);
+  assert.equal(db.prepare('SELECT allow_udp443 FROM nodes WHERE id=?').get(node2).allow_udp443, 0);
+  await stopApp(app); app = await startApp(dataDir);
+  assert.deepEqual(flows(await configs()), ['xtls-rprx-vision-udp443', 'xtls-rprx-vision']);
+  const tlsInbound = inbound(1);
+  tlsInbound.streamSettings = JSON.stringify({ network: 'tcp', security: 'tls', tlsSettings: { serverName: 'example.test' } });
+  db.prepare('UPDATE node_inbound_cache SET inbound_json=? WHERE node_id=?').run(JSON.stringify(tlsInbound), node1.id);
+  assert.equal(flows(await configs())[0], 'xtls-rprx-vision-udp443', 'TLS Vision is preserved in JSON as well as in the source URI');
 });
 
 test('multiple auto-connections create, edit, toggle and delete independently via HTTP and survive restart', { timeout:60000 }, async t => {

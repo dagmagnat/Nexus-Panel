@@ -31,6 +31,7 @@ const { deviceRefreshPolicy, applyDeviceRefreshPolicy } = require('./lib_device_
 const { createAsyncReadCache, cooperativeMap, yieldToRequests } = require('./lib_performance');
 const { supportAccess, supportReasonText, parseSupportDays, initSupportSchema } = require('./lib_expired_support');
 const { directDnsSettings, parseDirectDnsServers, applyJsonRoutingDns } = require('./lib_json_routing_dns');
+const { udp443FormValue, nodeVisionFlow, applyNodeUdp443 } = require('./lib_node_udp443');
 const { initNexusNodeControlSchema, attachNexusNodeControl } = require('./lib_nexus_node_control');
 
 const COUNTRIES = [
@@ -1286,6 +1287,7 @@ function initDb() {
       inherit_3xui_mux INTEGER NOT NULL DEFAULT 0,
       inherit_3xui_fragment INTEGER NOT NULL DEFAULT 0,
       inherit_3xui_noises INTEGER NOT NULL DEFAULT 0,
+      allow_udp443 INTEGER NOT NULL DEFAULT 1,
       source_sub_json_mux TEXT DEFAULT '',
       source_sub_json_finalmask TEXT DEFAULT '',
       source_sub_settings_error TEXT DEFAULT '',
@@ -1550,6 +1552,7 @@ function initDb() {
   addColumnIfMissing('nodes', 'remnawave_link_filter', "TEXT DEFAULT ''");
   addColumnIfMissing('nodes', 'remnawave_remark_mode', "TEXT NOT NULL DEFAULT 'aggregator'");
   addColumnIfMissing('nodes', 'inherit_3xui_mux', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing('nodes', 'allow_udp443', 'INTEGER NOT NULL DEFAULT 1');
   addColumnIfMissing('nodes', 'inherit_3xui_fragment', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing('nodes', 'inherit_3xui_noises', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing('nodes', 'source_sub_json_mux', "TEXT DEFAULT ''");
@@ -8711,6 +8714,7 @@ async function buildSubscriptionEntries(clientRow, includeOffline = true, option
       n.remnawave_link_mode,
       n.remnawave_link_filter,
       n.remnawave_remark_mode,
+      n.allow_udp443,
       n.inbound_id,
       n.enabled AS node_enabled,
       n.last_status,
@@ -8938,7 +8942,7 @@ function buildVlessRealityLink(node, inbound, uuid, displayName, nodeName, email
     settings?.clients?.[0]?.flow ||
     '';
 
-  if (flow && canUseVlessVision(network, security, settings)) query.set('flow', flow);
+  if (flow && canUseVlessVision(network, security, settings)) query.set('flow', nodeVisionFlow(flow, node, network, security));
 
   const remark = encodeURIComponent(nodeName || getNodePublicName(node));
   const serverDescription = buildHappServerDescription(node, inbound);
@@ -16079,6 +16083,7 @@ app.post('/nodes', requireAuth, async (req, res) => {
         inherit_3xui_mux,
         inherit_3xui_fragment,
         inherit_3xui_noises,
+        allow_udp443,
         source_sub_json_mux,
         source_sub_json_finalmask,
         source_sub_settings_error,
@@ -16096,7 +16101,7 @@ app.post('/nodes', requireAuth, async (req, res) => {
         h1cloud_3xui_json_url_template,
         sort_order
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       country.name_ru,
       normalizedNodeType,
@@ -16120,6 +16125,7 @@ app.post('/nodes', requireAuth, async (req, res) => {
       normalizedNodeType === NODE_TYPE_3XUI && req.body.inherit_3xui_mux === '1' ? 1 : 0,
       normalizedNodeType === NODE_TYPE_3XUI && req.body.inherit_3xui_fragment === '1' ? 1 : 0,
       normalizedNodeType === NODE_TYPE_3XUI && req.body.inherit_3xui_noises === '1' ? 1 : 0,
+      udp443FormValue(req.body),
       normalizedNodeType === NODE_TYPE_3XUI ? importedSubSource.mux : '',
       normalizedNodeType === NODE_TYPE_3XUI ? importedSubSource.finalmask : '',
       normalizedNodeType === NODE_TYPE_3XUI ? importedSubSource.error : '',
@@ -16544,6 +16550,7 @@ app.post('/nodes/:id/edit', requireAuth, async (req, res) => {
         inherit_3xui_mux = ?,
         inherit_3xui_fragment = ?,
         inherit_3xui_noises = ?,
+        allow_udp443 = ?,
         source_sub_json_mux = ?,
         source_sub_json_finalmask = ?,
         source_sub_settings_error = ?,
@@ -16583,6 +16590,7 @@ app.post('/nodes/:id/edit', requireAuth, async (req, res) => {
       normalizedNodeType === NODE_TYPE_3XUI && req.body.inherit_3xui_mux === '1' ? 1 : 0,
       normalizedNodeType === NODE_TYPE_3XUI && req.body.inherit_3xui_fragment === '1' ? 1 : 0,
       normalizedNodeType === NODE_TYPE_3XUI && req.body.inherit_3xui_noises === '1' ? 1 : 0,
+      udp443FormValue(req.body, existingNode),
       normalizedNodeType === NODE_TYPE_3XUI ? refreshedSubSource.mux : '',
       normalizedNodeType === NODE_TYPE_3XUI ? refreshedSubSource.finalmask : '',
       normalizedNodeType === NODE_TYPE_3XUI ? refreshedSubSource.error : '',
@@ -16605,6 +16613,9 @@ app.post('/nodes/:id/edit', requireAuth, async (req, res) => {
       if (String(key).startsWith(`${nodeId}:`)) remnawaveHostDescriptorCache.delete(key);
     }
     const updatedNode = db.prepare('SELECT * FROM nodes WHERE id = ?').get(nodeId);
+    if (normalizedNodeType === NODE_TYPE_3XUI && Number(existingNode.allow_udp443) !== Number(updatedNode.allow_udp443)) {
+      bumpSubscriptionRevision();
+    }
     setExpiredSupportNode(updatedNode, req.body.expired_support === '1');
     if (preflightInbound) saveInboundCache(updatedNode, preflightInbound);
     else if (normalizedNodeType !== NODE_TYPE_3XUI) db.prepare('DELETE FROM node_inbound_cache WHERE node_id = ?').run(nodeId);
@@ -18066,7 +18077,7 @@ function getHappJsonControls() {
 
 function getInherited3xuiSubscriptionControls(nodeId) {
   const node = db.prepare(`
-    SELECT inherit_3xui_mux, inherit_3xui_fragment, inherit_3xui_noises,
+    SELECT node_type, allow_udp443, inherit_3xui_mux, inherit_3xui_fragment, inherit_3xui_noises,
            source_sub_json_mux, source_sub_json_finalmask
     FROM nodes WHERE id = ?
   `).get(Number(nodeId));
@@ -18090,6 +18101,7 @@ function getInherited3xuiSubscriptionControls(nodeId) {
   }
 
   return {
+    node,
     mux: sourceMux ? JSON.parse(JSON.stringify(sourceMux)) : null,
     finalmask: Object.keys(finalmask).length ? finalmask : null
   };
@@ -18110,7 +18122,7 @@ function mergeInherited3xuiFinalmask(existing, inherited) {
   return base;
 }
 
-function applyHappOutboundControls(outbound, nodeId = 0) {
+function applyHappOutboundControls(outbound, nodeId = 0, sourceFlow = '') {
   if (!outbound) return outbound;
 
   const inherited = getInherited3xuiSubscriptionControls(nodeId);
@@ -18130,7 +18142,7 @@ function applyHappOutboundControls(outbound, nodeId = 0) {
     outbound.streamSettings.finalmask = mergeInherited3xuiFinalmask(outbound.streamSettings.finalmask, inherited.finalmask);
   }
 
-  return outbound;
+  return applyNodeUdp443(outbound, inherited.node, sourceFlow);
 }
 
 function parseVlessLineToOutbound(line, index = 0, options = {}) {
@@ -18154,8 +18166,8 @@ function parseVlessLineToOutbound(line, index = 0, options = {}) {
   };
 
   const normalizedNetwork = normalizeInboundNetwork(network || 'raw');
-  // Vision is valid only for VLESS TCP+REALITY. H1Cloud XHTTP links must not
-  // inherit it when converted to an Xray JSON outbound.
+  // Keep the legacy REALITY conversion here. The per-node 3x-ui hook below
+  // also preserves source TCP+TLS Vision. Never copy Vision into XHTTP.
   if (flow && normalizedNetwork === 'raw' && security === 'reality') user.flow = flow;
 
   const streamSettings = {
@@ -18232,7 +18244,7 @@ function parseVlessLineToOutbound(line, index = 0, options = {}) {
     streamSettings
   };
 
-  applyHappOutboundControls(outbound, options.nodeId);
+  applyHappOutboundControls(outbound, options.nodeId, flow);
 
   const remark = getRemarkFromVlessLine(line);
   if (remark) outbound.remarks = remark;

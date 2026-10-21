@@ -6,6 +6,8 @@ lib_performance.js
 lib_expired_support.js
 lib_settings_profile.js
 lib_json_routing_dns.js
+lib_node_udp443.js
+lib_node_clone.js
 lib_access.js
 lib_client_traffic_reset.js
 package.json
@@ -42,6 +44,7 @@ tests/node-quota-preservation.test.js
 tests/remnawave-live-usage.test.js
 tests/remnawave-routing.test.js
 tests/routing-dns.test.js
+tests/node-udp443.test.js
 tests/routing-node-selective.test.js
 tests/client-traffic-reset.test.js
 tests/usage-directory-2.7.3.test.js
@@ -55,3 +58,4 @@ docs/UPDATE_2.7.12.md
 docs/UPDATE_2.7.13.md
 docs/UPDATE_2.7.14.md
 docs/UPDATE_2.7.15.md
+docs/UPDATE_2.7.16.md

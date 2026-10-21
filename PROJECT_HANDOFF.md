@@ -12,6 +12,17 @@
 
 ## Последнее изменение
 
+2026-10-21 — Nexus 2.7.16, UDP/443 только обычных 3x-ui:
+
+- Пользователь разрешил добавить per-node UDP443 default-on и затем явно ограничил запрос обычными узлами XUI: каскад/Remnawave не менять. Не подтверждать, что UDP443 включён на его Remna серверах: этого не проверяли. До production/телефона доступа нет.
+- lib_node_udp443.js: только node_type=3xui, известный Vision при TCP/raw+TLS/REALITY меняется client flow udp443↔стандартный. Никогда не вводить Vision в XHTTP/WS/gRPC/flowless. Если Mux уже есть, override только xudpProxyUDP443 skip/reject, enabled/concurrency не менять, отсутствующий Mux не создавать. Без Vision/Mux выключение не общий firewall; это явно написано в UI/docs. Исходник Xray подтверждает удаление клиентского суффикса до отправки серверу, так что server flow остаётся обычным Vision.
+- app.js: nodes.allow_udp443 INTEGER NOT NULL DEFAULT 1 + addColumnIfMissing (существующие записи получают on), add/edit через marker udp443_controls (старые формы сохраняют выбор), revision при смене. Поле добавлено в явный SELECT buildSubscriptionEntries для SUB и в существующую выборку source controls без дополнительного запроса. URI builder применяет nodeVisionFlow, JSON после наследования Mux — applyNodeUdp443; original flow передаётся для сохранения TLS Vision. Remna generator не меняется. lib_node_clone.js наследует выбор; общий backup по столбцам автоматически сохраняет поле.
+- UI nodes/node_edit: галочка только обычной 3x-ui, default-on, объяснение области действия, не-включения Mux, обновления подписки и ограничений сервера. Никаких правок panel-script-v1 и каскада.
+- tests/node-udp443.test.js: 4 unit (defaults/form/clone, reversibility/idempotence, scope/transport/flowless/TLS, Mux preservation/Remna unchanged). HTTP в subscription-portal-traffic: миграция после DROP COLUMN старой базы, add default/off, edit on/off/oldform/CSRF/revision, SUB+JSON, независимый auto pool, source mux/server flow unchanged, backup restore/restart/TLS, только read API/setting-all на mock3xui. Целевой 28/28; полный 240: 215 pass/9 прежних fail/16 skip, категории совпадают с 2.7.15. Логи work/udp443-target-2.7.16.log и udp443-full-2.7.16.log. Не заявлять исправление WhatsApp по этим тестам.
+- Версии package/lock/VERSION/update/README и installer assertion 2.7.16, docs/UPDATE_2.7.16.md, cumulative PATCH_FILES + helper для 2.7.7–2.7.15. Пакетирование work/package_udp443_2_7_16.ps1, outputs/Nexus-Panel-2.7.16-udp443-patch.zip. Не установлен и не опубликован.
+
+Изменены: app.js, lib_node_udp443.js (новый), lib_node_clone.js, views/nodes.ejs/node_edit.ejs, tests/node-udp443.test.js (новый)/subscription-portal-traffic.test.js/installer-source-migration.test.js, package.json/package-lock.json/VERSION/update.json/README.md/CHANGELOG.md, docs/UPDATE_2.7.16.md, PROJECT_HANDOFF.md/PATCH_FILES.txt/apply-node-traffic-update.sh.
+
 2026-10-21 — Nexus 2.7.15, DNS direct-исключений и routeOnly:
 
 - Пользователь сравнил клиентский JSON стороннего продавца и свой REALITY: российские приложения долго открываются, WhatsApp иногда зависает и на обычной ноде, и на каскаде. Запросил отдельный DNS рядом с direct-исключениями и переключатель routeOnly; UDP пока только объяснить. Нет доступа к production, причина зависаний не доказана.

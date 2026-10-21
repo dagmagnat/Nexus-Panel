@@ -176,6 +176,14 @@
           <small class="hint">При сохранении панель проверит этот ID и загрузит параметры и порт выбранного inbound. Для локальной Docker-панели порт должен быть опубликован: команда на сервере x-ui ports. Случайный порт не назначается.</small>
         </div>
 
+        <% if (nodeType === '3xui') { %>
+        <div class="field full js-node-3xui-only js-node-3xui-editable-only">
+          <input type="hidden" name="udp443_controls" value="1" />
+          <label class="switch-row compact"><input type="checkbox" name="allow_udp443" value="1" <%= node.allow_udp443 == null || Number(node.allow_udp443) === 1 ? 'checked' : '' %> /><span><strong>Разрешать UDP/443 · Vision / Mux</strong><small>В ссылках и JSON Nexus снимает ограничение UDP/443 у VLESS Vision; в уже используемом Mux JSON выбирает skip. Mux не включается. Без галочки — стандартный Vision и reject в Mux. Для VLESS без Vision и без Mux галочка ничего не меняет; это не общий firewall.</small></span></label>
+          <small class="hint">После сохранения обнови подписку Nexus и переподключись. В 3x-ui flow сервера менять не нужно, если нет отдельного запрета исходящего UDP. Remnawave и каскад не затрагиваются.</small>
+        </div>
+        <% } %>
+
         <div class="field full js-node-3xui-only source-subscription-controls <%= is3xuiFamily ? '' : 'hidden' %>" <%= is3xuiFamily ? '' : 'hidden style="display:none!important"' %>>
           <div class="source-subscription-controls-head">
             <div>

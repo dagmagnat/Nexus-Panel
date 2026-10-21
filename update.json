@@ -1,11 +1,12 @@
 {
-  "version": "2.7.15",
-  "name": "Nexus Panel 2.7.15 — direct-exception DNS and routeOnly diagnostics",
+  "version": "2.7.16",
+  "name": "Nexus Panel 2.7.16 — per-node UDP443 for ordinary 3x-ui",
   "repository": "https://github.com/dagmagnat/Nexus-Panel",
   "archive_url": "https://github.com/dagmagnat/Nexus-Panel/archive/refs/heads/main.zip",
   "archive": "Nexus-Panel-main.zip",
   "filename": "Nexus-Panel-main.zip",
   "notes": [
+    "Обычные 3x-ui: переключатель UDP/443 для VLESS Vision и уже используемого Mux, по умолчанию включён. Отдельное сохранение по узлам, SUB/JSON и авто-пулы; Remnawave/каскад не меняются.",
     "Маршрутизация: отдельный DNS для Domain/GeoSite direct-исключений с выбором Яндекс DoH, IP DNS или ручных HTTPS/IP; по умолчанию выключен.",
     "Переключатель routeOnly для проверки sniffing без подмены исходного адреса; только JSON выбранных узлов, обычных и каскадных.",
     "Приоритет proxy-доменов для DNS, явные DNS-маршруты и совместимость автоподключений; UDP/443, серверные профили и VLESS/SUB не меняются.",
