@@ -418,8 +418,8 @@
 
   <div class="mobile-client-cards">
     <% clients.forEach(client => {
-      const subUrl = `${baseUrl}/sub-plain/${client.sub_slug}`;
-      const jsonUrl = `${baseUrl}/json/${client.sub_slug}?raw=1`;
+      const subUrl = publicSubUrl(client.sub_slug);
+      const jsonUrl = publicJsonUrl(client.sub_slug);
       const clientStatus = clientStatusMeta(client);
       const displayTitle = compactTitle(client);
       const secondaryText = secondaryClientText(client);
@@ -475,8 +475,8 @@
   <% if (clientsViewMode === 'classic') { %>
   <div class="desktop-client-split-list" aria-label="Компактный список клиентов">
     <% clients.forEach(client => {
-      const subUrl = `${baseUrl}/sub-plain/${client.sub_slug}`;
-      const jsonUrl = `${baseUrl}/json/${client.sub_slug}?raw=1`;
+      const subUrl = publicSubUrl(client.sub_slug);
+      const jsonUrl = publicJsonUrl(client.sub_slug);
       const clientStatus = clientStatusMeta(client);
       const displayTitle = compactTitle(client);
       const secondaryText = secondaryClientText(client);
@@ -527,8 +527,8 @@
         </thead>
         <tbody>
         <% clients.forEach(client => {
-          const subUrl = `${baseUrl}/sub-plain/${client.sub_slug}`;
-          const jsonUrl = `${baseUrl}/json/${client.sub_slug}?raw=1`;
+          const subUrl = publicSubUrl(client.sub_slug);
+          const jsonUrl = publicJsonUrl(client.sub_slug);
           const happUrl = `${baseUrl}/happ/${client.sub_slug}`;
           const clientEnabled = client.enabled !== 0;
           const clientStatus = clientStatusMeta(client);
@@ -592,8 +592,8 @@
         </thead>
         <tbody>
         <% clients.forEach(client => {
-          const subUrl = `${baseUrl}/sub-plain/${client.sub_slug}`;
-          const jsonUrl = `${baseUrl}/json/${client.sub_slug}?raw=1`;
+          const subUrl = publicSubUrl(client.sub_slug);
+          const jsonUrl = publicJsonUrl(client.sub_slug);
           const clientStatus = clientStatusMeta(client);
           const usedBytes = clientUsedBytes(client);
           const trafficLimitGb = Math.max(0, Number(client.traffic_gb || 0));
@@ -1174,15 +1174,15 @@
         <div class="client-summary-action-card client-summary-links-card">
           <span><%= canShowSubInEditor ? 'SUB / JSON' : 'JSON' %></span>
           <div class="client-summary-link-actions">
-            <% if (canShowSubInEditor) { %><button type="button" class="btn-secondary compact-copy-btn" onclick="copySubLink('<%= baseUrl %>/sub-plain/<%= client.sub_slug %>', this)">SUB</button><% } %>
-            <button type="button" class="btn-secondary compact-copy-btn" onclick="copySubLink('<%= baseUrl %>/json/<%= client.sub_slug %>?raw=1', this)"><%= canShowSubInEditor ? 'JSON' : 'Копировать JSON' %></button>
+            <% if (canShowSubInEditor) { %><button type="button" class="btn-secondary compact-copy-btn" onclick="copySubLink('<%= publicSubUrl(client.sub_slug) %>', this)">SUB</button><% } %>
+            <button type="button" class="btn-secondary compact-copy-btn" onclick="copySubLink('<%= publicJsonUrl(client.sub_slug) %>', this)"><%= canShowSubInEditor ? 'JSON' : 'Копировать JSON' %></button>
           </div>
         </div>
         <div class="client-summary-action-card client-summary-qr-card">
           <span>QR</span>
           <div class="client-summary-link-actions">
-            <% if (canShowSubInEditor) { %><button type="button" class="btn-secondary" onclick="showQr('<%= baseUrl %>/sub-plain/<%= client.sub_slug %>', '<%= client.login %> · Общая SUB')">SUB QR</button><% } %>
-            <button type="button" class="btn-secondary" onclick="showQr('<%= baseUrl %>/json/<%= client.sub_slug %>?raw=1', '<%= client.login %> · JSON')"><%= canShowSubInEditor ? 'JSON QR' : 'Показать QR' %></button>
+            <% if (canShowSubInEditor) { %><button type="button" class="btn-secondary" onclick="showQr('<%= publicSubUrl(client.sub_slug) %>', '<%= client.login %> · Общая SUB')">SUB QR</button><% } %>
+            <button type="button" class="btn-secondary" onclick="showQr('<%= publicJsonUrl(client.sub_slug) %>', '<%= client.login %> · JSON')"><%= canShowSubInEditor ? 'JSON QR' : 'Показать QR' %></button>
           </div>
         </div>
         <div class="client-summary-action-card client-summary-open">

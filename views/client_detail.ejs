@@ -76,9 +76,9 @@
     <div>
       <label>JSON подписка</label>
       <div class="copy-row">
-        <input readonly value="<%= baseUrl %>/json/<%= client.sub_slug %>" />
-        <button type="button" class="link-btn" onclick="copySubLink('<%= baseUrl %>/json/<%= client.sub_slug %>', this)">Копировать</button>
-        <button type="button" class="link-btn secondary" onclick="showQr('<%= baseUrl %>/json/<%= client.sub_slug %>', '<%= client.login %> · JSON')">QR</button>
+        <input readonly value="<%= publicJsonUrl(client.sub_slug) %>" />
+        <button type="button" class="link-btn" onclick="copySubLink('<%= publicJsonUrl(client.sub_slug) %>', this)">Копировать</button>
+        <button type="button" class="link-btn secondary" onclick="showQr('<%= publicJsonUrl(client.sub_slug) %>', '<%= client.login %> · JSON')">QR</button>
       </div>
     </div>
   </div>

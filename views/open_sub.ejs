@@ -162,7 +162,7 @@
       <div>
         <% if (allowSub) { %><button type="button" class="link-btn secondary" onclick="copyPortalUrl('<%= genericSubUrl %>', this)">INCY / v2RayTun SUB</button><% } %>
         <% if (allowSub) { %><button type="button" class="link-btn secondary" onclick="copyPortalUrl('<%= hiddifyUrl %>', this)">Hiddify SUB</button><% } %>
-        <% if (allowSub) { %><button type="button" class="link-btn secondary" onclick="copyPortalUrl('<%= plainSubUrl %>', this)">Обычная SUB</button><% } %>
+        <% if (allowSub) { %><button type="button" class="link-btn secondary" onclick="copyPortalUrl('<%= subUrl %>', this)">SUB</button><button type="button" class="link-btn secondary" onclick="copyPortalUrl('<%= plainSubUrl %>', this)">SUB без метаданных</button><% } %>
         <% if (allowJson) { %><button type="button" class="link-btn secondary" onclick="copyPortalUrl('<%= happImportUrl %>', this)">JSON Happ</button><% } %>
         <% if (allowHapp) { %><button type="button" class="link-btn secondary" onclick="copyPortalUrl('<%= happUrl %>', this)">Happ SUB</button><% } %>
       </div>

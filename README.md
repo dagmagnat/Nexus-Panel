@@ -6,9 +6,9 @@
 
 Nexus Panel объединяет узлы **3x-ui** и **Remnawave** в одной панели: клиенты, подписки, лимиты, трафик, маршрутизация, перенаправление, Telegram и резервные копии.
 
-[![Version](https://img.shields.io/badge/version-2.7.16-blue)](https://github.com/dagmagnat/Nexus-Panel)
+[![Version](https://img.shields.io/badge/version-2.7.18-blue)](https://github.com/dagmagnat/Nexus-Panel)
 
-Обновление 2.7.16: [UDP/443 отдельно для обычных узлов 3x-ui](docs/UPDATE_2.7.16.md). Разрешение для Vision/Mux по умолчанию включено; обновите подписку Nexus и переподключитесь. Remnawave и каскад не меняются. [DNS и routeOnly из 2.7.15](docs/UPDATE_2.7.15.md) сохранены.
+Обновление 2.7.18: [переключатель чистых ссылок подписки](docs/UPDATE_2.7.18.md). Настройки → Общие настройки → Адреса панели и подписок. Включено (по умолчанию): JSON `/ключ-клиента`, SUB `/ключ-клиента?format=sub`; выключено: `/json/ключ-клиента` и `/sub/ключ-клиента`. Уже выданные ссылки обоих видов работают всегда. [Исправления установки 2.7.17](docs/UPDATE_2.7.17.md), [UDP/443 из 2.7.16](docs/UPDATE_2.7.16.md) и [DNS/routeOnly из 2.7.15](docs/UPDATE_2.7.15.md) сохранены.
 ![Node.js](https://img.shields.io/badge/node-%3E%3D22-gray)
 ![License](https://img.shields.io/badge/license-MIT-gray)
 

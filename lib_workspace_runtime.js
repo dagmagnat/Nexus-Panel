@@ -5,12 +5,17 @@ const http = require('node:http');
 const crypto = require('node:crypto');
 const { fork } = require('node:child_process');
 const { PUBLIC_PATH, denyAccess } = require('./lib_access');
+const { cleanSubscriptionTarget } = require('./lib_subscription_links');
 
 function validId(id) { return /^[a-f0-9]{24}$/.test(String(id)); }
 function publicTarget(url) {
   const parsed = new URL(url, 'http://localhost');
   const match = parsed.pathname.match(/^\/s\/([a-f0-9]{24})(\/.*)$/);
-  if (!match || !(PUBLIC_PATH.test(match[2]) || /^\/img\/[a-zA-Z0-9_.-]+$/.test(match[2]))) return null;
+  if (!match) return null;
+  const alias = cleanSubscriptionTarget(match[2] + parsed.search);
+  if (alias?.error) return null;
+  if (alias) return { id: match[1], url: alias.url };
+  if (!(PUBLIC_PATH.test(match[2]) || /^\/img\/[a-zA-Z0-9_.-]+$/.test(match[2]))) return null;
   return { id: match[1], url: match[2] + parsed.search };
 }
 function createRuntime(access, baseEnv = process.env) {

@@ -32,6 +32,7 @@ const { createAsyncReadCache, cooperativeMap, yieldToRequests } = require('./lib
 const { supportAccess, supportReasonText, parseSupportDays, initSupportSchema } = require('./lib_expired_support');
 const { directDnsSettings, parseDirectDnsServers, applyJsonRoutingDns } = require('./lib_json_routing_dns');
 const { udp443FormValue, nodeVisionFlow, applyNodeUdp443 } = require('./lib_node_udp443');
+const { subscriptionUrl, cleanSubscriptionTarget } = require('./lib_subscription_links');
 const { initNexusNodeControlSchema, attachNexusNodeControl } = require('./lib_nexus_node_control');
 
 const COUNTRIES = [
@@ -1661,6 +1662,7 @@ function initDb() {
   const defaultSettings = [
     ['show_sub_links', '1'],
     ['show_json_links', '1'],
+    ['subscription_clean_urls', '1'],
     ['admin_idle_timeout_minutes', '20'],
     ['admin_bind_session_to_ip', ADMIN_BIND_SESSION_TO_IP ? '1' : '0'],
     ['subscription_show_limits', '1'],
@@ -1792,6 +1794,16 @@ function migrateSubscriptionDeviceLimitsOnce() {
 }
 
 initDb();
+// Internal alias, not an HTTP redirect: preserve HWID headers, no-cache,
+// disabled/expired checks and the existing SUB/JSON response handlers.
+app.use((req, res, next) => {
+  const target = cleanSubscriptionTarget(req.url);
+  if (!target) return next();
+  if (!['GET', 'HEAD'].includes(req.method)) return res.sendStatus(404);
+  if (target.error) return res.status(400).send(target.error);
+  req.url = target.url;
+  next();
+});
 const access = require('./lib_access').createAccess({ rootDir: CONTROL_DIR, localDb: db, legacyUsername: ADMIN_USERNAME, workspaceId: WORKSPACE_ID });
 const workspaceRuntime = WORKSPACE_ID === 'main' ? require('./lib_workspace_runtime').createRuntime(access) : null;
 if (workspaceRuntime) app.use((req, res, next) => {
@@ -2061,9 +2073,10 @@ function formatServerErrorPage(title, err) {
 function renderClientsFallbackPage(res, params, err) {
   const clients = Array.isArray(params?.clients) ? params.clients : [];
   const baseUrl = String(params?.baseUrl || '').replace(/\/+$/, '');
+  const cleanUrls = cleanSubscriptionUrlsEnabled();
   const rows = clients.map(client => {
     const slug = htmlEscape(client.sub_slug || '');
-    const jsonUrl = slug ? `${baseUrl}/json/${slug}` : '';
+    const jsonUrl = subscriptionUrl(baseUrl, slug, 'json', cleanUrls);
     return `<tr>
       <td>${htmlEscape(client.id)}</td>
       <td>${htmlEscape(client.display_name || client.login || '')}</td>
@@ -2110,6 +2123,9 @@ function render(res, view, params = {}) {
   try {
     currentAdminUsername = access.user(res.req?.session?.userId)?.username || '';
   } catch (_) {}
+  // Resolve once per render, not for each copy/QR action in every client row.
+  const linkBase = getPublicSubBaseUrl();
+  const cleanLinks = cleanSubscriptionUrlsEnabled();
   const data = {
     ...params,
     isDevelopment: !IS_PRODUCTION,
@@ -2126,6 +2142,8 @@ function render(res, view, params = {}) {
         individual: Boolean(db.prepare('SELECT 1 FROM client_support_grants WHERE client_id=? AND node_id=?').get(client.id, state.nodeId)) };
     }),
     currentAdminUsername,
+    publicJsonUrl: slug => subscriptionUrl(linkBase, slug, 'json', cleanLinks),
+    publicSubUrl: slug => subscriptionUrl(linkBase, slug, 'sub', cleanLinks),
     workspaceName: access.control.prepare('SELECT name FROM workspaces WHERE id=?').get(res.locals.workspaceId || WORKSPACE_ID)?.name || 'Основное',
     clientDefaults: Object.fromEntries(Object.entries(require('./lib_settings_profile').rules).filter(([key]) => key.startsWith('client_default_')).map(([key, rule]) => [key, getSetting(key, rule.fallback)])),
     currentPath: res.req.path,
@@ -3731,6 +3749,7 @@ function ensureMissingAppSettings() {
   const defaults = [
     ['show_sub_links', '1'],
     ['show_json_links', '1'],
+    ['subscription_clean_urls', '1'],
     ['admin_idle_timeout_minutes', '20'],
     ['admin_bind_session_to_ip', ADMIN_BIND_SESSION_TO_IP ? '1' : '0'],
     ['subscription_show_limits', '1'],
@@ -5623,9 +5642,19 @@ function getPublicSubBaseUrl() {
   return base + (WORKSPACE_ID === 'main' ? '' : `/s/${WORKSPACE_ID}`);
 }
 
+function cleanSubscriptionUrlsEnabled() {
+  return getSetting('subscription_clean_urls', '1') !== '0';
+}
+
+function subscriptionUrlExample(format = 'json') {
+  const base = getPublicSubBaseUrl();
+  if (cleanSubscriptionUrlsEnabled()) return `${base}/<ключ-клиента>${format === 'sub' ? '?format=sub' : ''}`;
+  return `${base}/${format === 'sub' ? 'sub' : 'json'}/<ключ-клиента>`;
+}
+
 function buildPublicSubUrl(slug) {
   if (!slug) return '';
-  return addSubscriptionRevision(`${getPublicSubBaseUrl()}/sub/${slug}`);
+  return subscriptionUrl(getPublicSubBaseUrl(), slug, 'sub', cleanSubscriptionUrlsEnabled());
 }
 
 function buildPublicPlainSubUrl(slug) {
@@ -5635,7 +5664,7 @@ function buildPublicPlainSubUrl(slug) {
 
 function buildPublicJsonUrl(slug) {
   if (!slug) return '';
-  return addSubscriptionRevision(`${getPublicSubBaseUrl()}/json/${slug}`);
+  return subscriptionUrl(getPublicSubBaseUrl(), slug, 'json', cleanSubscriptionUrlsEnabled());
 }
 
 function buildPublicHappUrl(slug) {
@@ -14492,7 +14521,7 @@ app.get('/routing', requireAuth, (req, res) => {
     directIps: getRoutingDirectIps(),
     blockDomains: getRoutingBlockDomains(),
     blockIps: getRoutingBlockIps(),
-    jsonUrlExample: `${getPublicSubBaseUrl()}/json/<slug>`,
+    jsonUrlExample: subscriptionUrlExample(),
     message: req.query.message || '',
     error: req.query.error || ''
   });
@@ -15029,6 +15058,7 @@ app.get('/settings', requireAuth, async (req, res) => {
     adminBindSessionToIp: isAdminSessionIpBindEnabled(),
     showSubLinks: getSetting('show_sub_links', '1') !== '0',
     showJsonLinks: getSetting('show_json_links', '1') !== '0',
+    cleanSubscriptionUrls: cleanSubscriptionUrlsEnabled(),
     showHappLinks: getSetting('show_happ_links', '0') !== '0',
     showSubscriptionLimits: getSetting('subscription_show_limits', '1') !== '0',
     sendSubscriptionUserInfo: getSetting('subscription_userinfo_header', '1') !== '0',
@@ -15080,8 +15110,8 @@ app.get('/settings', requireAuth, async (req, res) => {
     subUrlMode: getSubscriptionUrlMode(),
     subPublicUrl: getSetting('sub_public_url', process.env.SUB_PUBLIC_URL || BASE_URL),
     publicSubBaseUrl: getPublicSubBaseUrl(),
-    publicJsonExample: `${getPublicSubBaseUrl()}/json/<slug>`,
-    publicSubExample: `${getPublicSubBaseUrl()}/sub/<slug>`,
+    publicJsonExample: subscriptionUrlExample(),
+    publicSubExample: subscriptionUrlExample('sub'),
     publicHappExample: `${getPublicSubBaseUrl()}/happ/<slug>`,
     backupFileExample: buildBackupFileName(req, 'json'),
     updateRepoUrl: getSetting('update_repo_url', OFFICIAL_REPOSITORY_URL),
@@ -15409,6 +15439,7 @@ app.post('/settings', requireAuth, (req, res) => {
       url: getSetting('subscription_support_url', ''),
       showSubLinks: getSetting('show_sub_links', '1'),
       showJsonLinks: getSetting('show_json_links', '1'),
+      cleanUrls: getSetting('subscription_clean_urls', '1'),
       showHappLinks: getSetting('show_happ_links', '0')
     };
 
@@ -15451,6 +15482,12 @@ app.post('/settings', requireAuth, (req, res) => {
         value = excluded.value,
         updated_at = CURRENT_TIMESTAMP
     `).run('show_json_links', req.body.show_json_links === '1' ? '1' : '0');
+
+    // The marker distinguishes an unchecked switch from an older open form.
+    // This controls generated URLs only: both route styles stay available.
+    if (req.body.subscription_link_controls === '1') {
+      setSetting('subscription_clean_urls', req.body.subscription_clean_urls === '1' ? '1' : '0');
+    }
 
     // show_happ_links belongs to the separate Happ Control form. Do not
     // overwrite it when the general settings form does not submit that field.
@@ -15564,6 +15601,7 @@ app.post('/settings', requireAuth, (req, res) => {
       oldSubscriptionMeta.url !== newSubscriptionSupportUrl ||
       oldSubscriptionMeta.showSubLinks !== getSetting('show_sub_links', '1') ||
       oldSubscriptionMeta.showJsonLinks !== getSetting('show_json_links', '1') ||
+      oldSubscriptionMeta.cleanUrls !== getSetting('subscription_clean_urls', '1') ||
       oldSubscriptionMeta.showHappLinks !== getSetting('show_happ_links', '0') ||
       JSON.stringify(oldHappMeta) !== JSON.stringify(newHappMeta)
     ) {

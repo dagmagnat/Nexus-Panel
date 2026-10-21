@@ -81,10 +81,6 @@
   <a href="/nodes?tab=help" class="<%= activeNodeTab === 'help' ? 'is-active' : '' %>">Подсказка</a>
 </nav>
 
-<div class="actions">
-  <a href="/nodes?tab=add&amp;create=auto_select#node-create-form" class="link-btn secondary" data-create-auto-select>＋ Добавить автоподключение</a>
-</div>
-
 <div class="grid">
   <section class="card span-12 tab-panel <%= activeNodeTab === 'add' ? 'is-active' : '' %>" data-tab-panel="add">
     <h2><%= creatingAutoSelect ? 'Новое автоподключение' : 'Добавить узел' %></h2>
@@ -483,11 +479,14 @@
     </div>
   </section>
 
-  <section class="card span-12 tab-panel nodes-modern-card <%= activeNodeTab === 'list' ? 'is-active' : '' %>" data-tab-panel="list">
+  <section class="card span-12 tab-panel nodes-modern-card <%= !nodes.length && !autoProfiles.length ? 'nodes-empty-card' : '' %> <%= activeNodeTab === 'list' ? 'is-active' : '' %>" data-tab-panel="list">
     <div class="nodes-modern-head">
       <div class="section-title-row nodes-order-title">
         <h2>Список узлов <span class="count-chip"><%= nodes.length + autoProfiles.length %></span></h2>
-        <span id="nodeOrderStatus" class="muted">Перетащи ⠿ на ПК или используй ↑/↓ на телефоне, чтобы изменить порядок в приложении</span>
+        <% if (nodes.length || autoProfiles.length) { %><span id="nodeOrderStatus" class="muted">Перетащи ⠿ на ПК или используй ↑/↓ на телефоне, чтобы изменить порядок в приложении</span><% } %>
+      </div>
+      <div class="actions nodes-head-actions">
+        <a href="/nodes?tab=add&amp;create=auto_select#node-create-form" class="link-btn secondary" data-create-auto-select>＋ Добавить автоподключение</a>
       </div>
       <% if (nodes.length || autoProfiles.length) { %>
         <div class="nodes-modern-toolbar" role="search">
@@ -522,7 +521,11 @@
     </div>
 
     <% if (!nodes.length && !autoProfiles.length) { %>
-      <p class="muted">Пока нет добавленных узлов.</p>
+      <div class="nodes-empty-state" role="status">
+        <h3>Пока нет добавленных узлов</h3>
+        <p class="muted">Добавь подключение к 3x-ui или Remnawave. После этого здесь появятся узлы, их состояние и параметры.</p>
+        <a href="/nodes?tab=add#node-create-form" class="link-btn">＋ Добавить узел</a>
+      </div>
     <% } else { %>
       <div class="nodes-modern-layout" id="nodesModernLayout">
         <div class="nodes-list-panel">

@@ -26,13 +26,13 @@ async function reservePort() {
   return port;
 }
 
-async function startApp(dataDir) {
+async function startApp(dataDir, nodeEnv = 'development') {
   const port = await reservePort();
   const child = spawn(process.execPath, ['app.js'], {
     cwd: projectRoot,
     env: {
       ...process.env,
-      NODE_ENV: 'development',
+      NODE_ENV: nodeEnv,
       PORT: String(port),
       DATA_DIR: dataDir,
       APP_SECRET: appSecret,
@@ -468,6 +468,144 @@ test('per-node quota never includes traffic spent on another node', { timeout: 6
   assert.ok(lteNode);
   assert.equal(lteNode.usedBytes, 7 * gib);
   assert.equal(lteNode.totalBytes, 50 * gib);
+});
+
+test('clean JSON and SUB routes return the existing subscription without redirects or losing device checks', { timeout:45000 }, async t => {
+  const dataDir = fs.mkdtempSync(path.join(projectRoot, '.tmp-clean-links-'));
+  const mock = await startMock3xui(); let app, db;
+  t.after(async () => { await stopApp(app); db?.close(); await new Promise(r=>mock.server.close(r)); fs.rmSync(dataDir,{recursive:true,force:true}); });
+  app = await startApp(dataDir); seedSubscription(dataDir,mock.port);
+  db = new Database(path.join(dataDir,'app.db'));
+  const slug = 'clean-client-12345678';
+  db.prepare('UPDATE clients SET sub_slug=?').run(slug);
+  const get = (route, options={}) => fetch(`http://127.0.0.1:${app.port}${route}`, { redirect:'manual', ...options });
+  const modern = await get('/' + slug), legacy = await get('/json/' + slug);
+  assert.equal(modern.status,200); assert.equal(modern.headers.get('location'),null);
+  assert.match(modern.headers.get('content-type'),/application\/json/);
+  assert.match(modern.headers.get('cache-control'),/no-store/);
+  assert.deepEqual((await modern.json()).map(c=>c.outbounds),(await legacy.json()).map(c=>c.outbounds));
+  const plain = await get('/' + slug + '?format=sub&raw=1');
+  assert.equal(plain.status,200); assert.match(plain.headers.get('content-type'),/text\/plain/);
+  assert.equal(await plain.text(),await (await get('/sub/'+slug+'?raw=1')).text());
+  const single = await (await get('/'+slug+'?format=single')).json(); assert.ok(single.outbounds);
+  const head = await get('/'+slug,{method:'HEAD'}); assert.equal(head.status,200); assert.equal(await head.text(),'');
+  const browser = await get('/'+slug,{headers:{Accept:'text/html'}});
+  assert.equal(browser.status,302); assert.ok(browser.headers.get('location').includes('/open/'+slug));
+  assert.equal((await get('/'+slug+'?format=bad')).status,400);
+  assert.equal((await get('/'+slug+'?format=sub&format=json')).status,400);
+  assert.equal((await get('/unknown-client-12345678')).status,404);
+  assert.equal((await get('/'+slug,{method:'POST'})).status,403,'existing CSRF guard remains active');
+  assert.equal((await get('/clients')).status,302,'admin endpoint is still protected');
+  for (const [key,value] of Object.entries({subscription_device_tracking_enabled:'1',subscription_device_limit_enforced:'1',subscription_device_require_hwid:'1'})) {
+    db.prepare('INSERT INTO app_settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key,value);
+  }
+  db.prepare('UPDATE clients SET limit_ip=1,device_limit=1').run();
+  db.prepare('DELETE FROM subscription_devices').run();
+  const hwidRequest = hwid => get('/'+slug,{headers:{'X-HWID':hwid,'User-Agent':'Happ/clean-link-test'}});
+  const allowed = await (await hwidRequest('device-A-12345678')).text(); assert.ok(allowed.includes('edge-a.example.test'),allowed.slice(0,1200));
+  const blocked = await (await hwidRequest('device-B-12345678')).text(); assert.ok(!blocked.includes('edge-a.example.test'),'clean URL must not bypass HWID limit');
+  const status = await (await get('/open/'+slug+'/status')).json();
+  assert.ok(status.subscription);
+  const portal = await (await get('/open/'+slug)).text();
+  assert.ok(portal.includes('/'+slug), 'public account links remain usable');
+  assert.ok(!portal.includes('/json/'+slug), 'newly displayed JSON link has no format path');
+  db.prepare('UPDATE clients SET enabled=0').run(); assert.equal((await get('/'+slug)).status,404);
+  db.prepare('UPDATE clients SET enabled=1').run();
+  await stopApp(app); app = await startApp(dataDir);
+  assert.equal((await hwidRequest('device-A-12345678')).status,200);
+});
+
+test('clean URL setting saves on/off, controls all client links, preserves routes and survives restart', { timeout:60000 }, async t => {
+  const dataDir=fs.mkdtempSync(path.join(projectRoot,'.tmp-link-settings-'));
+  const mock=await startMock3xui();let app,db;
+  t.after(async()=>{await stopApp(app);db?.close();await new Promise(r=>mock.server.close(r));fs.rmSync(dataDir,{recursive:true,force:true});});
+  // Production omits the dev-only inspector that overlays mobile save actions.
+  app=await startApp(dataDir,'production');seedSubscription(dataDir,mock.port);
+  db=new Database(path.join(dataDir,'app.db'));
+  const slug='settings-client-12345678';db.prepare('UPDATE clients SET sub_slug=?').run(slug);
+  const id=db.prepare('SELECT id FROM clients').get().id;
+  const setting=key=>db.prepare('SELECT value FROM app_settings WHERE key=?').get(key)?.value;
+  assert.equal(setting('subscription_clean_urls'),'1','upgrade/fresh default preserves 2.7.17');
+  const cookies=new Map();let csrf='';
+  async function request(route,body){
+    const headers={'X-Nexus-Workspace':'main'};
+    if(cookies.size)headers.Cookie=[...cookies].map(([k,v])=>`${k}=${v}`).join('; ');
+    if(body)headers['Content-Type']='application/x-www-form-urlencoded';
+    const r=await fetch(`http://127.0.0.1:${app.port}${route}`,{method:body?'POST':'GET',headers,body:body?new URLSearchParams(body):undefined,redirect:'manual'});
+    for(const value of r.headers.getSetCookie()){const pair=value.split(';')[0],i=pair.indexOf('=');cookies.set(pair.slice(0,i),pair.slice(i+1));}
+    const text=await r.text();csrf=text.match(/name="csrf-token" content="([^"]+)"/)?.[1]||csrf;
+    return {status:r.status,text,location:r.headers.get('location')};
+  }
+  await request('/login');assert.equal((await request('/login',{_csrf:csrf,username:'admin',password:'test-password-strong'})).status,302);
+  const form=()=>({_csrf:csrf,subscription_name:setting('subscription_name'),subscription_brand_tagline:setting('subscription_brand_tagline'),
+    show_sub_links:'1',show_json_links:'1',subscription_show_limits:'1',sub_url_mode:'custom',
+    panel_public_url:`http://127.0.0.1:${app.port}`,sub_public_url:`http://127.0.0.1:${app.port}`});
+  async function checkLinks(clean){
+    const json=clean?`/${slug}`:`/json/${slug}`,sub=clean?`/${slug}?format=sub`:`/sub/${slug}`;
+    const page=await request('/clients?edit='+id);
+    assert.equal(page.status,200);assert.ok(!page.text.includes('Страница не смогла отрисоваться'));
+    assert.ok(page.text.includes(`data-json-url="http://127.0.0.1:${app.port}${json}"`),json);
+    assert.ok(page.text.includes(`data-sub-url="http://127.0.0.1:${app.port}${sub}"`),sub);
+    const summary=JSON.parse((await request(`/clients/${id}/summary.json`)).text);
+    assert.equal(summary.client.links.json,`http://127.0.0.1:${app.port}${json}`);
+    assert.equal(summary.client.links.sub,`http://127.0.0.1:${app.port}${sub}`);
+    const portal=await request('/open/'+slug);assert.equal(portal.status,200);
+    assert.ok(portal.text.includes(`http://127.0.0.1:${app.port}${json}`));
+    assert.ok(portal.text.includes(`http://127.0.0.1:${app.port}${sub}`));
+    const settings=await request('/settings');assert.equal(settings.status,200);
+    const control=settings.text.match(/<input[^>]+name="subscription_clean_urls"[^>]*>/)?.[0];assert.ok(control);
+    assert.equal(control.includes('checked'),clean);
+    assert.ok(settings.text.includes(json.replace(slug,'&lt;ключ-клиента&gt;')));
+    for(const url of [`/${slug}`,`/json/${slug}`,`/${slug}?format=sub`,`/sub/${slug}`]){
+      const r=await request(url);assert.equal(r.status,200,url);assert.equal(r.location,null);
+      if(url.includes('sub'))assert.match(r.text,/vless:\/\//);else assert.ok(JSON.parse(r.text)[0].outbounds);
+    }
+  }
+  await checkLinks(true);
+  const rev=setting('subscription_revision');
+  const off=await request('/settings',{...form(),subscription_link_controls:'1'});assert.equal(off.status,302);assert.ok(!off.location.includes('error='),off.location);
+  assert.equal(setting('subscription_clean_urls'),'0');assert.notEqual(setting('subscription_revision'),rev);
+  await checkLinks(false);
+  const revOff=setting('subscription_revision');
+  await request('/settings',form());assert.equal(setting('subscription_clean_urls'),'0','old open form must not reset the switch');
+  assert.equal(setting('subscription_revision'),revOff);
+  const denied=await request('/settings',{...form(),_csrf:'wrong',subscription_link_controls:'1',subscription_clean_urls:'1'});
+  assert.equal(denied.status,403);assert.equal(setting('subscription_clean_urls'),'0');
+  const on=await request('/settings',{...form(),subscription_link_controls:'1',subscription_clean_urls:'1'});assert.ok(!on.location.includes('error='));
+  assert.equal(setting('subscription_clean_urls'),'1');await checkLinks(true);
+  if(process.env.NEXUS_PLAYWRIGHT_MODULE){
+    const {chromium}=require(process.env.NEXUS_PLAYWRIGHT_MODULE);const browser=await chromium.launch({headless:true,channel:'msedge'});
+    try{
+      const page=await browser.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
+      await page.route('**/*',route=>new URL(route.request().url()).hostname==='127.0.0.1'?route.continue():route.abort());
+      await page.goto(`http://127.0.0.1:${app.port}/login`);await page.locator('[name=username]').fill('admin');await page.locator('[name=password]').fill('test-password-strong');
+      await Promise.all([page.waitForURL('**/dashboard'),page.locator('button[type=submit]').click()]);
+      for(const [width,enabled] of [[1440,false],[390,true]]){
+        await page.setViewportSize({width,height:920});await page.goto(`http://127.0.0.1:${app.port}/settings?settings_tab=settings-tab-general`);
+        const control=page.locator('[name=subscription_clean_urls]');await control.setChecked(enabled);
+        await control.scrollIntoViewIfNeeded();assert.equal(await control.isChecked(),enabled);
+        assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1),false);
+        if(process.env.NEXUS_UI_SCREENSHOT_DIR)await control.locator('..').screenshot({path:path.join(process.env.NEXUS_UI_SCREENSHOT_DIR,`subscription-link-switch-${width}.png`)});
+        const settingsForm=page.locator('form[action="/settings"]');
+        // On mobile the existing sticky save bar overlays the form footer.
+        const floatingSave=page.locator('.global-floating-save.is-visible').getByRole('button',{name:'Сохранить',exact:true});
+        const save=await floatingSave.isVisible()?floatingSave:settingsForm.getByRole('button',{name:'Сохранить',exact:true});
+        try {
+          await Promise.all([page.waitForURL(url=>url.searchParams.has('message'),{timeout:10000}),save.click({timeout:5000})]);
+        } catch(error) {
+          const details=await page.evaluate(()=>({url:location.href,alerts:[...document.querySelectorAll('.alert')].map(e=>e.innerText),invalid:[...document.querySelectorAll('form[action="/settings"] :invalid')].map(e=>({name:e.name,message:e.validationMessage}))}));
+          throw Error(error.message+'\n'+JSON.stringify(details));
+        }
+        assert.equal(setting('subscription_clean_urls'),enabled?'1':'0');
+      }
+      assert.deepEqual(errors,[]);
+    }finally{await browser.close();}
+  }
+  await request('/settings',{...form(),subscription_link_controls:'1'});
+  await stopApp(app);app=await startApp(dataDir,'production');
+  assert.equal(setting('subscription_clean_urls'),'0','disabled preference survives restart');
+  const portal=await(await fetch(`http://127.0.0.1:${app.port}/open/${slug}`)).text();assert.ok(portal.includes('/json/'+slug));
+  assert.equal((await fetch(`http://127.0.0.1:${app.port}/${slug}`)).status,200,'clean URL still works after disabling and restarting');
 });
 
 test('ordinary 3x-ui UDP443 migrates, saves per node and survives JSON, SUB, auto pools and restart', { timeout:60000 }, async t => {

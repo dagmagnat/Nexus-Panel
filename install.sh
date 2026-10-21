@@ -299,9 +299,45 @@ ask_secret_optional() {
   local prompt="$1"
   local value
   read -r -s -p "$prompt: " value || true
-  echo
+  echo >&2
   value="${value//$'\r'/}"
   echo "$value"
+}
+
+validate_admin_runtime_password() {
+  if [ -z "${1:-}" ] || [ "$1" = admin ]; then
+    err "Пароль администратора пустой либо равен admin. Задай другой пароль до сборки; защита production не отключается."
+    return 1
+  fi
+}
+
+validate_new_admin_password() {
+  validate_admin_runtime_password "${1:-}" || return 1
+  if [ "${#1}" -lt 12 ] || [ "$(printf '%s' "$1" | wc -c)" -gt 72 ]; then
+    err "Пароль: минимум 12 символов и максимум 72 байта."
+    return 1
+  fi
+  if [[ "$1" == *"'"* || "$1" == *$'\n'* || "$1" == *$'\r'* ]]; then
+    err "Для пароля установки не используй одинарную кавычку и переносы строк."
+    return 1
+  fi
+}
+
+read_env_literal() {
+  local value="$1"
+  if [[ "$value" == \'*\' || "$value" == \"*\" ]]; then
+    value="${value:1:${#value}-2}"
+  fi
+  printf '%s' "$value"
+}
+
+quote_env_literal() {
+  if [[ "$1" == *"'"* || "$1" == *$'\n'* || "$1" == *$'\r'* ]]; then
+    err "Не удалось безопасно сохранить значение .env: одинарная кавычка или перенос строки."
+    return 1
+  fi
+  # Compose treats a single-quoted value literally: $ and # remain part of it.
+  printf "'%s'" "$1"
 }
 
 trim() {
@@ -656,7 +692,7 @@ load_existing_config() {
       case "$key" in
         PORT) APP_PORT="$value" ;;
         ADMIN_USERNAME) ADMIN_USER="$value" ;;
-        ADMIN_PASSWORD) ADMIN_PASS="$value" ;;
+        ADMIN_PASSWORD) ADMIN_PASS="$(read_env_literal "$value")" ;;
         APP_SECRET) APP_SECRET_VALUE="$value" ;;
         SESSION_SECRET) SESSION_SECRET_VALUE="$value" ;;
         PANEL_PUBLIC_URL) PANEL_PUBLIC_URL="$value" ;;
@@ -722,6 +758,9 @@ write_env_file() {
 
   ADMIN_USER="$(printf '%s' "$ADMIN_USER" | tr -d '\r\n')"
   ADMIN_PASS="$(printf '%s' "$ADMIN_PASS" | tr -d '\r\n')"
+  validate_admin_runtime_password "$ADMIN_PASS" || return 1
+  local quoted_admin_pass
+  quoted_admin_pass="$(quote_env_literal "$ADMIN_PASS")" || return 1
 
   cat > "$ENV_FILE" <<EOF
 PORT=${APP_PORT}
@@ -730,7 +769,7 @@ SESSION_SECRET=${SESSION_SECRET_VALUE}
 TRUST_PROXY=${trust_proxy_value}
 SESSION_SECURE=${session_secure_value}
 ADMIN_USERNAME=${ADMIN_USER}
-ADMIN_PASSWORD=${ADMIN_PASS}
+ADMIN_PASSWORD=${quoted_admin_pass}
 BASE_URL=${SUB_PUBLIC_URL}
 PANEL_PUBLIC_URL=${PANEL_PUBLIC_URL}
 SUB_PUBLIC_URL=${SUB_PUBLIC_URL}
@@ -997,7 +1036,7 @@ services:
   aggregator:
     build:
       context: .
-      network: host
+      network: ${NEXUS_BUILD_NETWORK:-default}
       args:
         NODE_IMAGE: ${NODE_IMAGE:-node:22-bookworm-slim}
         NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org/}
@@ -1016,6 +1055,16 @@ services:
     volumes:
       - ./data:/app/data
 EOF
+}
+
+write_clean_subscription_matcher() {
+  echo '    # NEXUS-CLEAN-LINKS BEGIN'
+  echo '    @nexus_clean {'
+  echo '        path_regexp nexus_clean ^/[A-Za-z0-9_-]{12,128}/?$'
+  echo '        not path /auto-select-profiles /happ-routing /happ-routing-json /mobile-login /node-traffic'
+  echo '    }'
+  printf '    %s @nexus_clean %s\n' "$1" "$2"
+  echo '    # NEXUS-CLEAN-LINKS END'
 }
 
 write_caddyfile_single_or_dual() {
@@ -1095,6 +1144,7 @@ write_caddyfile_single_or_dual() {
       echo "http://${d} {"
       if uses_normal_cert_domain "$d"; then
         if [ "${PANEL_MODE}" = "domain_port" ] && [ "${PANEL_DOMAIN}" = "$d" ]; then
+          write_clean_subscription_matcher redir "https://${d}{uri} permanent"
           echo "    @public_sub path /s/* /sub/* /sub-plain/* /json/* /happ/* /hiddify/* /happ-routing/* /happ-routing-json/* /open/* /qr /healthz /css/* /js/* /img/* /favicon.ico"
           echo "    redir @public_sub https://${d}{uri} permanent"
           echo "    redir https://${d}:${APP_PORT}{uri} permanent"
@@ -1140,6 +1190,7 @@ write_caddyfile_single_or_dual() {
       if [ "${PANEL_MODE}" = "domain" ] && [ "$PANEL_DOMAIN" = "$d" ]; then
         echo "    reverse_proxy aggregator:${APP_PORT}"
       else
+        write_clean_subscription_matcher reverse_proxy "aggregator:${APP_PORT}"
         echo "    @public_sub path /s/* /sub/* /sub-plain/* /json/* /happ/* /hiddify/* /happ-routing/* /happ-routing-json/* /open/* /qr /healthz /css/* /js/* /img/* /favicon.ico"
         echo "    reverse_proxy @public_sub aggregator:${APP_PORT}"
         echo "    respond 404"
@@ -1157,7 +1208,7 @@ services:
   aggregator:
     build:
       context: .
-      network: host
+      network: ${NEXUS_BUILD_NETWORK:-default}
       args:
         NODE_IMAGE: ${NODE_IMAGE:-node:22-bookworm-slim}
         NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org/}
@@ -1203,7 +1254,7 @@ services:
   aggregator:
     build:
       context: .
-      network: host
+      network: ${NEXUS_BUILD_NETWORK:-default}
       args:
         NODE_IMAGE: ${NODE_IMAGE:-node:22-bookworm-slim}
         NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org/}
@@ -1248,7 +1299,7 @@ services:
   aggregator:
     build:
       context: .
-      network: host
+      network: ${NEXUS_BUILD_NETWORK:-default}
       args:
         NODE_IMAGE: ${NODE_IMAGE:-node:22-bookworm-slim}
         NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org/}
@@ -1295,7 +1346,7 @@ services:
   aggregator:
     build:
       context: .
-      network: host
+      network: ${NEXUS_BUILD_NETWORK:-default}
       args:
         NODE_IMAGE: ${NODE_IMAGE:-node:22-bookworm-slim}
         NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org/}
@@ -1606,6 +1657,9 @@ docker_compose_build_once() {
 
 compose_up_build() {
   cd "$APP_DIR"
+  local configured_password
+  configured_password="$(read_env_literal "$(sed -n 's/^ADMIN_PASSWORD=//p' "$APP_DIR/.env" | tail -n 1)")"
+  validate_admin_runtime_password "$configured_password" || return 1
   export DOCKER_BUILDKIT=1
   export COMPOSE_DOCKER_CLI_BUILD=1
   export COMPOSE_PROGRESS=plain
@@ -2073,7 +2127,10 @@ prompt_admin_change() {
       local new_pass
       new_pass="$(ask_secret_optional 'Новый пароль администратора (оставь пустым, чтобы не менять)')"
       new_pass="$(trim "$new_pass")"
-      if [ -n "$new_pass" ]; then ADMIN_PASS="$new_pass"; fi
+      if [ -n "$new_pass" ]; then
+        validate_new_admin_password "$new_pass" || return 1
+        ADMIN_PASS="$new_pass"
+      fi
       if [ -z "${ADMIN_PASS:-}" ]; then
         err "Пароль не должен быть пустым."
         return 1
@@ -2127,8 +2184,7 @@ first_install_wizard() {
   while true; do
     ADMIN_PASS="$(ask_secret_optional 'Пароль администратора панели')"
     ADMIN_PASS="$(trim "$ADMIN_PASS")"
-    if [ -n "$ADMIN_PASS" ]; then break; fi
-    err "Пароль не должен быть пустым."
+    if validate_new_admin_password "$ADMIN_PASS"; then break; fi
   done
 
   build_panel_public_url "$server_ip"
@@ -2157,6 +2213,8 @@ normalize_modes_after_port_choice() {
 
 prepare_config_and_run() {
   ui_section "Применение конфигурации"
+  validate_admin_runtime_password "${ADMIN_PASS:-}" || return 1
+  quote_env_literal "$ADMIN_PASS" >/dev/null || return 1
   if local_panels_configured; then local_panels_command validate; fi
   local server_ip
   server_ip="$(get_public_server_ip)"
@@ -2282,6 +2340,9 @@ update_files_only() {
     err "Не найден существующий .env с настройками. Для первого запуска выбери установку."
     exit 1
   fi
+
+  validate_admin_runtime_password "$ADMIN_PASS" || return 1
+  quote_env_literal "$ADMIN_PASS" >/dev/null || return 1
 
   local local_src
   local_src="$(script_source_dir)"

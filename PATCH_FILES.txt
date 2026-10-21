@@ -1,4 +1,7 @@
 app.js
+install.sh
+lib_workspace_runtime.js
+lib_subscription_links.js
 lib_node_traffic.js
 lib_client_directory.js
 lib_device_refresh.js
@@ -19,6 +22,8 @@ README.md
 CHANGELOG.md
 PROJECT_HANDOFF.md
 views/clients.ejs
+views/client_detail.ejs
+views/open_sub.ejs
 views/settings.ejs
 views/preferences.ejs
 views/routing.ejs
@@ -30,6 +35,8 @@ public/js/node-traffic.js
 public/js/dashboard-quotas.js
 public/css/node-traffic.css
 public/css/client-pagination.css
+public/css/spectrum-clear.css
+scripts/upgrade-install-config.py
 tests/node-traffic.test.js
 tests/client-directory.test.js
 tests/performance.test.js
@@ -45,6 +52,9 @@ tests/remnawave-live-usage.test.js
 tests/remnawave-routing.test.js
 tests/routing-dns.test.js
 tests/node-udp443.test.js
+tests/subscription-links.test.js
+tests/install-config.test.js
+tests/clean-links-workspaces-http.test.js
 tests/routing-node-selective.test.js
 tests/client-traffic-reset.test.js
 tests/usage-directory-2.7.3.test.js
@@ -59,3 +69,5 @@ docs/UPDATE_2.7.13.md
 docs/UPDATE_2.7.14.md
 docs/UPDATE_2.7.15.md
 docs/UPDATE_2.7.16.md
+docs/UPDATE_2.7.17.md
+docs/UPDATE_2.7.18.md

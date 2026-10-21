@@ -10,7 +10,41 @@
 - Архив не совпадает с предыдущей рабочей копией 2.7.0: в нём добавлены SVG-флаги и доработаны совместимость Remnawave, прокрутка страницы узлов и соответствующий тест.
 - Папка `node_modules` в исходный архив не входит и в итоговые архивы изменений попадать не должна.
 
+## Отложенные замечания пользователя
+
+2026-10-21 — вёрстка страницы «Узлы», состояние без добавленных узлов:
+
+- Пользователь прислал desktop-скриншот и попросил только взять на заметку для будущего исправления, не исправлять сейчас. Файл: C:/Users/user/AppData/Local/Temp/codex-clipboard-4d149cf5-fc67-4330-83fb-0a204fc87351.png.
+- Видимые симптомы: пустой список растянут почти на весь экран; сообщение «Пока нет добавленных узлов» прижато к левой границе без отступа относительно заголовка; кнопка «Добавить автоподключение» визуально отделена от блока списка и почти примыкает к его верхней рамке.
+- При будущей правке согласовать отступы/расположение действий и компактное пустое состояние, проверить desktop/mobile и список с узлами. Причина CSS пока не исследовалась, исправление и новая сборка по этому замечанию не выполнялись.
+- Выполнено в 2.7.17 после запроса «доработай и исправь ошибки»: padding=0 и desktop flex/100dvh растягивали пустой список; добавлены empty-state/компактная высота, действия перенесены в заголовок. Локальные HTTP+Edge 1440/390, переход к форме и отсутствие overflow проверены, screenshots просмотрены. Исходный пункт выше сохранён как история запроса.
+
 ## Последнее изменение
+
+2026-10-21 — Nexus 2.7.18, переключатель чистых ссылок:
+
+- Запрос пользователя: сделать выдачу JSON `/ключ` и SUB `/ключ?format=sub` настройкой вкл/выкл. Добавлен `subscription_clean_urls` default `1`, сохраняющий поведение 2.7.17. Настройки → Общие настройки → Адреса панели и подписок. Off возвращает генерацию `/json/ключ` и `/sub/ключ`; оба handler-стиля всегда работают, иначе уже выданные клиентам ссылки ломались бы. Middleware и ограничения Caddy не выключаются галочкой. Короткие/зарезервированные ключи остаются legacy.
+- Два массива defaults, GET/POST settings с marker `subscription_link_controls` (old form сохраняет выбор), revision при смене, профиль настроек с bool validation/fallback1. Переменная хранится в локальной app_settings своего workspace, не в общей control DB. Уточнена старая ложная подсказка о редиректе на rev: никаких редиректов приложения для смены ревизии нет.
+- Найдена недоделка 2.7.17: clients.ejs всё ещё формировал /json/?raw=1 и /sub-plain/ во всех desktop/mobile вариантах. Копирование и QR, редактор и неиспользуемый сейчас client_detail переведены на общие генераторы; настройки базы/формата читаются один раз на render, не запрос на каждую кнопку/строку. API summary/Telegram/CSV/portal учитывают bool в публичных builders. Стандартная кнопка SUB добавлена в portal; специальные plain/Hiddify/Happ-адреса и import/deeplink поведение сохранены.
+- Тесты: unit on/off/workspace/short/reserved и перенос bool; production HTTP settings on/off/old form/CSRF/revision, links в списке/редакторе/summary/portal, все четыре URL в обоих режимах, restart; реальные отдельные workspace workers с одним ключом и независимым выбором формата. Целевой 51: 42 pass/9 platform skip/0 fail. JS, 20 EJS, install/helper Bash syntax прошли.
+- UI: headless Edge 1440/390, реальная галочка и сохранение формы в обоих состояниях, без JS errors/горизонтального overflow; screenshots work/ui-qa/2.7.18 просмотрены. UI тестирует production-mode локальную фикстуру (не VPS): dev-only UI inspector перекрывал мобильную sticky-save; обычная форма использует существующий floating save, он проверен кликом. Не исправляли несвязанную development overlay-вёрстку и не обходили actionability принудительным click.
+- Полный набор 252: 226 pass/9 прежних fail/17 skip; имена fail совпадают с 2.7.17 (Python PATH×3/VM budget/старые inbound/CSS/grace/device-grace/RBAC). Полный набор не зелёный. Логи work/link-settings-*.log. Реальный Docker/Linux/Caddy/телефон и production-подписки не проверялись.
+- Версии package/lock/VERSION/update/README/installer assertion 2.7.18, docs/UPDATE_2.7.18.md, cumulative manifest для 2.7.7–2.7.17 с добавленными views/client_detail.ejs/open_sub.ejs. Пакетирование work/package_subscription_url_setting_2_7_18.ps1 → outputs/Nexus-Panel-2.7.18-subscription-link-settings-patch.zip. Локальный выпуск, не опубликован и не установлен на VPS. Предыдущие ZIP не изменяются.
+
+Изменены: app.js, lib_subscription_links.js, lib_settings_profile.js, views/settings.ejs/clients.ejs/client_detail.ejs/open_sub.ejs, tests/subscription-links.test.js/subscription-portal-traffic.test.js/clean-links-workspaces-http.test.js/installer-source-migration.test.js, package.json/package-lock.json/VERSION/update.json/README.md/CHANGELOG.md, docs/UPDATE_2.7.18.md, PROJECT_HANDOFF.md/PATCH_FILES.txt/apply-node-traffic-update.sh.
+
+2026-10-21 — Nexus 2.7.17, чистые ссылки и исправления установки:
+
+- Пользователь после вопросов об удалении /sub/ и /json/ дал запрос «доработай и исправь ошибки». Объявленная область: чистые JSON/SUB с сохранением старых ссылок, две воспроизведённые установки (network.host entitlement и ADMIN_PASSWORD=admin), замечание пустой страницы узлов. Не выполнять глобальное переименование каталогов/контейнеров: это отдельная миграция, не причина ошибки сборки.
+- lib_subscription_links.js: ключи 12–128 [A-Za-z0-9_-] и reserved set. JSON /key, SUB /key?format=sub, format=single поддержан; неизвестный/повторный формат 400. Короткие/зарезервированные импортированные ключи используют прежние URL, без замены токенов. Alias middleware перед workspace routing внутренне переписывает req.url в старый handler, не выдаёт redirect приложению и не ослабляет HWID/expiry/disabled/CSRF. lib_workspace_runtime.publicTarget поддерживает явные /s/<workspace>/key и не проксирует admin paths; /s/ намеренно сохранён. URL builders/portal/Telegram/CSV формируют новые ссылки, rev остаётся в заголовках, не обязателен в чистой ссылке.
+- install.sh и статический docker-compose.yml: пять генерируемых шаблонов build.network default вместо host, явный opt-in NEXUS_BUILD_NETWORK. Caddy генератор добавляет отдельный строгий matcher чистых путей, исключая системные имена. Старые public paths и respond404 остаются. Установщик валидирует default пароль до stop/build, новые пароли >=12 chars/<=72 bytes; сохраняет ADMIN_PASSWORD в single-quoted literal, read_env_literal читает его назад. $/# не интерполируются, apostrophe/newlines в новых значениях отклоняются до записи. ask_secret_optional newline перенесён на stderr, чтобы не загрязнять captured password. Production-guard не менялся; существующий пароль БД автоматически не сбрасывается.
+- scripts/upgrade-install-config.py: известный aggregator build.network:host→default и ограниченный Caddy matcher с backup/idempotence. Порты/project/container names/runtime network_mode/секреты/базы не меняются. --check проверяет пароль без печати значения до stop. apply-node-traffic-update.sh использует Python preflight, backup каталога, validates Caddy в run --rm (без публикации портов), пересоздаёт Caddy при changed single-file bind mount. При нужной правке Caddy без compose-сервиса — остановка до изменений. Для внешнего Nginx/произвольного прокси есть только инструкция, автоматическая правка не заявляется.
+- views/nodes.ejs/CSS: компактное пустое состояние, нет подсказки перетаскивания пустых узлов, CTA первого узла, автоподключение внутри head. Регрессия add/auto UI проверена.
+- Тесты: новые subscription-links 3 unit, install-config 4 (Git Bash/Python, shell password literal/default guard/не останавливать, network default/Caddy idempotence/backups/env unchanged), clean-links-workspaces-http 1 (настоящие worker-процессы, одинаковый токен, namespace vs cookie, disabled и запрет admin), subscription-portal-traffic ещё 1 (JSON/SUB/single/HEAD/browser/HWID/disabled/no-cache/CSRF/restart). Целевой 48: 40 pass/8 platform skip/0 fail; UI отдельно 6/6 с Edge 1440/390, screenshots work/ui-qa/2.7.17 просмотрены, без JS errors/горизонтального overflow. 20 EJS, JS и Bash syntax проверены. Полный 249: 224 pass/9 прежних fail/16 skip; названия fail точно совпадают с 2.7.16 (work/clean-links-full-2.7.17.log). Не заявлять полный green. Production Docker/Caddy/Linux, TLS домена/телефон не проверялись.
+- Финальный набор после добавления end-to-end POSIX helper test: целевой 49 (40 pass/9 platform skip/0 fail), полный 250 (224 pass/9 прежних fail/17 skip). Новый прогон helper с mocked Docker CLI требует нативных POSIX mkdir/install: на Windows Git Bash mkdir -p существующего каталога дал Permission denied, поэтому тест явно platform-skip, не заявлять его успешное выполнение. Shell/Python unit migration и UI/HTTP тесты работают. Это не новое падение Linux/Docker и не проверка реального VPS; Linux helper integration требуется проверить отдельно.
+- Версии package/lock/VERSION/update/README/installer assertion 2.7.17, docs/UPDATE_2.7.17.md, cumulative manifest для 2.7.7–2.7.16. Статический docker-compose.yml намеренно НЕ в PATCH_FILES (нельзя заменять работающие порты/тома). Пакетирование work/package_clean_links_2_7_17.ps1 → outputs/Nexus-Panel-2.7.17-clean-links-install-patch.zip. Это локальный patch, не свежая установка через старый GitHub bootstrap; не публиковался и не установлен на пользовательские VPS.
+
+Изменены: app.js, lib_subscription_links.js (новый), lib_workspace_runtime.js, install.sh, docker-compose.yml, scripts/upgrade-install-config.py (новый), views/nodes.ejs, public/css/spectrum-clear.css, tests/subscription-links.test.js/install-config.test.js/clean-links-workspaces-http.test.js (новые), tests/subscription-portal-traffic.test.js/installer-source-migration.test.js, package.json/package-lock.json/VERSION/update.json/README.md/CHANGELOG.md, docs/UPDATE_2.7.17.md, PROJECT_HANDOFF.md/PATCH_FILES.txt/apply-node-traffic-update.sh.
 
 2026-10-21 — Nexus 2.7.16, UDP/443 только обычных 3x-ui:
 
@@ -196,6 +230,7 @@ Nexus Node, Этап A от 2026-09-04:
 
 ## Изменённые файлы
 
+- 2.7.18: настройка чистых ссылок, генераторы/копирование/QR/публичный профиль, unit/HTTP/workspace/UI tests и инструкция выпуска перечислены в записи выше.
 - `app.js` — таблица и CRUD профилей, резервная копия, генерация JSON с balancer/observatory.
 - `app.js`, `lib_nexus_node_control.js` — схема БД и HTTP control plane Nexus Node.
 - `node-agent/agent.js`, `node-agent/install.sh`, `node-agent/README.md` — агент и установка на VPS.
@@ -227,6 +262,7 @@ Nexus Node, Этап A от 2026-09-04:
 
 ## Проверки
 
+- 2.7.18: целевой набор 42 pass/9 skip/0 fail (51); production-mode локальная Edge UI фикстура 1440/390 с сохранением галочки, просмотрены screenshots; JS/20 EJS/Bash syntax. Полный 226 pass/9 прежних fail/17 skip (252), не зелёный. Подробности и ограничения в записи последнего изменения и docs/UPDATE_2.7.18.md.
 - `node --check app.js`, `node --check lib_nexus_node_control.js`, `node --check node-agent/agent.js`, `node --check tests/nexus-node-control.test.js` — успешно.
 - Полный EJS/интеграционный прогон требует `npm ci`; во входном архиве нет `node_modules`, а на Windows-хосте доступен `node`, но отсутствует `npm`.
 

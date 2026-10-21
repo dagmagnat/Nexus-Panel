@@ -403,7 +403,7 @@
         <div class="field">
           <div class="kv-item">
             <strong>Ревизия подписок: <%= subscriptionRevision %></strong>
-            <small class="hint">При изменении названия/надписи ревизия меняется автоматически. Старые ссылки /json, /sub и /happ перенаправляются на новую <code>?rev=...</code>, чтобы приложения меньше держали старый кэш.</small>
+            <small class="hint">При изменении названия, надписи или формата ссылок ревизия меняется автоматически и передаётся в заголовках подписки. Старые ссылки работают без перенаправлений. Для получения изменений обновите подписку в приложении.</small>
             <button type="submit" form="bumpSubRevisionForm" class="btn-secondary" style="margin-top:10px">Принудительно обновить ревизию подписок</button>
           </div>
         </div>
@@ -425,6 +425,14 @@
         <div class="field">
           <h3 style="margin:10px 0 0;">Адреса панели и подписок</h3>
           <small class="hint">Админка может открываться по одной ссылке, а клиентские JSON/SUB-ссылки могут выдаваться с другого публичного адреса.</small>
+        </div>
+
+        <div class="field">
+          <input type="hidden" name="subscription_link_controls" value="1" />
+          <label class="switch-row compact">
+            <input type="checkbox" name="subscription_clean_urls" value="1" <%= cleanSubscriptionUrls ? 'checked' : '' %> />
+            <span><strong>Чистые ссылки подписок — без /json/ и /sub/</strong><small>Включено: JSON — /ключ, SUB — /ключ?format=sub. Выключено: /json/ключ и /sub/ключ. Меняет ссылки в панели, QR и профиле клиента; уже выданные ссылки обоих видов продолжают работать. Для коротких или служебных ключей остаются прежние пути.</small></span>
+          </label>
         </div>
 
         <div class="field">

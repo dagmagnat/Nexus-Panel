@@ -5,6 +5,7 @@ const crypto = require('node:crypto');
 const FORMAT = 'nexus-preferences';
 const labels = {
   show_sub_links: 'Показывать SUB-ссылки', show_json_links: 'Показывать JSON-ссылки', show_happ_links: 'Показывать Happ-ссылки',
+  subscription_clean_urls: 'Чистые ссылки подписок',
   subscription_show_limits: 'Показывать лимиты в подписке', subscription_userinfo_header: 'Передавать трафик и срок в заголовках',
   subscription_live_usage: 'Обновлять расход трафика подписки', subscription_client_auto_update_enabled: 'Автообновление подписки',
   subscription_show_empty_limits: 'Показывать пустые лимиты', subscription_happ_info_enabled: 'Информация о клиенте в Happ',
@@ -23,6 +24,7 @@ const labels = {
 const rules = {};
 for (const key of `show_sub_links show_json_links show_happ_links subscription_show_limits subscription_userinfo_header subscription_live_usage subscription_client_auto_update_enabled subscription_show_empty_limits subscription_happ_info_enabled subscription_happ_info_announce_fallback_enabled subscription_happ_server_description_enabled subscription_device_tracking_enabled subscription_device_limit_enforced subscription_device_require_hwid subscription_expired_notice_enabled json_mux_enabled json_sniffing_enabled ios_safe_routing_enabled happ_app_controls_enabled happ_ping_tcp happ_ping_result_icon happ_fragmentation_enabled happ_noises_enabled happ_mux_enabled happ_subscription_auto_update_enabled happ_update_on_open_enabled happ_ping_on_open_enabled happ_subscriptions_collapse_enabled happ_expand_now_enabled happ_check_url_via_proxy_enabled happ_sniffing_enabled happ_force_apply_on_update_enabled panel_mobile_client_compact client_default_start_on_activation`.split(' ')) rules[key] = { values: ['0', '1'], fallback: '0' };
 Object.assign(rules, {
+  subscription_clean_urls: { values: ['0', '1'], fallback: '1' },
   subscription_update_interval_hours: { min: 1, max: 168, fallback: '1' },
   subscription_expired_grace_days: { values: ['0', '3', '7'], fallback: '7' },
   node_auto_refresh_seconds: { values: ['0', '10', '30', '60'], fallback: '10' },
