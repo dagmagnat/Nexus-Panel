@@ -1,6 +1,6 @@
 # Nexus Panel — журнал продолжения разработки
 
-Последнее обновление: **2026-10-15**
+Последнее обновление: **2026-10-21**
 
 Этот файл нужно читать первым при продолжении работы из другой учётной записи или нового чата. После каждой доработки обновляйте разделы «Последнее изменение», «Изменённые файлы» и «Проверки».
 
@@ -11,6 +11,17 @@
 - Папка `node_modules` в исходный архив не входит и в итоговые архивы изменений попадать не должна.
 
 ## Последнее изменение
+
+2026-10-21 — Nexus 2.7.15, DNS direct-исключений и routeOnly:
+
+- Пользователь сравнил клиентский JSON стороннего продавца и свой REALITY: российские приложения долго открываются, WhatsApp иногда зависает и на обычной ноде, и на каскаде. Запросил отдельный DNS рядом с direct-исключениями и переключатель routeOnly; UDP пока только объяснить. Нет доступа к production, причина зависаний не доказана.
+- Новый lib_json_routing_dns.js: opt-in directDnsEnabled/directDnsPreset/directDnsCustom и sniffingRouteOnly в routing_config (default false, без схемной миграции). Direct DNS только для доменных исключений proxy-except выбранных узлов. GeoIP не используется как DNS domain selector. Яндекс DoH официальный common.dot.dns.yandex.net через https+local (системный bootstrap), IP DNS tagged direct; основной DNS tagged proxy/balancer. Принудительные proxy-домены сначала используют основной DNS, стандартный sequential fallback сохранён; при пересекающихся списках это не строгая DNS-изоляция. Нативные app/TUN DNS зависят от клиента, routeOnly может сохранить уже известный IP.
+- Встраивается ПОСЛЕ normalizeXrayJsonForIos, чтобы не терялись tagged rules; авто-пул преобразует DNS proxy rule существующим autoSelectRuleForBalancer. Серверный transport/security/credentials/flow/mux, URI/SUB и отдельный Happ routing профиль не менялись. Новые формы с marker явно выключают, старые posts сохраняют opt-ins. Ошибочные IP/HTTP/DoT/URL credentials и пустой manual отклоняются до записи, повреждённый импорт не даёт HTTP 500 и показывает предупреждение.
+- views/routing.ejs: controls возле Domain/GeoSite direct, routeOnly с человеческим объяснением/возможностью выключить и текущим итогом; hint области действия/GeoIP/fallback/DNS перехвата. App /routing CSRF/RBAC сохранены, revision bump обновляет JSON.
+- tests/routing-dns.test.js: 6 unit (default-off, DNSpriority, tag routes, idempotence, scope, invalid/manual/IPv6, no transport changes, independent routeOnly, imported bad config). Реальный node-traffic HTTP: Remnawave XHTTP cascade, DNS/routeOnly/save/off/old form/invalid atomic/CSRF/assignment/transport preservation. Multi-auto HTTP: 3x-ui, DNS balancer/direct tags и сохранение после restart. Целевой 20/20 pass; доп. installer/version набор 18 pass/4 platform skip; 20 EJS, JS и helper bash -n. Полный 235: 210 pass, 9 прежних fail, 16 skip (work/routing-dns-full-2.7.15.log). Полный набор не зелёный. Не было теста production Xray/телефона/WhatsApp, визуальная mobile QA не заявлялась.
+- Версии package/lock/VERSION/update/README = 2.7.15; docs/UPDATE_2.7.15.md содержит включение, scope/fallback/DoH bootstrap и UDP443 explanation (Vision client flow vs cascade server mux.reject). Cumulative PATCH_FILES/helper 2.7.7–2.7.14 включает новый module и tests; GitHub/сервер не менялись. Дистрибутив outputs/Nexus-Panel-2.7.15-routing-dns-patch.zip.
+
+Изменены: app.js, lib_json_routing_dns.js, views/routing.ejs, tests/routing-dns.test.js/node-traffic-http.test.js/subscription-portal-traffic.test.js/installer-source-migration.test.js, package.json/package-lock.json/VERSION/update.json/README.md/CHANGELOG.md, docs/UPDATE_2.7.15.md, PROJECT_HANDOFF.md/PATCH_FILES.txt/apply-node-traffic-update.sh.
 
 2026-10-15 — Nexus 2.7.14, служебный узел не появляется после expiry:
 

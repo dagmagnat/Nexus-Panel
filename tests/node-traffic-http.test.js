@@ -97,6 +97,24 @@ test('real HTTP: scoped reporting, individual/bulk/all reset, CSRF and viewer pr
   }
   const single=await jsonConfigs('&node=1');assert.deepEqual(single.routing,configs[0].routing);
   const previousTransport=germany.outbounds.find(out=>out.tag==='proxy');
+  const dnsForm={...routingForm,routing_dns_controls:'1',direct_dns_enabled:'1',direct_dns_preset:'doh_yandex',sniffing_route_only:'1'};
+  r=await request('/routing',dnsForm);assert.ok(!r.location.includes('error='),r.location);
+  r=await request('/routing');assert.equal(r.status,200,r.text);assert.match(r.text,/name="direct_dns_enabled" value="1" checked/);assert.match(r.text,/name="sniffing_route_only" value="1" checked/);
+  configs=await jsonConfigs();let dnsGermany=configFor(configs,'germany.invalid'),dnsFinland=configFor(configs,'finland.invalid');
+  assert.equal(dnsGermany.dns.servers.find(x=>x.tag==='nexus-dns-direct').address,'https+local://common.dot.dns.yandex.net/dns-query');
+  assert.deepEqual(dnsGermany.dns.servers.find(x=>x.tag==='nexus-dns-direct').domains,['domain:direct-only.example']);
+  assert.ok(dnsGermany.routing.rules.some(x=>x.inboundTag?.includes('nexus-dns-direct')&&x.outboundTag==='direct'));
+  assert.ok(!dnsFinland.dns.servers.some(x=>x.tag==='nexus-dns-direct'),'direct DNS belongs only to direct-exceptions mode');
+  for(const cfg of [dnsGermany,dnsFinland])assert.ok(cfg.inbounds.every(x=>x.sniffing.routeOnly===true));
+  assert.deepEqual(dnsGermany.outbounds.find(x=>x.tag==='proxy'),previousTransport,'cascade XHTTP and its credentials stay unchanged');
+  const savedDns=db.prepare("SELECT value FROM app_settings WHERE key='routing_config'").get().value;
+  r=await request('/routing',{...dnsForm,direct_dns_preset:'manual',direct_dns_custom:'http://invalid-dns.test/query'});assert.match(r.location,/error=/);
+  assert.equal(db.prepare("SELECT value FROM app_settings WHERE key='routing_config'").get().value,savedDns,'invalid resolver must not partially save settings');
+  r=await request('/routing',dnsForm,{raw:true});assert.equal(r.status,403,'DNS save still requires CSRF');
+  r=await request('/routing',routingForm);assert.ok(!r.location.includes('error='),'old forms remain compatible');
+  assert.equal(JSON.parse(db.prepare("SELECT value FROM app_settings WHERE key='routing_config'").get().value).directDnsEnabled,true,'old form does not reset new opt-ins');
+  r=await request('/routing',{...routingForm,routing_dns_controls:'1'});assert.ok(!r.location.includes('error='),r.location);
+  configs=await jsonConfigs();dnsGermany=configFor(configs,'germany.invalid');assert.ok(!dnsGermany.dns.servers.some(x=>x.tag==='nexus-dns-direct'));assert.ok(dnsGermany.inbounds.every(x=>x.sniffing.routeOnly===false));
   r=await request('/routing',{...routingForm,routing_modes:['proxy-except']});assert.ok(!r.location.includes('error='),r.location);
   configs=await jsonConfigs();assert.equal(configFor(configs,'finland.invalid').routing,undefined,'unassigned node must not inherit routing');
   r=await request('/routing',{...routingForm,routing_enabled:'0'});assert.ok(!r.location.includes('error='),r.location);

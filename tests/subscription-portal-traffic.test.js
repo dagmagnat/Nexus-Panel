@@ -535,8 +535,18 @@ test('multiple auto-connections create, edit, toggle and delete independently vi
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM nodes').get().n,3);assert.equal(db.prepare('SELECT COUNT(*) AS n FROM clients').get().n,1);
   const sub=await(await request('/sub/portal-user?raw=1')).text();
   assert.ok(!sub.includes('Европа 2'),'auto profiles must not become fake VLESS/SUB endpoints');
+  const dnsRoutingForm=new URLSearchParams({_csrf:csrf,routing_enabled:'1',routing_dns_controls:'1',routing_modes:'proxy-except',
+    direct_dns_enabled:'1',direct_dns_preset:'yandex',sniffing_route_only:'1',except_domains:'geosite:category-ru\ndomain:qip.ru',dns_preset:'google'});
+  dnsRoutingForm.append('routing_mode_nodes_proxy_except',String(node1));dnsRoutingForm.append('routing_mode_nodes_proxy_except',String(node2));
+  const dnsSaved=await post('/routing',dnsRoutingForm);assert.ok(!dnsSaved.headers.get('location').includes('error='));
+  const withDns=await configs();const autoDns=withDns.find(x=>x.autoSelect);
+  assert.equal(autoDns.dns.servers.filter(x=>x.tag==='nexus-dns-direct').length,2);
+  assert.ok(autoDns.routing.rules.some(x=>x.inboundTag?.includes('nexus-dns-proxy')&&x.balancerTag&&!x.outboundTag),'autoconnect DNS proxy must use the balancer, not a renamed-away proxy tag');
+  assert.ok(autoDns.routing.rules.some(x=>x.inboundTag?.includes('nexus-dns-direct')&&x.outboundTag==='direct'));
+  assert.ok(autoDns.inbounds.every(x=>x.sniffing.routeOnly===true));
   await stopApp(app);app=await startApp(dataDir);
   assert.deepEqual((await configs()).filter(x=>x.autoSelect).map(x=>x.title),['⚡ Европа 2']);
+  assert.ok((await configs()).find(x=>x.autoSelect).dns.servers.some(x=>x.tag==='nexus-dns-direct'),'direct DNS persists after restart');
   assert.equal(db.prepare('SELECT enabled FROM auto_select_profiles WHERE id=?').get(profiles[1].id).enabled,0);
   if(process.env.NEXUS_PLAYWRIGHT_MODULE){
     const {chromium}=require(process.env.NEXUS_PLAYWRIGHT_MODULE);

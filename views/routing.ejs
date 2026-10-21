@@ -122,6 +122,7 @@
 
 <% if (message) { %><div class="alert ok"><%= message %></div><% } %>
 <% if (error) { %><div class="alert err"><%= error %></div><% } %>
+<% if (directDnsError) { %><div class="alert err">Отдельный DNS direct не применён: <%= directDnsError %> Пока используется основной DNS; исправь параметры и сохрани форму.</div><% } %>
 
 <nav class="routing-mobile-view-tabs" aria-label="Раздел маршрутизации">
   <button type="button" class="is-active" data-routing-mobile-view="editor">Настройка</button>
@@ -135,6 +136,7 @@
     <p class="hint">Работает для выбранных узлов 3x-ui и Remnawave через JSON-ссылку Nexus. Обычные VLESS/SUB-ссылки не содержат эти правила. Профили и серверная маршрутизация Remnawave не изменяются.</p>
 
     <form method="post" action="/routing" class="routing-form">
+      <input type="hidden" name="routing_dns_controls" value="1" />
       <label class="switch-row">
         <input type="checkbox" name="routing_enabled" value="1" <%= routingEnabled ? 'checked' : '' %> />
         <span><strong>Использовать маршрутизацию</strong><small>Если выключить, Nexus не добавляет свои правила; маршрут определяется конфигурацией и режимом приложения.</small></span>
@@ -169,6 +171,26 @@
                     <div class="field half"><label>Domain / GeoSite → direct</label><textarea name="except_domains" rows="6" placeholder="geosite:category-ru&#10;domain:bank.ru"><%= exceptDomainsText %></textarea><small class="hint"><code>geosite:category-ru</code>: российские сайты увидят прямой IP, иностранные — IP выбранного узла. Для надёжной проверки автоматически добавляются 2ip.ru, 2ip.io и 2ip.me.</small></div>
                     <div class="field half"><label>IP / GeoIP → direct</label><textarea name="except_ips" rows="6" placeholder="geoip:ru&#10;10.0.0.0/8"><%= exceptIpsText %></textarea><small class="hint">Для российских IP укажи <code>geoip:ru</code>.</small></div>
                   </div>
+                  <label class="switch-row">
+                    <input type="checkbox" name="direct_dns_enabled" value="1" <%= directDnsEnabled ? 'checked' : '' %> />
+                    <span><strong>Отдельный DNS для исключений → напрямую</strong><small>Повторяет список Domain / GeoSite выше: например, category-ru и domain:qip.ru. Запросы к этому DNS обходят VPN. Только в JSON узлов этого режима; по умолчанию выключено.</small></span>
+                  </label>
+                  <div class="form-grid">
+                    <div class="field half">
+                      <label>DNS для direct</label>
+                      <select name="direct_dns_preset">
+                        <% [['doh_yandex','Яндекс DoH · HTTPS напрямую'], ['yandex','Яндекс · UDP/53 напрямую'], ['cloudflare','Cloudflare · UDP/53 напрямую'], ['google','Google · UDP/53 напрямую'], ['manual','Только вручную']].forEach(([value,label]) => { %>
+                          <option value="<%= value %>" <%= directDnsPreset === value ? 'selected' : '' %>><%= label %></option>
+                        <% }) %>
+                      </select>
+                    </div>
+                    <div class="field half">
+                      <label>Ручные DNS для direct · дополнительно к набору</label>
+                      <textarea name="direct_dns_custom" rows="3" placeholder="77.88.8.8&#10;https://common.dot.dns.yandex.net/dns-query"><%= directDnsCustomText || '' %></textarea>
+                      <small class="hint">IPv4/IPv6 без порта либо HTTPS DoH URL, по одному в строке. DoH отправляется локально, имя DNS-сервера определяет система устройства.</small>
+                    </div>
+                  </div>
+                  <p class="hint">DNS выбирается по домену до получения IP, поэтому <code>geoip:ru</code> само по себе не выбирает отдельный DNS. Приоритетные proxy-домены сначала используют основной DNS. При ошибке резолвера возможен обычный DNS fallback. Не применяется к режиму «выбранное через proxy, остальное напрямую».</p>
                 </div>
               <% } else { %>
                 <div class="routing-mode-rules routing-mode-rules-proxy">
@@ -241,8 +263,16 @@
         <button type="button" class="btn-secondary" onclick="setGeoPreset('iran')">Iran rules</button>
       </div>
 
-      <h3>DNS для JSON-подписки</h3>
+      <h3>Распознавание доменов · проверка совместимости</h3>
+      <label class="switch-row">
+        <input type="checkbox" name="sniffing_route_only" value="1" <%= sniffingRouteOnly ? 'checked' : '' %> />
+        <span><strong>routeOnly — только выбирать маршрут, не подменять адрес</strong><small>Включено: Xray распознаёт домен для правил, но сохраняет исходный адрес назначения. Выключено: sniffing также может заменить адрес распознанным доменом. Для сравнения обнови JSON и переподключись. Это не проверка доступности сервера и не переключатель всего трафика на direct.</small></span>
+      </label>
+      <p class="hint">Применяется к включённому sniffing только в JSON выбранных для маршрутизации узлов, в том числе обычных и каскадных. Не меняет серверный inbound, URI/SUB и отдельный Happ routing-профиль.</p>
+
+      <h3>Основной DNS для JSON-подписки</h3>
       <p class="hint">Эти DNS попадут в генерируемый JSON-конфиг. DoH/DoT можно использовать, если клиентская сборка Xray/Happ их поддерживает.</p>
+      <p class="hint">Отдельный direct DNS настраивается рядом с direct-исключениями выше. Это настройки встроенного DNS Xray, а не принудительная смена DNS всех приложений: перехват DNS и TUN зависят от клиента.</p>
       <div class="form-grid">
         <div class="field half">
           <label>Готовый набор DNS</label>
@@ -271,6 +301,7 @@
 
   <section class="card span-6 routing-summary-card">
     <h2>Текущий итог</h2>
+    <div class="alert"><strong>DNS direct:</strong> <%= directDnsEnabled ? ('Включён для Domain / GeoSite исключений · ' + directDnsPreset) : 'Выключен · прежний основной DNS' %><br /><strong>routeOnly:</strong> <%= sniffingRouteOnly ? 'Включён · адрес не подменяется' : 'Выключен · прежнее поведение sniffing' %></div>
     <div class="kv-list">
       <div class="kv-item">
         <strong>JSON-ссылка</strong>

@@ -30,6 +30,7 @@ const { initClientDirectory, queryClientDirectory } = require('./lib_client_dire
 const { deviceRefreshPolicy, applyDeviceRefreshPolicy } = require('./lib_device_refresh');
 const { createAsyncReadCache, cooperativeMap, yieldToRequests } = require('./lib_performance');
 const { supportAccess, supportReasonText, parseSupportDays, initSupportSchema } = require('./lib_expired_support');
+const { directDnsSettings, parseDirectDnsServers, applyJsonRoutingDns } = require('./lib_json_routing_dns');
 const { initNexusNodeControlSchema, attachNexusNodeControl } = require('./lib_nexus_node_control');
 
 const COUNTRIES = [
@@ -14444,6 +14445,11 @@ app.get('/routing/geodata-index', requireAuth, async (req, res) => {
 
 app.get('/routing', requireAuth, (req, res) => {
   const cfg = getRoutingConfig();
+  let directDnsError = '';
+  if (cfg.directDnsEnabled) {
+    try { parseDirectDnsServers(cfg.directDnsPreset, cfg.directDnsCustom); }
+    catch (err) { directDnsError = String(err.message || err); }
+  }
   const routableNodes = db.prepare(`SELECT * FROM nodes WHERE enabled = 1 AND node_type != ? ORDER BY ${nodeOrderSql()}`).all(NODE_TYPE_H1CLOUD).filter(isClientManagedNode).map(enrichNodeWithCachedTransport);
   render(res, 'routing', {
     routingPresets: ROUTING_PRESETS,
@@ -14465,6 +14471,11 @@ app.get('/routing', requireAuth, (req, res) => {
     happRoutingJsonExample: `${getPublicSubBaseUrl()}/happ-routing-json/<slug>`,
     dnsPreset: cfg.dnsPreset || 'cloudflare',
     dnsCustomText: cfg.dnsCustom || '',
+    directDnsEnabled: cfg.directDnsEnabled === true,
+    directDnsPreset: cfg.directDnsPreset || 'doh_yandex',
+    directDnsCustomText: cfg.directDnsCustom || '',
+    sniffingRouteOnly: cfg.sniffingRouteOnly === true,
+    directDnsError,
     routingEnabled: cfg.enabled !== false,
     routingAllNodes: cfg.allNodes !== false,
     routingExcludedNodeIds: cfg.excludedNodeIds || [],
@@ -14509,6 +14520,16 @@ app.post('/routing', requireAuth, (req, res) => {
     const geodataUrls = uniqueList([effectiveGeositeUrl, effectiveGeoipUrl, ...parsePlainLines(req.body.geodata_urls || '')].filter(v => /^https?:\/\//i.test(v))); 
     const dnsPreset = String(req.body.dns_preset || 'cloudflare').trim();
     const dnsCustom = parsePlainLines(req.body.dns_custom || '').join('\n');
+    // Old forms do not carry these fields. Preserve the saved opt-ins instead
+    // of resetting them when an older tab/integration posts routing settings.
+    const newDnsControls = req.body.routing_dns_controls === '1';
+    const directOptions = newDnsControls ? {
+      directDnsEnabled: req.body.direct_dns_enabled === '1',
+      directDnsPreset: String(req.body.direct_dns_preset || 'doh_yandex'),
+      directDnsCustom: String(req.body.direct_dns_custom || '').trim(),
+      sniffingRouteOnly: req.body.sniffing_route_only === '1'
+    } : directDnsSettings(previousRoutingCfg);
+    if (directOptions.directDnsEnabled) parseDirectDnsServers(directOptions.directDnsPreset, directOptions.directDnsCustom);
     const routableNodeIds = new Set(db.prepare('SELECT id FROM nodes WHERE enabled = 1 AND node_type != ?').all(NODE_TYPE_H1CLOUD).filter(isClientManagedNode).map(row => Number(row.id)));
     const allowedModes = ['proxy-except', 'node-selective'];
     const requestedModesRaw = req.body.routing_modes;
@@ -14551,6 +14572,7 @@ app.post('/routing', requireAuth, (req, res) => {
       geoipUrl: /^https?:\/\//i.test(effectiveGeoipUrl) ? effectiveGeoipUrl : '',
       dnsPreset,
       dnsCustom,
+      ...directOptions,
       allNodes: false,
       excludedNodeIds: [],
       // The Happ routing profile is a separate opt-in. Saving ordinary JSON
@@ -18620,6 +18642,7 @@ function getDefaultRoutingConfig() {
     geoipUrl: LOYALSOLDIER_GEOIP_URL,
     dnsPreset: 'cloudflare',
     dnsCustom: '',
+    ...directDnsSettings(),
     allNodes: true,
     excludedNodeIds: [],
     modeAssignments: {},
@@ -18686,6 +18709,7 @@ function getRoutingConfig() {
       geoipUrl: (typeof parsed.geoipUrl === 'string' && parsed.geoipUrl.trim()) ? parsed.geoipUrl : (Array.isArray(parsed.geodataUrls) ? (parsed.geodataUrls.find(v => /geoip/i.test(v)) || fallback.geoipUrl) : fallback.geoipUrl),
       dnsPreset: typeof parsed.dnsPreset === 'string' ? parsed.dnsPreset : fallback.dnsPreset,
       dnsCustom: typeof parsed.dnsCustom === 'string' ? parsed.dnsCustom : fallback.dnsCustom,
+      ...directDnsSettings(parsed),
       allNodes: parsed.allNodes !== false,
       excludedNodeIds: Array.isArray(parsed.excludedNodeIds) ? parsed.excludedNodeIds.map(Number).filter(Boolean) : fallback.excludedNodeIds,
       modeAssignments: parsed.modeAssignments && typeof parsed.modeAssignments === 'object'
@@ -19483,7 +19507,10 @@ function buildHappJsonConfig(client, lines, subscriptionName, routingEnabledForT
       }
     } : {})
   };
-  return normalizeXrayJsonForIos(config, selectiveOutboundTag, routingMode);
+  return applyJsonRoutingDns(normalizeXrayJsonForIos(config, selectiveOutboundTag, routingMode), routingCfg, {
+    active: routingActive, mode: routingMode,
+    directDomains: getRoutingDirectDomains(), proxyDomains: getRoutingProxyDomains()
+  });
 }
 
 app.get('/happ-routing/:slug', async (req, res) => {
