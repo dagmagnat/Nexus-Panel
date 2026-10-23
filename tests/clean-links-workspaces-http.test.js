@@ -29,7 +29,7 @@ test('clean public links isolate real workspace workers; empty node screen has c
   }
   await request('/login');assert.equal((await request('/login',{username:'owner',password:'test-owner-password'})).status,302);
   const empty=await request('/nodes?tab=list');assert.equal(empty.status,200);assert.ok(empty.text.includes('nodes-empty-card'));assert.ok(empty.text.includes('nodes-empty-state'));
-  assert.ok(empty.text.indexOf('data-create-auto-select')>empty.text.indexOf('nodes-modern-head'),'action belongs to the card header');
+  assert.ok(empty.text.indexOf('data-create-auto-select')<empty.text.indexOf('nodes-modern-head'),'action belongs to the top navigation');
   if(process.env.NEXUS_PLAYWRIGHT_MODULE){
     const {chromium}=require(process.env.NEXUS_PLAYWRIGHT_MODULE);
     const browser=await chromium.launch({headless:true,channel:'msedge'});
@@ -42,7 +42,7 @@ test('clean public links isolate real workspace workers; empty node screen has c
         await page.setViewportSize({width,height:920});await page.goto(base+'/nodes?tab=list');
         const card=page.locator('.nodes-empty-card');await card.waitFor({state:'visible'});
         const box=await card.boundingBox();assert.ok(box.height<520,JSON.stringify(box));
-        assert.equal(await page.locator('.nodes-modern-head [data-create-auto-select]').isVisible(),true);
+        assert.equal(await page.locator('[data-create-auto-select]:visible').isVisible(),true);
         assert.equal(await page.locator('.nodes-empty-state a').evaluate(e=>getComputedStyle(e).color),'rgb(255, 255, 255)');
         assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1),false);
         if(process.env.NEXUS_UI_SCREENSHOT_DIR)await page.screenshot({path:path.join(process.env.NEXUS_UI_SCREENSHOT_DIR,`nodes-empty-${width}-2.7.17.png`),fullPage:true});

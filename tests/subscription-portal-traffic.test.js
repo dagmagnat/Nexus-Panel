@@ -804,7 +804,7 @@ test('multiple auto-connections create, edit, toggle and delete independently vi
       for(const width of [1440,390]){
         await page.setViewportSize({width,height:900});
         await page.goto(`http://127.0.0.1:${app.port}/nodes?tab=list`);
-        await Promise.all([page.waitForURL(url=>url.searchParams.get('create')==='auto_select'),page.locator('[data-create-auto-select]').click()]);
+        await Promise.all([page.waitForURL(url=>url.searchParams.get('create')==='auto_select'),page.locator('[data-create-auto-select]:visible').click()]);
         const form=page.locator('#node-create-form');
         await form.locator('[name=auto_select_name]').waitFor({state:'visible'});
         assert.equal(await form.locator('[name=node_type]').inputValue(),'auto_select');

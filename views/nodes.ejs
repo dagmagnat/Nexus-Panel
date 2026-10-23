@@ -57,6 +57,11 @@
     const key = String(value || 'unknown').toLowerCase();
     return ({ online: 'В сети', offline: 'Не в сети', disabled: 'Отключён', unknown: 'Нет данных', checking: 'Проверяю' })[key] || 'Нет данных';
   }
+  const nodesById = new Map(nodes.map(node => [Number(node.id), node]));
+  function connectionLabel(node) {
+    const source = nodesById.get(Number(node.id)) || node;
+    return String(source.transport_label || 'транспорт не загружен').replace(/\bRAW\b/g, 'TCP (RAW)');
+  }
 %>
 
 <%- include('partials_header', { pageTitle: 'Узлы', pageSubtitle: 'Добавление, проверка и управление 3x-ui и Remnawave', activePage: 'nodes', hidePageHeader: true }) %>
@@ -72,12 +77,14 @@
 <div class="desktop-page-tabs" data-page-tabs="nodes">
   <button type="button" class="<%= activeNodeTab === 'list' ? 'is-active' : '' %>" data-tab-target="list">Список узлов</button>
   <button type="button" class="<%= activeNodeTab === 'add' ? 'is-active' : '' %>" data-tab-target="add">Добавить узел</button>
+  <a href="/nodes?tab=add&amp;create=auto_select#node-create-form" data-create-auto-select>＋ Добавить автоподключение</a>
   <button type="button" class="<%= activeNodeTab === 'help' ? 'is-active' : '' %>" data-tab-target="help">Подсказка</button>
 </div>
 
 <nav class="nodes-mobile-tabs" aria-label="Разделы узлов">
   <a href="/nodes?tab=list" class="<%= activeNodeTab === 'list' ? 'is-active' : '' %>">Список</a>
   <a href="/nodes?tab=add" class="<%= activeNodeTab === 'add' ? 'is-active' : '' %>">＋ Добавить узел</a>
+  <a href="/nodes?tab=add&amp;create=auto_select#node-create-form" data-create-auto-select>＋ Автоподключение</a>
   <a href="/nodes?tab=help" class="<%= activeNodeTab === 'help' ? 'is-active' : '' %>">Подсказка</a>
 </nav>
 
@@ -164,7 +171,7 @@
           <select name="auto_select_preferred_node_id">
             <option value="0">Не задан — выбирать по пингу</option>
             <% nodes.forEach(node => { const suffix = String(node.label_suffix || '').trim(); const baseName = node.country_name_ru || node.name; const displayName = suffix ? (/^\d+$/.test(suffix) ? `${baseName}-${suffix}` : `${baseName} ${suffix}`) : baseName; %>
-              <option value="<%= node.id %>"><%= displayName %> · <%= node.node_type_label || node.node_type %></option>
+              <option value="<%= node.id %>"><%= displayName %> · <%= connectionLabel(node) %> · #<%= node.id %></option>
             <% }) %>
           </select>
           <small class="hint">Пока через этот узел есть интернет, он предпочтительнее более быстрых узлов.</small>
@@ -175,7 +182,7 @@
           <select name="auto_select_emergency_node_id">
             <option value="0">Не задан</option>
             <% nodes.forEach(node => { const suffix = String(node.label_suffix || '').trim(); const baseName = node.country_name_ru || node.name; const displayName = suffix ? (/^\d+$/.test(suffix) ? `${baseName}-${suffix}` : `${baseName} ${suffix}`) : baseName; %>
-              <option value="<%= node.id %>"><%= displayName %> · <%= node.node_type_label || node.node_type %></option>
+              <option value="<%= node.id %>"><%= displayName %> · <%= connectionLabel(node) %> · #<%= node.id %></option>
             <% }) %>
           </select>
           <small class="hint">Используется только если ни один узел основного пула не проходит интернет-проверку.</small>
@@ -187,7 +194,7 @@
             <% nodes.forEach(node => { const suffix = String(node.label_suffix || '').trim(); const baseName = node.country_name_ru || node.name; const displayName = suffix ? (/^\d+$/.test(suffix) ? `${baseName}-${suffix}` : `${baseName} ${suffix}`) : baseName; %>
               <label class="auto-select-node-option">
                 <input type="checkbox" name="auto_select_node_ids" value="<%= node.id %>" />
-                <span><%- flagHtml(node.country_code, node.country_flag, node.country_name_ru || node.name, node.node_type) %><strong><%= displayName %></strong><small><%= node.node_type_label || (String(node.node_type) === 'remnawave' ? 'Remnawave' : '3x-ui') %> · <%= Number(node.enabled) === 1 ? 'включён' : 'отключён' %></small></span>
+                <span><%- flagHtml(node.country_code, node.country_flag, node.country_name_ru || node.name, node.node_type) %><strong><%= displayName %></strong><small class="auto-member-transport"><%= connectionLabel(node) %> · #<%= node.id %></small><small><%= Number(node.enabled) === 1 ? 'включён' : 'отключён' %></small></span>
               </label>
             <% }) %>
           </div>
@@ -404,7 +411,7 @@
                       <select name="auto_select_preferred_node_id">
                         <option value="0" <%= !profile.preferredNodeId ? 'selected' : '' %>>Не задан — выбирать по пингу</option>
                         <% nodes.forEach(node => { const suffix = String(node.label_suffix || '').trim(); const baseName = node.country_name_ru || node.name; const displayName = suffix ? (/^\d+$/.test(suffix) ? `${baseName}-${suffix}` : `${baseName} ${suffix}`) : baseName; %>
-                          <option value="<%= node.id %>" <%= Number(profile.preferredNodeId) === Number(node.id) ? 'selected' : '' %>><%= displayName %> · <%= node.node_type_label || node.node_type %></option>
+                          <option value="<%= node.id %>" <%= Number(profile.preferredNodeId) === Number(node.id) ? 'selected' : '' %>><%= displayName %> · <%= connectionLabel(node) %> · #<%= node.id %></option>
                         <% }) %>
                       </select>
                       <small class="hint">Используется, пока через него проходит интернет-проверка.</small>
@@ -414,7 +421,7 @@
                       <select name="auto_select_emergency_node_id">
                         <option value="0" <%= !profile.emergencyNodeId ? 'selected' : '' %>>Не задан</option>
                         <% nodes.forEach(node => { const suffix = String(node.label_suffix || '').trim(); const baseName = node.country_name_ru || node.name; const displayName = suffix ? (/^\d+$/.test(suffix) ? `${baseName}-${suffix}` : `${baseName} ${suffix}`) : baseName; %>
-                          <option value="<%= node.id %>" <%= Number(profile.emergencyNodeId) === Number(node.id) ? 'selected' : '' %>><%= displayName %> · <%= node.node_type_label || node.node_type %></option>
+                          <option value="<%= node.id %>" <%= Number(profile.emergencyNodeId) === Number(node.id) ? 'selected' : '' %>><%= displayName %> · <%= connectionLabel(node) %> · #<%= node.id %></option>
                         <% }) %>
                       </select>
                       <small class="hint">Проверяется только после отказа всего основного пула.</small>
@@ -425,7 +432,7 @@
                         <% nodes.forEach(node => { const suffix = String(node.label_suffix || '').trim(); const baseName = node.country_name_ru || node.name; const displayName = suffix ? (/^\d+$/.test(suffix) ? `${baseName}-${suffix}` : `${baseName} ${suffix}`) : baseName; %>
                           <label class="auto-select-node-option">
                             <input type="checkbox" name="auto_select_node_ids" value="<%= node.id %>" <%= profile.normalNodeIds.includes(Number(node.id)) ? 'checked' : '' %> />
-                            <span><%- flagHtml(node.country_code, node.country_flag, node.country_name_ru || node.name, node.node_type) %><strong><%= displayName %></strong><small><%= Number(node.enabled) === 1 ? 'включён' : 'отключён' %></small></span>
+                            <span><%- flagHtml(node.country_code, node.country_flag, node.country_name_ru || node.name, node.node_type) %><strong><%= displayName %></strong><small class="auto-member-transport"><%= connectionLabel(node) %> · #<%= node.id %></small><small><%= Number(node.enabled) === 1 ? 'включён' : 'отключён' %></small></span>
                           </label>
                         <% }) %>
                       </div>
@@ -485,9 +492,6 @@
         <h2>Список узлов <span class="count-chip"><%= nodes.length + autoProfiles.length %></span></h2>
         <% if (nodes.length || autoProfiles.length) { %><span id="nodeOrderStatus" class="muted">Перетащи ⠿ на ПК или используй ↑/↓ на телефоне, чтобы изменить порядок в приложении</span><% } %>
       </div>
-      <div class="actions nodes-head-actions">
-        <a href="/nodes?tab=add&amp;create=auto_select#node-create-form" class="link-btn secondary" data-create-auto-select>＋ Добавить автоподключение</a>
-      </div>
       <% if (nodes.length || autoProfiles.length) { %>
         <div class="nodes-modern-toolbar" role="search">
           <label class="nodes-search-field" for="nodeSearchInput">
@@ -515,6 +519,7 @@
               </select>
             </label>
             <button type="button" class="secondary nodes-reset-filter" id="nodeResetFilters" title="Сбросить фильтры" aria-label="Сбросить фильтры"><span aria-hidden="true">↻</span></button>
+            <label class="nodes-filter-field nodes-sort-mobile"><span>Сортировка</span><select id="nodeSortSelect" aria-label="Сортировка узлов"><option value="">Порядок подписки</option><% for (const [key, label] of [['type','Тип'],['transport','Транспорт'],['enabled','Статус'],['activity','Активность']]) { %><option value="<%= key %>:asc"><%= label %> ↑</option><option value="<%= key %>:desc"><%= label %> ↓</option><% } %></select></label>
           </div>
         </div>
       <% } %>
@@ -532,10 +537,9 @@
           <div class="nodes-list-header">
             <span>ID</span>
             <span>Название</span>
-            <span>Тип</span>
-            <span>Транспорт</span>
-            <span>Статус</span>
-            <span>Активность</span>
+            <% for (const [key, label] of [['type','Тип'],['transport','Транспорт'],['enabled','Статус'],['activity','Активность']]) { %>
+              <button type="button" class="node-sort-button" data-node-sort="<%= key %>" aria-label="Сортировка: <%= label %>" title="По возрастанию → по убыванию → порядок подписки"><%= label %> <span data-sort-arrow aria-hidden="true">↕</span></button>
+            <% } %>
           </div>
           <div id="nodesOrderBody" class="nodes-modern-list" data-page-size="<%= nodePageSize || 10 %>">
             <% autoProfiles.forEach((profile, profileIndex) => {
@@ -884,6 +888,7 @@ function setNodeOrderStatus(text, isError) {
   el.classList.toggle('err-text', !!isError);
 }
 async function saveNodeOrder(order) {
+  if (nodeSortKey) return;
   if (!order.length) return;
   setNodeOrderStatus('Сохраняю порядок...', false);
   const response = await fetch('/nodes/reorder', {
@@ -894,6 +899,7 @@ async function saveNodeOrder(order) {
   const data = await response.json().catch(() => ({}));
   if (!response.ok || !data.ok) throw new Error(data.error || 'Не удалось сохранить порядок');
   setNodeOrderStatus('Порядок сохранён', false);
+  rememberNodeOrder();
   refreshMobileOrderControls();
 }
 
@@ -906,6 +912,42 @@ function getPhysicalNodeRows() {
 }
 
 let nodeCurrentPage = 1;
+let nodeSortKey = '', nodeSortDirection = 'asc';
+const nodeOriginalOrder = new Map();
+function rememberNodeOrder() {
+  getNodeRows().forEach((row, index) => nodeOriginalOrder.set(row, index));
+}
+function applyNodeSort() {
+  const rows = getNodeRows(), body = document.getElementById('nodesOrderBody');
+  if (!body) return;
+  if (!nodeOriginalOrder.size) rememberNodeOrder();
+  const collator = new Intl.Collator('ru', { numeric: true, sensitivity: 'base' });
+  const value = row => {
+    if (nodeSortKey === 'type') return row.querySelector('.node-row-type')?.textContent || '';
+    if (nodeSortKey === 'transport') return row.querySelector('.transport-chip-full')?.textContent || '';
+    if (nodeSortKey === 'enabled') return row.dataset.nodeEnabled === 'enabled' ? 0 : 1;
+    return ({online:0, checking:1, unknown:2, offline:3, disabled:4})[row.dataset.nodeActivity] ?? 2;
+  };
+  rows.sort((a,b) => {
+    const av = value(a), bv = value(b);
+    const diff = nodeSortKey ? (typeof av === 'number' ? av-bv : collator.compare(av,bv)) : 0;
+    return diff * (nodeSortDirection === 'desc' ? -1 : 1) || nodeOriginalOrder.get(a)-nodeOriginalOrder.get(b);
+  });
+  rows.forEach(row => body.appendChild(row));
+  getPhysicalNodeRows().forEach(row => { row.draggable = !nodeSortKey; });
+  document.querySelectorAll('[data-node-sort]').forEach(button => {
+    const active = button.dataset.nodeSort === nodeSortKey;
+    button.setAttribute('aria-pressed', String(active));
+    button.querySelector('[data-sort-arrow]').textContent = active ? (nodeSortDirection === 'asc' ? '↑' : '↓') : '↕';
+  });
+  const select = document.getElementById('nodeSortSelect');
+  if (select) select.value = nodeSortKey ? nodeSortKey + ':' + nodeSortDirection : '';
+  setNodeOrderStatus(nodeSortKey ? 'Сортировка только для просмотра. Для перемещения сбросьте её третьим нажатием на заголовок или кнопкой ↻.' : 'Перетащи ⠿ на ПК или используй ↑/↓ на телефоне, чтобы изменить порядок в приложении', false);
+}
+function setNodeSort(key, direction) {
+  nodeSortKey = key; nodeSortDirection = direction || 'asc'; nodeCurrentPage = 1;
+  renderNodePagination(); ensureSelectedNodeOnVisiblePage();
+}
 
 function getNodePageSize() {
   const list = document.getElementById('nodesOrderBody');
@@ -918,6 +960,7 @@ function getFilteredNodeRows() {
 }
 
 function renderNodePagination() {
+  applyNodeSort();
   const rows = getFilteredNodeRows();
   const pageSize = getNodePageSize();
   const total = rows.length;
@@ -981,8 +1024,8 @@ function refreshMobileOrderControls() {
   rows.forEach((row, index) => {
     const up = row.querySelector('[data-mobile-move="up"]');
     const down = row.querySelector('[data-mobile-move="down"]');
-    if (up) up.disabled = index === 0;
-    if (down) down.disabled = index === rows.length - 1;
+    if (up) up.disabled = !!nodeSortKey || index === 0;
+    if (down) down.disabled = !!nodeSortKey || index === rows.length - 1;
   });
 }
 
@@ -1068,6 +1111,13 @@ function applyNodeFilters() {
 }
 
 function initNodeDetailsPanel() {
+  document.querySelectorAll('[data-node-sort]').forEach(button => button.addEventListener('click', () => {
+    const key = button.dataset.nodeSort;
+    setNodeSort(nodeSortKey !== key ? key : (nodeSortDirection === 'asc' ? key : ''), nodeSortKey === key ? 'desc' : 'asc');
+  }));
+  document.getElementById('nodeSortSelect')?.addEventListener('change', event => {
+    const [key, direction] = event.target.value.split(':'); setNodeSort(key, direction);
+  });
   document.addEventListener('click', event => {
     const selector = event.target.closest('[data-select-node]');
     if (selector) {
@@ -1113,6 +1163,7 @@ function initNodeDetailsPanel() {
     if (search) search.value = '';
     if (type) type.value = 'all';
     if (state) state.value = 'all';
+    nodeSortKey = '';
     applyNodeFilters();
   });
   updateVisibleNodesCount();
@@ -1124,6 +1175,7 @@ function initNodeDragOrder() {
   let dragged = null;
   function bindRow(row) {
     row.addEventListener('dragstart', event => {
+      if (nodeSortKey) { event.preventDefault(); return; }
       if (event.target.closest('button:not(.drag-handle), a, input, select, textarea')) {
         event.preventDefault();
         return;
@@ -1147,6 +1199,7 @@ function initNodeDragOrder() {
   });
   body.addEventListener('drop', async event => {
     event.preventDefault();
+    if (nodeSortKey || !dragged) return;
     try {
       await saveNodeOrder(getDesktopNodeOrder());
       refreshMobileOrderControls();
@@ -1205,6 +1258,7 @@ function initMobileNodeLongPressOrder() {
     state = null;
   };
   list.addEventListener('pointerdown', event => {
+    if (nodeSortKey) return;
     if (!isMobileNodesLayout() || !['touch', 'pen'].includes(event.pointerType)) return;
     if (event.target.closest('a, button:not(.node-row-select), input, select, textarea')) return;
     const row = event.target.closest('.node-list-row');

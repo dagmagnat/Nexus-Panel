@@ -197,6 +197,46 @@ for (const kind of ['3xui-modern', '3xui-legacy', 'remna-3.3', 'remna-3.4']) {
           assert.equal(db.prepare('SELECT COUNT(*) AS n FROM client_nodes WHERE client_id!=2 AND node_id=?').get(targetId).n, 0);
         }
         assert.deepEqual(errors, []);
+        // Node catalog: all four sort keys are view-only and reversible.
+        const writesBeforeSort = writes.length;
+        const orderBeforeSort = db.prepare('SELECT id,sort_order FROM nodes ORDER BY id').all();
+        db.prepare("INSERT INTO auto_select_profiles(name,icon,enabled,normal_node_ids) VALUES('Wi-Fi test','⚡',1,'[1,2]')").run();
+        for (const width of [1440, 390]) {
+          await page.setViewportSize({ width, height: 920 }); await page.goto(base + '/nodes');
+          const order = () => page.locator('#nodesOrderBody .node-list-row').evaluateAll(rows => rows.map(r => r.dataset.nodeId));
+          const original = await order();
+          for (const key of ['type','transport','enabled','activity']) {
+            if (width === 1440) await page.locator('[data-node-sort="' + key + '"]').click();
+            else await page.locator('#nodeSortSelect').selectOption(key + ':asc');
+            assert.equal(await page.locator('#nodeSortSelect').inputValue(), key + ':asc');
+            assert.equal(await page.locator('[data-physical-node][draggable=true]').count(), 0);
+            const sorted = await page.locator('#nodesOrderBody .node-list-row').evaluateAll((rows, key) => rows.map(r => key === 'type' ? r.querySelector('.node-row-type').textContent : key === 'transport' ? r.querySelector('.transport-chip-full').textContent : key === 'enabled' ? (r.dataset.nodeEnabled === 'enabled' ? 0 : 1) : ({online:0,checking:1,unknown:2,offline:3,disabled:4})[r.dataset.nodeActivity] ?? 2), key);
+            const compare = (a,b) => typeof a === 'number' ? a-b : new Intl.Collator('ru',{numeric:true,sensitivity:'base'}).compare(a,b);
+            assert.deepEqual(sorted, [...sorted].sort(compare));
+            if (width === 1440) await page.locator('[data-node-sort="' + key + '"]').click();
+            else await page.locator('#nodeSortSelect').selectOption(key + ':desc');
+            assert.equal(await page.locator('#nodeSortSelect').inputValue(), key + ':desc');
+            if (width === 1440) {
+              await page.locator('[data-node-sort="' + key + '"]').click();
+              assert.equal(await page.locator('#nodeSortSelect').inputValue(), '');
+              assert.deepEqual(await order(), original);
+            }
+            await page.locator('#nodeResetFilters').click(); assert.deepEqual(await order(), original);
+          }
+          assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false);
+          if (process.env.NEXUS_UI_SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.NEXUS_UI_SCREENSHOT_DIR, 'nodes-sort-' + width + '.png') });
+          await Promise.all([page.waitForURL(url => url.searchParams.get('create') === 'auto_select'), page.locator('[data-create-auto-select]:visible').click()]);
+          await page.locator('#node-create-form [name=auto_select_name]').waitFor({ state: 'visible' });
+          assert.match(await page.locator('#node-create-form .auto-member-transport').first().textContent(), /XHTTP|TCP/i);
+          await page.goto(base + '/nodes?tab=add&auto_select_edit=1#auto-select-profile-1');
+          await page.locator('#auto-select-profile-1 .auto-member-transport').first().waitFor({ state: 'visible' });
+          await page.locator('#auto-select-profile-1 .auto-select-node-grid').scrollIntoViewIfNeeded();
+          assert.match(await page.locator('#auto-select-profile-1 .auto-member-transport').first().textContent(), /XHTTP|TCP/i);
+          if (process.env.NEXUS_UI_SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.NEXUS_UI_SCREENSHOT_DIR, 'auto-members-' + width + '.png') });
+        }
+        assert.deepEqual(db.prepare('SELECT id,sort_order FROM nodes ORDER BY id').all(), orderBeforeSort);
+        assert.equal(writes.length, writesBeforeSort, 'view sorting makes no remote writes');
+        assert.deepEqual(errors, []);
       } finally { await browser.close(); }
     }
   });

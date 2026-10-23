@@ -21,6 +21,18 @@
 
 ## Последнее изменение
 
+2026-10-23 — Nexus 2.7.20, управление каталогом/автовыбором:
+
+- Запрос: показывать способ подключения у кандидатов автовыбора (чтобы различать TCP и XHTTP с одинаковыми странами), перенести создание рядом с «Добавить узел», сортировать по четырём заголовкам тип/транспорт/статус/активность.
+- views/nodes.ejs: connectionLabel использует Map уже загруженного enriched-каталога, полный transport_label без удаления RAW/TCP, RAW отображается как TCP (RAW), ID в pool checkbox и preferred/emergency options и при создании, и при edit. Дополнительных SQL/API нет; неизвестный транспорт не выдумывается, Remna без transport info остаётся API. Боковая сводка оставлена компактной: длинная строка транспорта ломала её flex-вёрстку, удалена после визуальной проверки.
+- Создание auto перенесено из nodes-modern-head в desktop/mobile top nav. Обновлены старые тесты расположения/visible locator. CSS переносы транспортной строки и мобильных вкладок, focus-visible кнопок сортировки.
+- Сортировка в браузере всего DOM-каталога перед пагинацией: asc/desc/manual, стабильный original-index tie break; numeric enabled/activity и ru collator type/transport. Фильтры/live poll повторно применяют сортировку. Original Map обновляется после успешного ручного reorder; сортировка ничего не отправляет. На sorted view отключены drag/стрелки/longpress и saveNodeOrder guard, reset возвращает manual. Мобильный select синхронизирован с заголовками. Активность означает health state, не скорость/расход; auto имеет прежнюю условную online-метку.
+- Расширен optional Edge-блок tests/client-node-editor-http.test.js: реальные UI asc всех ключей/desc state/third click/reset на 1440, mobile select390, неизменные nodes.sort_order/remote writes, открытие create и видимого edit пула с транспортом. Ранний тест ERR_ABORTED исправлен ожиданием навигации после клика; forced click не используется. 4/4 включая HTTP. Screenshots work/ui-qa/2.7.20 просмотрены.
+- Целевой 26: 22 pass/4 skip/0 fail; полный256:230pass/9прежнихfail/17skip, имена точно совпадают с2.7.19. JS/20EJS проверены. Логи work/node-ui-2.7.20.log, nodes-target-2.7.20.log, nodes-full-2.7.20.log. Нет проверки на реальном VPS/Docker/физическом телефоне.
+- Выпуск2.7.20: version metadata/helper, README/CHANGELOG/docs UPDATE_2.7.20, cumulative manifest+doc. work/package_node_catalog_2_7_20.ps1 → outputs/Nexus-Panel-2.7.20-node-catalog-patch.zip. Локальный ZIP, не опубликован/не установлен на сервер пользователя; старые ZIP не изменены.
+
+Изменены: views/nodes.ejs, public/css/spectrum-clear.css, tests/client-node-editor-http.test.js/subscription-portal-traffic.test.js/clean-links-workspaces-http.test.js/installer-source-migration.test.js, package.json/package-lock.json/VERSION/update.json/README.md/CHANGELOG.md/PROJECT_HANDOFF.md/PATCH_FILES.txt/apply-node-traffic-update.sh, docs/UPDATE_2.7.20.md.
+
 2026-10-23 — Nexus 2.7.19, неназначенные узлы в редакторе клиента:
 
 - Запрос пользователя: после добавления 3x-ui/Remnawave узла без импорта всех клиентов он должен быть виден в «Узлы клиента» у любого пользователя без галочки; выбрать, задать ГБ и сохранить только этого клиента. Глобально отключённые узлы не показывать. Новый Finland XHTTP в общем списке был, в редакторе отсутствовал.
@@ -242,6 +254,7 @@ Nexus Node, Этап A от 2026-09-04:
 
 ## Изменённые файлы
 
+- 2.7.20: nodes EJS/CSS, сортировка/транспорт автовыбора, HTTP/UI tests, версии/helper/docs перечислены в последней записи выше.
 - 2.7.19: каталог включённых узлов в редакторе клиента, отдельный HTTP/UI regression test, версии и инструкция перечислены в последней записи выше; backend создания/привязки не менялся.
 - 2.7.18: настройка чистых ссылок, генераторы/копирование/QR/публичный профиль, unit/HTTP/workspace/UI tests и инструкция выпуска перечислены в записи выше.
 - `app.js` — таблица и CRUD профилей, резервная копия, генерация JSON с balancer/observatory.
@@ -274,6 +287,8 @@ Nexus Node, Этап A от 2026-09-04:
 8. В режиме отдельного сервера панель не обещает управлять чужим firewall: она только меняет endpoint, а DNAT/прокси остаётся под управлением внешнего скрипта.
 
 ## Проверки
+
+- 2.7.20: целевой26 (22pass/4skip/0fail), UI4/4 с Edge1440/390; полный256(230pass/9прежнихfail/17skip). Имена fail совпадают с2.7.19, снимки просмотрены. Production не проверялся.
 
 - 2.7.19: целевой 44 (36 pass/8 platform skip/0 fail); UI 4/4 с Edge 1440/390, снимки просмотрены; полный 256 (230 pass/9 прежних fail/17 skip), имена fail совпадают с 2.7.18. JS/20 EJS/Bash syntax пройдены. Не проверено на реальных VPS и телефоне.
 
