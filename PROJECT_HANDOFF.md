@@ -1,6 +1,6 @@
 # Nexus Panel — журнал продолжения разработки
 
-Последнее обновление: **2026-10-21**
+Последнее обновление: **2026-10-23**
 
 Этот файл нужно читать первым при продолжении работы из другой учётной записи или нового чата. После каждой доработки обновляйте разделы «Последнее изменение», «Изменённые файлы» и «Проверки».
 
@@ -20,6 +20,18 @@
 - Выполнено в 2.7.17 после запроса «доработай и исправь ошибки»: padding=0 и desktop flex/100dvh растягивали пустой список; добавлены empty-state/компактная высота, действия перенесены в заголовок. Локальные HTTP+Edge 1440/390, переход к форме и отсутствие overflow проверены, screenshots просмотрены. Исходный пункт выше сохранён как история запроса.
 
 ## Последнее изменение
+
+2026-10-23 — Nexus 2.7.19, неназначенные узлы в редакторе клиента:
+
+- Запрос пользователя: после добавления 3x-ui/Remnawave узла без импорта всех клиентов он должен быть виден в «Узлы клиента» у любого пользователя без галочки; выбрать, задать ГБ и сохранить только этого клиента. Глобально отключённые узлы не показывать. Новый Finland XHTTP в общем списке был, в редакторе отсутствовал.
+- Причина: GET /clients после оптимизации заполняет node_limits только реальными client_nodes; EJS ошибочно использовал их как каталог. Не возвращать SQL CROSS JOIN всех клиентов/узлов и не добавлять удалённые запросы при открытии. В views/clients.ejs редактор берёт уже загруженный enabled-каталог nodes, сопоставляет с node_limits через Map. Новые строки unchecked/пустые ГБ, старые сохраняют enabled/traffic_gb/service badge. Статистика/сводки остаются только по реальным связям. Добавлены ID и inbound/тип Squad для одинаковых названий.
+- Backend POST /clients/:id/edit уже умеет пропускать unmapped unchecked, создавать ensureAggregatorClientOnNode только для checked и обновлять старые mappings. Product-код app.js не менялся. Реальные ограничения общей Remna-квоты и API не переопределялись. Глобально отключённые привязки остаются нетронутыми; включённые offline-узлы предлагаются, remote failure отображается существующим error message.
+- Новый tests/client-node-editor-http.test.js: реальные isolated production Nexus HTTP процессы + mock legacy3xui/modern3xui (версии 2.5.8/3.10.2) и Remna3.3.0/3.4.5. Создание узла без массовых флагов; пустой/привязанный пользователь, страница2, unassigned/offline/disabled; POST select одного клиента, reuse identity, no duplicates, дробный/0/blank GB, uncheck и сохранение другого Squad, hidden-map unchanged, CSRF/negative before write, restart; GET не ходит к удалённым API. До EJS исправления 0/4 с точной missing-node ошибкой; после 4/4.
+- UI опционально NEXUS_PLAYWRIGHT_MODULE + NEXUS_UI_SCREENSHOT_DIR в том же тесте: headless Edge 1440/390, реальные check/GB/кнопки all/none/save, проверка записанного mapping только beta, без JS errors/overflow. Клик используется на собственной кнопке формы в модалке (floatingSave снаружи закономерно перекрыт backdrop); force-click/DOM-submit не используются. Снимки work/ui-qa/2.7.19 просмотрены; прогон 4/4.
+- Целевой набор 44: 36 pass/8 skip/0 fail. Полный 256: 230 pass/9 прежних fail/17 skip; названия fail совпадают с 2.7.18 (Python PATH×3/VM budget/старые inbound/CSS/grace/device-grace/RBAC). JS, 20 EJS и install/helper Bash syntax прошли. Журналы work/client-node-editor-*.log. Реальные VPS/удалённые версии API/Docker/Caddy/физический телефон не проверялись.
+- Версия 2.7.19 в package/lock/VERSION/update/README/installer assertion/helper. docs/UPDATE_2.7.19.md; cumulative manifest добавляет новый тест/документ. Пакетирование work/package_client_node_editor_2_7_19.ps1 → outputs/Nexus-Panel-2.7.19-client-node-editor-patch.zip, без node_modules/.env/баз/логов, static Compose не заменяется. Локальный патч, не опубликован и не установлен на серверы пользователя. Старые ZIP не изменять.
+
+Изменены: views/clients.ejs, tests/client-node-editor-http.test.js (новый), tests/installer-source-migration.test.js, package.json/package-lock.json/VERSION/update.json/README.md/CHANGELOG.md, docs/UPDATE_2.7.19.md (новый), PROJECT_HANDOFF.md/PATCH_FILES.txt/apply-node-traffic-update.sh.
 
 2026-10-21 — Nexus 2.7.18, переключатель чистых ссылок:
 
@@ -230,6 +242,7 @@ Nexus Node, Этап A от 2026-09-04:
 
 ## Изменённые файлы
 
+- 2.7.19: каталог включённых узлов в редакторе клиента, отдельный HTTP/UI regression test, версии и инструкция перечислены в последней записи выше; backend создания/привязки не менялся.
 - 2.7.18: настройка чистых ссылок, генераторы/копирование/QR/публичный профиль, unit/HTTP/workspace/UI tests и инструкция выпуска перечислены в записи выше.
 - `app.js` — таблица и CRUD профилей, резервная копия, генерация JSON с balancer/observatory.
 - `app.js`, `lib_nexus_node_control.js` — схема БД и HTTP control plane Nexus Node.
@@ -261,6 +274,8 @@ Nexus Node, Этап A от 2026-09-04:
 8. В режиме отдельного сервера панель не обещает управлять чужим firewall: она только меняет endpoint, а DNAT/прокси остаётся под управлением внешнего скрипта.
 
 ## Проверки
+
+- 2.7.19: целевой 44 (36 pass/8 platform skip/0 fail); UI 4/4 с Edge 1440/390, снимки просмотрены; полный 256 (230 pass/9 прежних fail/17 skip), имена fail совпадают с 2.7.18. JS/20 EJS/Bash syntax пройдены. Не проверено на реальных VPS и телефоне.
 
 - 2.7.18: целевой набор 42 pass/9 skip/0 fail (51); production-mode локальная Edge UI фикстура 1440/390 с сохранением галочки, просмотрены screenshots; JS/20 EJS/Bash syntax. Полный 226 pass/9 прежних fail/17 skip (252), не зелёный. Подробности и ограничения в записи последнего изменения и docs/UPDATE_2.7.18.md.
 - `node --check app.js`, `node --check lib_nexus_node_control.js`, `node --check node-agent/agent.js`, `node --check tests/nexus-node-control.test.js` — успешно.

@@ -1151,6 +1151,9 @@
   returnParams.set('edit', String(client.id));
   const clientReturnPath = '/clients?' + returnParams.toString();
   const canShowSubInEditor = Boolean(showSubLinks);
+  // Keep usage/summary rows limited to real mappings, but offer the entire
+  // enabled catalog in the editor without a per-client network/SQL lookup.
+  const clientNodeMappings = new Map((client.node_limits || []).map(row => [Number(row.node_id), row]));
 %>
   <div id="clientEditor-<%= client.id %>" class="modal hidden client-editor-shell" onclick="closeClientEditor(event, <%= client.id %>)">
     <div class="modal-card editor-modal client-editor-modal existing-client-editor-modal" onclick="event.stopPropagation()">
@@ -1250,7 +1253,7 @@
         <div class="nodes-head node-bulk-head edit-node-bulk-head">
           <div>
             <h3>Узлы клиента</h3>
-            <p class="muted">Снимите галочку, чтобы отключить узел. ГБ: число — лимит, 0 — безлимит, пусто — общий лимит. В одной Remnawave-панели квота общая для пользователя и всех его Squads.</p>
+            <p class="muted">Здесь все включённые узлы. Выберите неназначенный узел — Nexus создаст или привяжет клиента при сохранении. Снимите галочку, чтобы отключить доступ к узлу. ГБ: число — лимит, 0 — безлимит узла, пусто — общий лимит клиента.</p>
           </div>
           <div class="node-select-actions" aria-label="Быстрый выбор узлов клиента">
             <button type="button" class="btn-secondary node-select-btn" data-node-check-set="all" aria-pressed="false" onclick="event.stopPropagation(); return setClientNodeSelection(this, true)">Выбрать все</button>
@@ -1258,12 +1261,13 @@
           </div>
         </div>
         <div class="checkbox-list node-list">
-          <% client.node_limits.forEach(row => {
-            const nodeLabel = nodeName(row);
+          <% nodes.forEach(node => {
+            const row = clientNodeMappings.get(Number(node.id)) || { node_id: node.id };
+            const nodeLabel = nodeName(node);
           %>
             <label class="node-item node-edit-row">
               <input class="inline" type="checkbox" name="node_enabled_<%= row.node_id %>" value="1" <%= row.client_node_id && row.enabled !== 0 ? 'checked' : '' %> />
-              <span class="node-info"><strong><%- flagIcon(row.country_code, row.country_flag, row.country_name_ru || row.node_name || row.name, row.node_type) %><span><%= nodeLabel %></span><% if (Number(row.subscription_policy_only || 0) === 1) { %><em class="transport-chip">служебный</em><% } %></strong><small><%= row.client_node_id ? (Number(row.subscription_policy_only || 0) === 1 ? 'создан Nexus для grace/лимита; скрыт из обычной подписки' : (row.enabled !== 0 ? 'узел включён' : 'узел отключён для клиента')) : 'узел не назначен' %></small></span>
+              <span class="node-info"><strong><%- flagIcon(node.country_code, node.country_flag, node.country_name_ru || node.name, node.node_type) %><span><%= nodeLabel %></span><% if (Number(row.subscription_policy_only || 0) === 1) { %><em class="transport-chip">служебный</em><% } %></strong><small><%= row.client_node_id ? (Number(row.subscription_policy_only || 0) === 1 ? 'создан Nexus для grace/лимита; скрыт из обычной подписки' : (row.enabled !== 0 ? 'узел включён' : 'узел отключён для клиента')) : 'не назначен — выберите для добавления' %> · <%= nodeEndpointLabel(node) %> · узел #<%= node.id %></small></span>
               <input class="node-gb-input" name="node_traffic_gb_<%= row.node_id %>" type="number" min="0" step="any" value="<%= row.traffic_gb ?? '' %>" placeholder="Общий лимит" />
             </label>
           <% }) %>
