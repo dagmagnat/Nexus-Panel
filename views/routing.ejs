@@ -194,17 +194,22 @@
                 </div>
               <% } else { %>
                 <div class="routing-mode-rules routing-mode-rules-proxy">
-                  <div class="routing-mode-rules-head"><strong>Выбранное этого режима → через узел</strong><small>Применяется только к JSON отмеченных выше узлов. Всё остальное идёт напрямую.</small></div>
-                  <div class="form-grid">
-                    <div class="field half"><label>Domain / GeoSite → proxy</label><textarea name="custom_domains" rows="6" placeholder="geosite:youtube&#10;domain:example.com&#10;regexp:.*\\.example\\.com$"><%= customDomainsText %></textarea><small class="hint">Поддерживаются <code>geosite:</code>, <code>domain:</code>, <code>regexp:</code>, <code>keyword:</code> и <code>full:</code>.</small></div>
-                    <div class="field half"><label>IP / GeoIP → proxy</label><textarea name="custom_ips" rows="6" placeholder="geoip:telegram&#10;1.2.3.0/24&#10;2001:db8::/32"><%= customIpsText %></textarea><small class="hint">Поддерживаются <code>geoip:</code>, IPv4/IPv6 и CIDR.</small></div>
-                  </div>
+                  <div class="routing-mode-rules-head"><strong>Выбранное этого режима → через узел</strong><small>Использует общий список «Всегда через VPN» ниже. Всё остальное идёт напрямую.</small></div>
                 </div>
               <% } %>
             </div>
           </section>
         <% }) %>
       </div>
+
+      <section class="routing-mode-rules routing-mode-rules-proxy" id="routing-force-proxy">
+        <h3>Всегда через VPN — приоритет над direct</h3>
+        <p class="hint">Укажите российский сайт или IP, который должен идти через VPN даже при direct-исключениях <code>geosite:category-ru</code> и <code>geoip:ru</code>. В режиме «Выбранный через proxy кроме…» эти правила проверяются раньше direct. В режиме «Выбранное через proxy» этот же список определяет выбранный трафик. Только JSON назначенных выше узлов; блокировки имеют более высокий приоритет.</p>
+        <div class="form-grid">
+          <div class="field half"><label for="force-proxy-domains">Домены / GeoSite → всегда через VPN</label><textarea id="force-proxy-domains" name="custom_domains" rows="6" placeholder="domain:example.ru&#10;full:service.example.ru"><%= customDomainsText %></textarea><small class="hint">По одному в строке. <code>domain:example.ru</code> включает поддомены, <code>full:</code> — точное имя. Также поддерживаются <code>geosite:</code>, <code>regexp:</code> и <code>keyword:</code>.</small></div>
+          <div class="field half"><label for="force-proxy-ips">IP / CIDR / GeoIP → всегда через VPN</label><textarea id="force-proxy-ips" name="custom_ips" rows="6" placeholder="203.0.113.10/32&#10;203.0.113.0/24&#10;2001:db8::/32"><%= customIpsText %></textarea><small class="hint">IPv4/IPv6, подсеть CIDR или <code>geoip:</code>, по одному в строке. IP-правило не определяет DNS по имени; если известен домен, добавьте и его. Сохраните и обновите JSON-подписку в приложении.</small></div>
+        </div>
+      </section>
 
       <h3>Блокировка рекламы</h3>
       <label class="switch-row">

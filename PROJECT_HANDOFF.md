@@ -1,6 +1,6 @@
 # Nexus Panel — журнал продолжения разработки
 
-Последнее обновление: **2026-10-23**
+Последнее обновление: **2026-10-31**
 
 Этот файл нужно читать первым при продолжении работы из другой учётной записи или нового чата. После каждой доработки обновляйте разделы «Последнее изменение», «Изменённые файлы» и «Проверки».
 
@@ -20,6 +20,28 @@
 - Выполнено в 2.7.17 после запроса «доработай и исправь ошибки»: padding=0 и desktop flex/100dvh растягивали пустой список; добавлены empty-state/компактная высота, действия перенесены в заголовок. Локальные HTTP+Edge 1440/390, переход к форме и отсутствие overflow проверены, screenshots просмотрены. Исходный пункт выше сохранён как история запроса.
 
 ## Последнее изменение
+
+2026-10-31 — Nexus 2.7.22, приоритет VPN и удаление узла из каталога:
+
+- Пользователь попросил российский domain/IP пропускать через VPN вопреки category-ru/geoip:ru direct, а также удалить подключение прямо из узлов без edit недоступного сервера; затем «закончи». Новые IP для замены VPS не предоставлены, замена адресов не выполнялась. Две точки пользователя не меняли задачу.
+- Найден существующий buildRoutingRules proxy-except с getRoutingProxyDomains/Ips перед direct и lib_json_routing_dns priority proxy domains. Backend менять не нужно: custom_domains/custom_ips ошибочно находились внутри скрытого picker node-selective. В views/routing.ejs перенесены в единственный общий блок #routing-force-proxy «Всегда через VPN», без дублирования/переименования данных; пояснения block>proxy>direct, JSON-only, выбранные режимы/узлы, DNS и обновление подписки. В node-selective ссылка на общий список. Happ/server/SUB не менялись.
+- views/nodes.ejs: кнопки POST /nodes/:id/delete в desktop detail actions и mobile expanded quick actions, существующий endpoint/CSRF/RBAC; confirm с ID, предупреждением об исчезновении из подписок и локальной области. Не трогает VPS/remote accounts, не ходит к API. Подтверждение не вставляет имя в JS строку (только числовой ID). Backend удаления оставлен прежним; не заявлять удаление remote клиентов/исправление всех старых orphan mappings.
+- tests/node-traffic-http: save российского domain и IPv4 /32 перед RU domain/IP direct, primary DNS priority, один input каждого имени/размещение общего блока, invalid form не меняет routing_config. Затем восстановлен прежний routingForm для независимых DNS assertions. tests/client-node-editor-http: local delete HTTP во всех4fixtures (legacy/modern3xui,Remna3.3/3.4), CSRF, unchanged другие nodes/client identities и zero remote calls. Optional Edge: видимые поля1440/390, desktop cancel/mobile accept delete, actual persisted result.
+- Целевой11/11, UI4/4 включая ранее существующие проверки editor/каталога; 20EJS, JS тестов, Bash helper syntax прошли. Full257:230pass/9старыхfail/18skip (добавился optional update-modal layout skip), имена fail сравнили с2.7.20 — совпадают. Не объявлять full green. Логи work/priority-delete-{target,ui,full}-2.7.22.log.
+- Screenshots work/ui-qa/2.7.22 просмотрены. При первом screenshot после resize поймали середину sidebar transition; тест исправлен reload после viewport и ожиданием ухода mobile sidebar, product sidebar не менялся. Теперь mobile force-proxy читается без обрезки; delete desktop/mobile видны. Реальные VPS/телефон/смена IP не проверялись.
+- Версии metadata/helper2.7.22, docs/UPDATE_2.7.22.md; manifest+doc, прежние routing/nodes/tests уже включены. work/package_priority_delete_2_7_22.ps1 → outputs/Nexus-Panel-2.7.22-priority-vpn-delete-patch.zip. Накопительный локальный патч, не опубликован/не установлен на сервер; старые ZIP не изменены.
+
+Изменены: views/routing.ejs/nodes.ejs, tests/node-traffic-http.test.js/client-node-editor-http.test.js/installer-source-migration.test.js, package.json/package-lock.json/VERSION/update.json/README.md/CHANGELOG.md/PROJECT_HANDOFF.md/PATCH_FILES.txt/apply-node-traffic-update.sh, docs/UPDATE_2.7.22.md (новый).
+
+2026-10-23 — Nexus 2.7.21, центрирование окна обновления:
+
+- По скриншоту пользователь попросил поставить окно «Обновление проекта» в центр. Подтверждена причина: settings.ejs открывает backdrop через inline display:flex, общий CSS использует grid place-items:center, но не justify-content. Без исправления тест даёт x=24 при ширине1920.
+- Только product CSS: #project-update-modal align-items:center/justify-content:center; position:relative карточки фиксирует absolute крестик внутри неё. Остальные модалки и start/status/host-updater не менялись. Не запускать настоящее обновление ради визуальной проверки.
+- Новый tests/update-modal-layout.test.js с optional NEXUS_PLAYWRIGHT_MODULE: реальная извлечённая разметка settings.ejs и настоящий spectrum-clear.css в headless Edge. 1920×1080,1440×900,390×844,844×390; inline flex open/close, scroll страницы, центр с допуском2px, границы карточки и крестика, длинный технический журнал. До исправленияfail, после1/1pass. Screenshots work/ui-qa/2.7.21 просмотрены. Это layout fixture, не проверка работающего production updater/телефона.
+- Целевой installer-source-migration+redirect-remnawave-ui:15 (11pass/4platformskip/0fail). 20EJS и Bash helper syntax прошли. Полный набор в этом CSS-only этапе не повторялся; предыдущий2.7.20 оставляет9известныхfail, полныйgreen не заявлять. Логи work/update-modal-ui-2.7.21.log и update-modal-target-2.7.21.log.
+- Выпуск2.7.21 metadata/helper/README/CHANGELOG/docs, manifest+test/doc. work/package_update_modal_2_7_21.ps1 → outputs/Nexus-Panel-2.7.21-update-modal-patch.zip. Накопительный локальный ZIP, без публикации/установки на VPS; старые ZIP не менять.
+
+Изменены: public/css/spectrum-clear.css, tests/update-modal-layout.test.js (новый), tests/installer-source-migration.test.js, package.json/package-lock.json/VERSION/update.json/README.md/CHANGELOG.md/PROJECT_HANDOFF.md/PATCH_FILES.txt/apply-node-traffic-update.sh, docs/UPDATE_2.7.21.md (новый).
 
 2026-10-23 — Nexus 2.7.20, управление каталогом/автовыбором:
 
@@ -254,6 +276,8 @@ Nexus Node, Этап A от 2026-09-04:
 
 ## Изменённые файлы
 
+- 2.7.22: видимый force-proxy блок/кнопки удаления в routing/nodes EJS; HTTP/UI regression и metadata/helper/docs перечислены в последней записи.
+- 2.7.21: центрирование update modal в CSS, отдельный layout regression, metadata/helper/docs перечислены в последней записи.
 - 2.7.20: nodes EJS/CSS, сортировка/транспорт автовыбора, HTTP/UI tests, версии/helper/docs перечислены в последней записи выше.
 - 2.7.19: каталог включённых узлов в редакторе клиента, отдельный HTTP/UI regression test, версии и инструкция перечислены в последней записи выше; backend создания/привязки не менялся.
 - 2.7.18: настройка чистых ссылок, генераторы/копирование/QR/публичный профиль, unit/HTTP/workspace/UI tests и инструкция выпуска перечислены в записи выше.
@@ -287,6 +311,10 @@ Nexus Node, Этап A от 2026-09-04:
 8. В режиме отдельного сервера панель не обещает управлять чужим firewall: она только меняет endpoint, а DNAT/прокси остаётся под управлением внешнего скрипта.
 
 ## Проверки
+
+- 2.7.22: target11/11; UI4/4 на1440/390, снимки просмотрены; full257(230pass/9старыхfail/18skip), fail names совпадают с2.7.20. EJS20/JS/Bashsyntax пройдены; production/сменаIP не проверялись.
+
+- 2.7.21: layout Edge1/1 на4viewport; целевой15(11pass/4skip/0fail); EJS20/Bashsyntax пройдены. Production update не запускался, полный набор не повторялся.
 
 - 2.7.20: целевой26 (22pass/4skip/0fail), UI4/4 с Edge1440/390; полный256(230pass/9прежнихfail/17skip). Имена fail совпадают с2.7.19, снимки просмотрены. Production не проверялся.
 

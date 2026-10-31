@@ -237,7 +237,45 @@ for (const kind of ['3xui-modern', '3xui-legacy', 'remna-3.3', 'remna-3.4']) {
         assert.deepEqual(db.prepare('SELECT id,sort_order FROM nodes ORDER BY id').all(), orderBeforeSort);
         assert.equal(writes.length, writesBeforeSort, 'view sorting makes no remote writes');
         assert.deepEqual(errors, []);
+        await page.goto(base + '/routing');
+        for (const width of [1440,390]) {
+          await page.setViewportSize({width,height:920});
+          await page.goto(base + '/routing');
+          if(width===390)await page.waitForFunction(()=>document.querySelector('.spectrum-sidebar').getBoundingClientRect().right<=0);
+          const field=page.locator('#force-proxy-domains');
+          await field.scrollIntoViewIfNeeded(); assert.equal(await field.isVisible(),true);
+          assert.equal(await page.locator('#force-proxy-ips').isVisible(),true);
+          assert.equal(await page.locator('[name=custom_domains]').count(),1);
+          assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1),false);
+          if(process.env.NEXUS_UI_SCREENSHOT_DIR)await page.screenshot({path:path.join(process.env.NEXUS_UI_SCREENSHOT_DIR,'force-proxy-'+width+'.png')});
+        }
+        await page.goto(base+'/nodes'); await page.setViewportSize({width:1440,height:920});
+        await page.locator('[data-select-node="4"]').click();
+        const deleteButton=page.locator('[data-detail-node-id="4"] form[action="/nodes/4/delete"] button');
+        assert.equal(await deleteButton.isVisible(),true);
+        if(process.env.NEXUS_UI_SCREENSHOT_DIR)await page.screenshot({path:path.join(process.env.NEXUS_UI_SCREENSHOT_DIR,'node-delete-desktop.png')});
+        page.once('dialog',dialog=>dialog.dismiss());await deleteButton.click();
+        assert.ok(db.prepare('SELECT id FROM nodes WHERE id=4').get(),'cancel keeps the node');
+        await page.setViewportSize({width:390,height:920});
+        await page.locator('[data-select-node="4"]').click();
+        const mobileDelete=page.locator('[data-node-id="4"] .node-mobile-quick-actions form[action="/nodes/4/delete"] button');
+        assert.equal(await mobileDelete.isVisible(),true);
+        await mobileDelete.scrollIntoViewIfNeeded();
+        if(process.env.NEXUS_UI_SCREENSHOT_DIR)await page.screenshot({path:path.join(process.env.NEXUS_UI_SCREENSHOT_DIR,'node-delete-mobile.png')});
+        page.once('dialog',dialog=>dialog.accept());
+        await Promise.all([page.waitForURL(url=>url.searchParams.has('message')),mobileDelete.click()]);
+        assert.equal(db.prepare('SELECT id FROM nodes WHERE id=4').get(),undefined);
       } finally { await browser.close(); }
     }
+    const beforeDeleteReads=reads.length, beforeDeleteWrites=writes.length;
+    const clientsBeforeDelete=db.prepare('SELECT id,uuid,sub_slug FROM clients ORDER BY id').all();
+    const nodesBeforeDelete=db.prepare('SELECT id FROM nodes WHERE id!=5 ORDER BY id').all();
+    assert.match((await request('/nodes')).text,/action="\/nodes\/5\/delete"/);
+    assert.equal((await request('/nodes/5/delete',{_csrf:'wrong'})).status,403);
+    const deleted=await request('/nodes/5/delete',{});
+    assert.equal(deleted.status,302);assert.equal(db.prepare('SELECT id FROM nodes WHERE id=5').get(),undefined);
+    assert.deepEqual(db.prepare('SELECT id FROM nodes ORDER BY id').all(),nodesBeforeDelete);
+    assert.deepEqual(db.prepare('SELECT id,uuid,sub_slug FROM clients ORDER BY id').all(),clientsBeforeDelete);
+    assert.equal(reads.length,beforeDeleteReads);assert.equal(writes.length,beforeDeleteWrites,'deletion is local, even for an unreachable server');
   });
 }

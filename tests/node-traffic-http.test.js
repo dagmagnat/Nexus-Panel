@@ -97,6 +97,29 @@ test('real HTTP: scoped reporting, individual/bulk/all reset, CSRF and viewer pr
   }
   const single=await jsonConfigs('&node=1');assert.deepEqual(single.routing,configs[0].routing);
   const previousTransport=germany.outbounds.find(out=>out.tag==='proxy');
+  // Explicit RU domain/IP must override both broad direct lists.
+  r=await request('/routing',{...routingForm,except_domains:'geosite:category-ru',except_ips:'geoip:ru',
+    custom_domains:'domain:forced.example.ru',custom_ips:'203.0.113.10/32',
+    routing_dns_controls:'1',direct_dns_enabled:'1',direct_dns_preset:'yandex'});
+  assert.ok(!r.location.includes('error='),r.location);
+  const priorityConfig=configFor(await jsonConfigs(),'germany.invalid');
+  const rules=priorityConfig.routing.rules;
+  const proxyDomain=rules.findIndex(x=>x.domain?.includes('domain:forced.example.ru')&&x.outboundTag==='proxy');
+  const proxyIp=rules.findIndex(x=>x.ip?.includes('203.0.113.10/32')&&x.outboundTag==='proxy');
+  const directDomain=rules.findIndex(x=>x.domain?.includes('geosite:category-ru')&&x.outboundTag==='direct');
+  const directIp=rules.findIndex(x=>x.ip?.includes('geoip:ru')&&x.outboundTag==='direct');
+  assert.ok(proxyDomain>=0&&proxyIp>=0&&directDomain>proxyDomain&&directIp>proxyIp);
+  assert.ok(priorityConfig.dns.servers.findIndex(x=>x.domains?.includes('domain:forced.example.ru')) < priorityConfig.dns.servers.findIndex(x=>x.tag==='nexus-dns-direct'));
+  const priorityHtml=(await request('/routing')).text;
+  assert.equal((priorityHtml.match(/name="custom_domains"/g)||[]).length,1);
+  assert.equal((priorityHtml.match(/name="custom_ips"/g)||[]).length,1);
+  assert.match(priorityHtml,/Всегда через VPN — приоритет над direct/);
+  assert.ok(priorityHtml.indexOf('name="custom_domains"')>priorityHtml.indexOf('id="routing-force-proxy"'));
+  const storedPriority=db.prepare("SELECT value FROM app_settings WHERE key='routing_config'").get().value;
+  r=await request('/routing',{...routingForm,custom_domains:'http://',custom_ips:'not-an-ip'});
+  assert.match(r.location,/error=/);
+  assert.equal(db.prepare("SELECT value FROM app_settings WHERE key='routing_config'").get().value,storedPriority);
+  await request('/routing',routingForm);
   const dnsForm={...routingForm,routing_dns_controls:'1',direct_dns_enabled:'1',direct_dns_preset:'doh_yandex',sniffing_route_only:'1'};
   r=await request('/routing',dnsForm);assert.ok(!r.location.includes('error='),r.location);
   r=await request('/routing');assert.equal(r.status,200,r.text);assert.match(r.text,/name="direct_dns_enabled" value="1" checked/);assert.match(r.text,/name="sniffing_route_only" value="1" checked/);

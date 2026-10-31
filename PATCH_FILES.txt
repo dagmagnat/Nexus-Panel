@@ -74,3 +74,6 @@ docs/UPDATE_2.7.18.md
 tests/client-node-editor-http.test.js
 docs/UPDATE_2.7.19.md
 docs/UPDATE_2.7.20.md
+docs/UPDATE_2.7.21.md
+docs/UPDATE_2.7.22.md
+tests/update-modal-layout.test.js

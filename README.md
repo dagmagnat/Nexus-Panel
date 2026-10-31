@@ -6,9 +6,9 @@
 
 Nexus Panel объединяет узлы **3x-ui** и **Remnawave** в одной панели: клиенты, подписки, лимиты, трафик, маршрутизация, перенаправление, Telegram и резервные копии.
 
-[![Version](https://img.shields.io/badge/version-2.7.20-blue)](https://github.com/dagmagnat/Nexus-Panel)
+[![Version](https://img.shields.io/badge/version-2.7.22-blue)](https://github.com/dagmagnat/Nexus-Panel)
 
-Обновление 2.7.20: [удобство каталога узлов и автовыбора](docs/UPDATE_2.7.20.md). Транспорт и ID в выборе пула/приоритетного/резервного узла, создание рядом с «Добавить узел», сортировка по типу/транспорту/статусу/активности только для просмотра. [Назначение отдельных клиентов 2.7.19](docs/UPDATE_2.7.19.md) и предыдущие изменения сохранены.
+Обновление 2.7.22: [приоритет VPN и удаление узлов из списка](docs/UPDATE_2.7.22.md). Видимый общий список доменов/IP через VPN раньше RU/direct-исключений, удаление подключения без открытия редактора и без ожидания удалённого API. Все предыдущие изменения сохранены.
 ![Node.js](https://img.shields.io/badge/node-%3E%3D22-gray)
 ![License](https://img.shields.io/badge/license-MIT-gray)
 

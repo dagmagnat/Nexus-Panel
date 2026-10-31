@@ -1969,7 +1969,9 @@ details[open] > summary { margin-bottom: 10px; color: var(--text-strong); }
 .update-technical-details summary,
 .update-log-details summary { cursor: pointer; color: var(--muted); font-size: 10px; font-weight: 700; }
 .update-technical-details > div { margin-top: 7px; overflow-wrap: anywhere; }
-.project-update-progress-card { width: min(520px, 100%); padding: 26px; text-align: center; }
+/* The update script opens this backdrop as flex, not the shared grid. */
+#project-update-modal { align-items: center; justify-content: center; }
+.project-update-progress-card { position: relative; width: min(520px, 100%); padding: 26px; text-align: center; }
 .project-update-progress-card > .modal-close { position: absolute; top: 14px; right: 14px; float: none; }
 .update-progress-icon { display: grid; width: 62px; height: 62px; margin: 5px auto 15px; place-items: center; color: var(--cyan); background: var(--surface-raised); border: 1px solid var(--line); border-radius: 20px; }
 .update-progress-icon > * { grid-area: 1 / 1; }
