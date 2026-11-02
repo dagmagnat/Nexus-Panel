@@ -11,7 +11,7 @@ function validateLocalInboundPort(node, inbound, env = process.env) {
   let stream = inbound.streamSettings || {};
   if (typeof stream === 'string') stream = JSON.parse(stream);
   const udp = ['kcp', 'mkcp', 'quic', 'hysteria', 'hysteria2'].includes(String(stream.network || '').toLowerCase())
-    || ['wireguard', 'hysteria', 'hysteria2'].includes(String(inbound.protocol || '').toLowerCase());
+    || ['wireguard', 'amneziawg', 'hysteria', 'hysteria2'].includes(String(inbound.protocol || '').toLowerCase());
   const binding = `${port}/${udp ? 'udp' : 'tcp'}`;
   const published = String(env.NEXUS_LOCAL_XUI_VPN_PORTS || '').split(',').map(v => v.trim()).filter(Boolean);
   if (!published.includes(binding)) {

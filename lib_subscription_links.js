@@ -25,11 +25,11 @@ function cleanSubscriptionTarget(url) {
   // Keep format=single working for existing JSON clients. Reject ambiguous
   // format values instead of silently returning a different subscription type.
   const formats = params.getAll('format');
-  if (formats.length > 1 || (formats.length && !['json', 'sub', 'single'].includes(formats[0]))) {
+  if (formats.length > 1 || (formats.length && !['json', 'sub', 'single', 'incy'].includes(formats[0]))) {
     return { error: 'Unsupported subscription format' };
   }
   const isSub = formats[0] === 'sub';
-  if (formats[0] !== 'single') params.delete('format');
+  if (!['single', 'incy'].includes(formats[0])) params.delete('format');
   const search = params.toString();
   return { url: `/${isSub ? 'sub' : 'json'}/${match[1]}${search ? '?' + search : ''}` };
 }

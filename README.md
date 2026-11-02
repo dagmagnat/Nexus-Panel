@@ -6,9 +6,9 @@
 
 Nexus Panel объединяет узлы **3x-ui** и **Remnawave** в одной панели: клиенты, подписки, лимиты, трафик, маршрутизация, перенаправление, Telegram и резервные копии.
 
-[![Version](https://img.shields.io/badge/version-2.7.22-blue)](https://github.com/dagmagnat/Nexus-Panel)
+[![Version](https://img.shields.io/badge/version-2.7.23-blue)](https://github.com/dagmagnat/Nexus-Panel)
 
-Обновление 2.7.22: [приоритет VPN и удаление узлов из списка](docs/UPDATE_2.7.22.md). Видимый общий список доменов/IP через VPN раньше RU/direct-исключений, удаление подключения без открытия редактора и без ожидания удалённого API. Все предыдущие изменения сохранены.
+Обновление 2.7.23: [AmneziaWG 3.1 из 3x-ui в общей подписке INCY](docs/AMNEZIAWG_INCY.md). Добавление AWG-узла, назначение всем клиентам и смешанные SUB/JSON-подписки. Все предыдущие изменения сохранены.
 ![Node.js](https://img.shields.io/badge/node-%3E%3D22-gray)
 ![License](https://img.shields.io/badge/license-MIT-gray)
 
@@ -224,3 +224,15 @@ Xray Observatory и Loopback: [docs/UPDATE_2.7.7.md](docs/UPDATE_2.7.7.md).
 Код находится в `node-agent/`, но он пока не готов как рабочая VPN-нода:
 не завершены синхронизация клиентов, надёжная доставка заданий и откат
 конфигурации. Это обновление не исправляет все ограничения прототипа.
+
+## AmneziaWG 3.1 из 3x-ui → INCY
+
+1. В актуальной 3x-ui создайте inbound **AmneziaWG** с параметрами **3.1**. Сохраните его ID. Откройте его UDP-порт на сервере.
+2. Nexus → **Узлы → Добавить → 3x-ui**. Введите адрес панели, API Token (либо логин/пароль), выберите **AmneziaWG 3.1 · INCY** и укажите Inbound ID.
+3. Чтобы включить этот сервер всем существующим подписчикам, отметьте **Добавить клиентов из агрегатора**. 3x-ui создаст отдельные ключи и адреса; UUID и ссылки Nexus сохранятся.
+4. Для отдельного клиента откройте его редактор, отметьте AWG-узел и сохраните. Узел можно сочетать с VLESS и другими серверами.
+5. На странице подписки нажмите **INCY → Добавить**. Уже добавленные в INCY SUB/JSON-подписки достаточно обновить.
+
+Поддерживаются смешанный SUB и JSON INCY (`?format=incy`, также автоматически для User-Agent INCY). Параметры AWG 3.1, включая HeaderProtectionKey, RandomTrailers, DisableCookies и диапазоны keepalive, передаются из выбранного inbound.
+
+По документации INCY AmneziaWG доступен на **iOS/Android**; Desktop пока его не поддерживает. JSON обычных Xray-клиентов остаётся без AWG-контейнеров. Подробности, установка пакета и результаты проверок: [docs/AMNEZIAWG_INCY.md](docs/AMNEZIAWG_INCY.md).

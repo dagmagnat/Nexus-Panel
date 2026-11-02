@@ -297,6 +297,12 @@
         </div>
 
         <div class="field half js-node-3xui-only">
+          <label>Протокол подписки</label>
+          <select name="subscription_protocol">
+            <option value="auto">Определить по inbound (VLESS / другие / AmneziaWG)</option>
+            <option value="amneziawg">AmneziaWG 3.1 · INCY</option>
+          </select>
+          <small class="hint">Создайте AmneziaWG 3.1 в 3x-ui и укажите его Inbound ID. Ключи и адреса клиентов выдаёт 3x-ui. Для добавления всем включите «Добавить клиентов из агрегатора». AWG появится рядом с другими узлами в INCY на iOS/Android; Desktop INCY пока AWG не поддерживает.</small>
           <label>Inbound ID</label>
           <input name="inbound_id" type="number" min="1" placeholder="1" required />
           <small class="hint">Параметры и порт берутся из выбранного inbound 3x-ui, а не создаются случайно. Если ID не найден, узел не будет добавлен. Для локальной Docker-панели также проверяется публикация VPN-порта; добавить её можно на сервере командой x-ui ports.</small>

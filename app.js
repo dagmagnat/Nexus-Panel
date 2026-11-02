@@ -5994,6 +5994,10 @@ function validateSelectedInbound(node, inbound) {
   const protocol = String(fieldValue(inbound, ['protocol'], '') || '').trim();
   const hasStreamSettings = Object.keys(inbound).some(key => String(key).toLowerCase() === 'streamsettings');
   const stream = parseInboundJsonField(fieldValue(inbound, ['streamSettings'], null), null);
+  if (protocol.toLowerCase() === 'amneziawg') {
+    require('./lib_amneziawg').validateServer(inbound);
+    return inbound;
+  }
   if (!protocol || !hasStreamSettings || !stream || typeof stream !== 'object' || Array.isArray(stream)) {
     throw inboundError(
       `3x-ui вернула сокращённые данные Inbound ID ${expectedId} без protocol/streamSettings. Нужен полный inbound, а не list/slim.`,
@@ -6062,6 +6066,9 @@ function stringifyInboundField(value) {
 }
 
 function getInboundTransportInfo(inbound) {
+  if (require('./lib_amneziawg').isAmneziaWG(inbound)) {
+    return { protocol: 'amneziawg', network: 'udp', security: '', label: 'AmneziaWG / UDP', transport: {} };
+  }
   const stream = parseInboundJsonField(inbound?.streamSettings, {});
   const network = normalizeInboundNetwork(stream.network || 'raw');
   const protocol = normalizeInboundProtocol(inbound?.protocol || 'vless');
@@ -6558,6 +6565,7 @@ function enrich3xuiError(node, err, payload = null) {
 
 
 function is3xuiV3Mode(node) {
+  if (require('./lib_amneziawg').isAmneziaWG(getCachedInbound(node))) return true;
   return isH1Cloud3xuiNode(node) || getNodeApiAuthMode(node) === 'token' || String(node?.api_version || '').toLowerCase().includes('v3');
 }
 
@@ -6585,7 +6593,7 @@ function randomAlphaNum(len = 16) {
   return randomUUID().replace(/-/g, '').slice(0, Math.max(1, Number(len) || 16));
 }
 
-const INBOUND_PROTOCOL_OPTIONS = ['vless', 'trojan', 'shadowsocks', 'wireguard', 'hysteria', 'http', 'mixed', 'tunnel'];
+const INBOUND_PROTOCOL_OPTIONS = ['vless', 'trojan', 'shadowsocks', 'wireguard', 'amneziawg', 'hysteria', 'http', 'mixed', 'tunnel'];
 // UI uses the names from the current 3x-ui panel. In Xray JSON the "RAW"
 // transport is still stored as network:"tcp" with tcpSettings. Therefore the
 // aggregator keeps RAW as the UI value and converts it to tcp only when writing
@@ -6934,7 +6942,7 @@ function normalizeClientFor3xuiV3(client = {}) {
   if (c.allowedIPs !== undefined && !Array.isArray(c.allowedIPs)) {
     c.allowedIPs = String(c.allowedIPs || '').split(',').map(v => v.trim()).filter(Boolean);
   }
-  if (c.keepAlive !== undefined) c.keepAlive = Math.max(0, Number(c.keepAlive || 0));
+  if (c.keepAlive !== undefined) c.keepAlive = require('./lib_amneziawg').normalizeKeepAlive(c.keepAlive || 0);
   if (c.reverse !== undefined && c.reverse !== null && typeof c.reverse === 'string') {
     c.reverse = safeParseJsonField(c.reverse, null);
   }
@@ -6978,7 +6986,7 @@ function normalizeClientPatchFor3xuiV3(client = {}) {
       ? source.allowedIPs
       : String(source.allowedIPs || '').split(',').map(v => v.trim()).filter(Boolean);
   }
-  if (has('keepAlive')) out.keepAlive = Math.max(0, Number(source.keepAlive || 0));
+  if (has('keepAlive')) out.keepAlive = require('./lib_amneziawg').normalizeKeepAlive(source.keepAlive || 0);
   return out;
 }
 
@@ -7073,7 +7081,13 @@ async function updateClientViaNewApi(node, clientUuidOrEmail, payload) {
   if (!lookupEmail || !email) throw new Error('3x-ui вернул запись клиента без email/login; обновление отменено.');
 
   const client = normalizeClientFlowForInbound(node, normalizeClientFor3xuiV3({ ...current, ...requested, email }));
+  if (require('./lib_amneziawg').isAmneziaWG(getCachedInbound(node))) client.flow = String(current.flow || '');
   assertSupportRemoteIdentity(node, current, requested);
+  // A VLESS edit can share this global record with an AWG inbound. Omitted
+  // tunnel fields must stay omitted rather than copy a different peer's keys.
+  for (const field of ['privateKey', 'publicKey', 'preSharedKey', 'allowedIPs', 'keepAlive']) {
+    if (!Object.prototype.hasOwnProperty.call(requested, field)) delete client[field];
+  }
   for (const key of ['recordId', 'inboundIds', 'inboundTags', 'traffic', 'externalLinks']) delete client[key];
   return apiPost(node, `/panel/api/clients/update/${encodeURIComponent(lookupEmail)}`, client, false);
 }
@@ -7320,6 +7334,11 @@ async function deleteClientViaNewApi(node, email, clientUuid = '', timeoutMs = C
 }
 
 async function addClient(node, payload) {
+  if (require('./lib_amneziawg').isAmneziaWG(getCachedInbound(node))) {
+    const result = await addClientViaNewApi(node, payload);
+    await getInbound(node); // Cache keys/address allocated by 3x-ui.
+    return result;
+  }
   // Provider-managed H1Cloud 3x-ui panels run the v3 global Clients model.
   // Never fall back to the legacy inbound append endpoint: it can create a
   // client in settings.clients without a matching DB record, after which the
@@ -7347,6 +7366,11 @@ async function addClient(node, payload) {
 }
 
 async function updateClient(node, clientUuid, payload) {
+  if (require('./lib_amneziawg').isAmneziaWG(getCachedInbound(node))) {
+    const result = await updateClientViaNewApi(node, clientUuid, payload);
+    await getInbound(node);
+    return result;
+  }
   if (isH1Cloud3xuiNode(node)) {
     throw new Error('H1Cloud 3x-ui: полное обновление записи клиента заблокировано. Используется только защищённое изменение явно выбранных клиентских полей.');
   }
@@ -8886,6 +8910,12 @@ function buildVlessExternalProxyLinks(node, inbound, uuid, displayName, nodeName
 }
 
 function buildOutboundShareLinks(node, inbound, uuid, email, displayName, nodeName) {
+  if (require('./lib_amneziawg').isAmneziaWG(inbound)) {
+    const advertised = getInboundExternalProxyEntries(inbound);
+    const endpoints = advertised.length ? advertised : [{ dest: getInboundShareHost(node, inbound), port: getNodeInboundPort(node, inbound) }];
+    return endpoints.map(endpoint => require('./lib_amneziawg').shareLink(inbound, uuid, email,
+      endpoint.dest, endpoint.port, nodeName)).filter(Boolean);
+  }
   const protocol = normalizeInboundProtocol(inbound?.protocol || 'vless');
   if (protocol === 'vless') {
     // externalProxy is a normal 3x-ui stream setting, not an H1Cloud-only
@@ -16088,6 +16118,9 @@ app.post('/nodes', requireAuth, async (req, res) => {
       const statusData = await apiGet(pendingNode, '/panel/api/server/status', NODE_API_TIMEOUT_MS);
       importedPanelVersion = extract3xuiPanelVersion(statusData);
       importedInbound = await fetchSelectedInboundExact(pendingNode, NODE_API_TIMEOUT_MS);
+      if (req.body.subscription_protocol === 'amneziawg' && !require('./lib_amneziawg').isAmneziaWG(importedInbound)) {
+        throw new Error('Выбран AmneziaWG, но указанный Inbound ID использует другой протокол. Создайте AmneziaWG 3.1 в 3x-ui и укажите его ID.');
+      }
       require('./lib_local_inbound_port').validateLocalInboundPort(pendingNode, importedInbound);
       importedSubSource = await fetch3xuiSubscriptionSource(pendingNode, NODE_API_TIMEOUT_MS);
       if (!['tls', 'reality'].includes(getInboundTransportInfo(importedInbound).security)) {
@@ -17981,7 +18014,7 @@ app.get('/sub-plain/:slug', async (req, res) => {
   const { entries, subscriptionExpiryOverride } = await buildSubscriptionEntriesForRequest(req, res, client);
   const lines = entries
     .map(entry => String(entry?.line || '').trim())
-    .filter(line => /^(?:vless|vmess|trojan|ss|socks|hysteria2?|hy2|tuic|wireguard):\/\//i.test(line));
+    .filter(line => /^(?:vless|vmess|trojan|ss|socks|hysteria2?|hy2|tuic|wireguard|amneziawg|awg):\/\//i.test(line));
   const subscriptionName = getSetting('subscription_name', DEFAULT_SUBSCRIPTION_NAME);
   const subscriptionUserInfo = buildSubscriptionUserInfo(entries, client, { expiryTime: subscriptionExpiryOverride });
 
@@ -18002,7 +18035,7 @@ app.get('/hiddify/:slug', async (req, res) => {
   const { entries, subscriptionExpiryOverride } = await buildSubscriptionEntriesForRequest(req, res, client);
   const lines = entries
     .map(entry => String(entry?.line || '').trim())
-    .filter(line => /^(?:vless|vmess|trojan|ss|socks|hysteria2?|hy2|tuic|wireguard):\/\//i.test(line));
+    .filter(line => /^(?:vless|vmess|trojan|ss|socks|hysteria2?|hy2|tuic|wireguard|amneziawg|awg):\/\//i.test(line));
   const subscriptionName = getSetting('subscription_name', DEFAULT_SUBSCRIPTION_NAME);
   const subscriptionUserInfo = buildSubscriptionUserInfo(entries, client, { expiryTime: subscriptionExpiryOverride });
   const intervalHours = getSubscriptionUpdateIntervalHours();
@@ -19614,6 +19647,9 @@ app.get('/json/:slug', async (req, res) => {
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
 
+  const incyJson = String(req.query.format || '').toLowerCase() === 'incy'
+    || /incy/i.test(String(req.headers['user-agent'] || ''));
+  const awgConfigs = incyJson ? entries.map(entry => require('./lib_amneziawg').jsonContainer(entry)).filter(Boolean) : [];
   const vlessLines = lines.filter(line => String(line).startsWith('vless://'));
 
   if (vlessLines.length >= 1) {
@@ -19668,7 +19704,7 @@ app.get('/json/:slug', async (req, res) => {
           }
         ));
       }
-      return res.json(resultConfigs);
+      return res.json([...resultConfigs, ...awgConfigs]);
     }
 
     // Compatibility endpoint for clients that require a single Xray object:
@@ -19684,6 +19720,8 @@ app.get('/json/:slug', async (req, res) => {
       routingMode: getRoutingModeForNode(selectedEntry.nodeId)
     }));
   }
+
+  if (awgConfigs.length) return res.json(awgConfigs);
 
   return res.json({
     name: subscriptionName,

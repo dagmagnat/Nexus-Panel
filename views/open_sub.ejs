@@ -35,7 +35,8 @@
   <% const compatibleSubUrl = allowSub ? hiddifyUrl : (allowJson ? happImportUrl : ''); %>
   <% const genericSubUrl = allowSub ? plainSubUrl : compatibleSubUrl; %>
   <% const profileName = encodeURIComponent(subscriptionName || 'VPN'); %>
-  <% const incyDeepLink = genericSubUrl ? ('incy://import/' + genericSubUrl) : ''; %>
+  <% const incySubUrl = allowJson ? happImportUrl + (happImportUrl.includes('?') ? '&' : '?') + 'format=incy' : genericSubUrl; %>
+  <% const incyDeepLink = incySubUrl ? ('incy://import/' + incySubUrl) : ''; %>
 
   <main class="subscription-portal">
     <header class="portal-topbar">
@@ -114,7 +115,7 @@
           <span class="portal-app-icon incy">I</span>
           <div><h3>INCY</h3><p>SUB · iOS, Android, Windows, macOS, Linux</p></div>
           <div class="portal-app-actions">
-            <a class="link-btn" href="<%= incyDeepLink %>" data-app-name="INCY" data-subscription-url="<%= genericSubUrl %>" onclick="return launchSubscriptionApp(event, this)">Добавить</a>
+            <a class="link-btn" href="<%= incyDeepLink %>" data-app-name="INCY" data-subscription-url="<%= incySubUrl %>" onclick="return launchSubscriptionApp(event, this)">Добавить</a>
             <a class="link-btn secondary" href="<%= appDownloads.incy %>" target="_blank" rel="noopener">Скачать</a>
           </div>
         </article>
