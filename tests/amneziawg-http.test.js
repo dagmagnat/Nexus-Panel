@@ -138,6 +138,46 @@ test('HTTP: add AWG node for all clients, mixed SUB/JSON, lifecycle and isolated
   let response = await request('/sub-plain/awg-subscription-1'); assert.match(response.text, /amneziawg:\/\//); assert.match(response.text, /vless:\/\//);
   configs = JSON.parse((await request('/json/awg-subscription-1?format=incy')).text);
   assert.equal(configs.length, 2); assert.ok(configs.some(c => c.type === 'amneziawg')); assert.ok(configs.some(c => c.outbounds));
+  // Redirect must change the endpoint INSIDE native AWG, in every subscription
+  // format, without rotating the peer or changing its tunnel address/options.
+  function awgConf(text) {
+    const line = text.split('\n').find(line => line.startsWith('amneziawg://'));
+    assert.ok(line, text);
+    return Buffer.from(line.split('://')[1].split('#')[0], 'base64url').toString();
+  }
+  const originalMixed = response.text;
+  const originalVless = originalMixed.split('\n').find(line => line.startsWith('vless://'));
+  const redirectForm = { bind_ip_mode: 'custom', bind_ip_custom: '198.51.100.23',
+    redirect_runtime: 'external', protocol: 'udp', node_ids: [nodeId], rewrite_enabled: '1' };
+  successful(await request('/redirects/apply', redirectForm));
+  const redirectRule = db.prepare('SELECT * FROM redirect_rules WHERE node_id=?').get(nodeId);
+  assert.equal(redirectRule.public_host, '198.51.100.23');
+  assert.equal(redirectRule.helper_enabled, 0);
+  assert.equal(redirectRule.protocol, 'udp');
+  const redirectedConf = conf.replace('Endpoint = vpn.example:51820', 'Endpoint = 198.51.100.23:51820');
+  for (const route of ['/sub-plain/', '/sub/', '/hiddify/']) {
+    const sub = await request(`${route}awg-subscription-1`);
+    assert.equal(sub.status, 200);
+    assert.equal(awgConf(sub.text), redirectedConf, route);
+    assert.ok(sub.text.split('\n').includes(originalVless), 'unselected VLESS stays unchanged');
+  }
+  for (const route of ['/json/awg-subscription-1?format=incy', '/awg-subscription-1?format=incy', '/json/awg-subscription-1']) {
+    const json = JSON.parse((await request(route, undefined, { 'user-agent': 'INCY/2.6.2/ios' })).text);
+    const native = json.find(c => c.type === 'amneziawg');
+    assert.equal(Buffer.from(native.servers[0].config, 'base64url').toString(), redirectedConf, route);
+  }
+  assert.match(awgConf((await request('/sub-plain/awg-subscription-2')).text), /Endpoint = 198\.51\.100\.23:51820/);
+  successful(await request(`/redirects/${redirectRule.id}/toggle`, {}));
+  assert.equal(awgConf((await request('/sub-plain/awg-subscription-1')).text), conf, 'disabled rule restores endpoint');
+  successful(await request(`/redirects/${redirectRule.id}/toggle`, {}));
+  assert.equal(awgConf((await request('/sub-plain/awg-subscription-1')).text), redirectedConf);
+  successful(await request('/redirects/apply', { ...redirectForm, rewrite_enabled: '0' }));
+  assert.equal(awgConf((await request('/sub-plain/awg-subscription-1')).text), conf, 'unchecked rewrite restores endpoint');
+  successful(await request('/redirects/apply', { ...redirectForm, bind_ip_custom: 'relay.example.com' }));
+  assert.equal(awgConf((await request('/sub-plain/awg-subscription-1')).text),
+    conf.replace('Endpoint = vpn.example:51820', 'Endpoint = relay.example.com:51820'), 'custom domain replaces previous IP');
+  successful(await request(`/redirects/${redirectRule.id}/delete`, {}));
+  assert.equal(awgConf((await request('/sub-plain/awg-subscription-1')).text), conf, 'deleted rule restores endpoint');
   async function reorder(order) {
     const r = await fetch(`http://127.0.0.1:${port}/nodes/reorder`, { method: 'POST', redirect: 'manual',
       headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrf, 'x-nexus-workspace': 'main' },
@@ -160,6 +200,20 @@ test('HTTP: add AWG node for all clients, mixed SUB/JSON, lifecycle and isolated
   configs = JSON.parse((await request('/json/awg-subscription-1?format=incy')).text);
   assert.ok(configs[0].routing.rules.some(rule => rule.domain?.includes('domain:bank.example.ru') && rule.outboundTag === 'direct'));
   assert.equal(configs[1].routing, undefined, 'must not claim to apply Xray routing to AWG');
+  const nodesPage = await request('/nodes?tab=add&create=auto_select');
+  assert.equal(nodesPage.status, 200);
+  assert.match(nodesPage.text, new RegExp(`name="auto_select_node_ids" value="${nodeId}" disabled`));
+  const profileCount = db.prepare('SELECT COUNT(*) n FROM auto_select_profiles').get().n;
+  for (const policy of [
+    { auto_select_node_ids: [vlessId, nodeId] },
+    { auto_select_node_ids: [vlessId], auto_select_preferred_node_id: nodeId },
+    { auto_select_node_ids: [vlessId], auto_select_emergency_node_id: nodeId }
+  ]) {
+    const denied = await request('/nodes', { node_type: 'auto_select', auto_select_name: 'AWG invalid pool', ...policy });
+    assert.equal(denied.status, 302);
+    assert.match(decodeURIComponent(denied.location), /AmneziaWG.*не участвует в автовыборе Xray/);
+  }
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM auto_select_profiles').get().n, profileCount);
   configs = JSON.parse((await request('/json/awg-subscription-1', undefined, { 'user-agent': 'INCY/2.6.2/ios' })).text); assert.equal(configs.length, 2);
   configs = JSON.parse((await request('/awg-subscription-1?format=incy')).text); assert.equal(configs.length, 2, 'clean INCY link');
   assert.equal(inbounds.get(42).settings.clients[0].privateKey, key(5), 'VLESS update preserves AWG key');

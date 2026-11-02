@@ -74,7 +74,7 @@
         <div class="field half" id="customBindIpField">
           <label>Свой IP или домен входного сервера</label>
           <input name="bind_ip_custom" id="customBindIpInput" placeholder="relay.example.com или 109.10.20.30" />
-          <small class="hint">В подписке меняется только адрес; порт и параметры REALITY/TLS остаются от исходного inbound.</small>
+          <small class="hint">В подписке меняется только адрес, в том числе Endpoint AmneziaWG. Порт, ключи и параметры протокола сохраняются.</small>
         </div>
 
         <div class="field half">
@@ -99,13 +99,13 @@
             <option value="udp">UDP</option>
             <option value="both">TCP + UDP</option>
           </select>
-          <small class="hint">Для VLESS/TCP/REALITY обычно нужен только TCP.</small>
+          <small class="hint">Для VLESS/TCP/REALITY обычно нужен только TCP. Для AmneziaWG выбери UDP; внешний сервер должен перенаправлять UDP на порт AWG-узла.</small>
         </div>
       </div>
 
       <label class="switch-row compact">
         <input type="checkbox" name="rewrite_enabled" value="1" checked />
-        <span><strong>Менять адрес узла в подписке</strong><small>В JSON/SUB вместо IP настоящего узла будет выдаваться выбранный IP панели. Reality/SNI/publicKey/shortId остаются от настоящего узла.</small></span>
+        <span><strong>Менять адрес узла в подписке</strong><small>В JSON/SUB вместо адреса настоящего узла будет выдаваться указанный IP или домен, включая Endpoint AmneziaWG. Порт и ключи остаются от настоящего узла.</small></span>
       </label>
 
       <h3>Узлы для перенаправления</h3>

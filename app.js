@@ -3038,10 +3038,15 @@ function normalizeAutoSelectPolicy(body = {}) {
   const normalNodeIds = normalizeSubscriptionPolicyNodeIds(body.auto_select_node_ids);
   const preferredNodeId = Math.max(0, Number.parseInt(String(body.auto_select_preferred_node_id || '0'), 10) || 0);
   const emergencyNodeId = Math.max(0, Number.parseInt(String(body.auto_select_emergency_node_id || '0'), 10) || 0);
-  const known = new Set(db.prepare('SELECT id FROM nodes').all().map(row => Number(row.id)));
+  const knownNodes = db.prepare('SELECT * FROM nodes').all();
+  const known = new Set(knownNodes.map(row => Number(row.id)));
   const allIds = [...normalNodeIds, ...(preferredNodeId ? [preferredNodeId] : []), ...(emergencyNodeId ? [emergencyNodeId] : [])];
   if (normalNodeIds.some(id => !known.has(id)) || (preferredNodeId && !known.has(preferredNodeId)) || (emergencyNodeId && !known.has(emergencyNodeId))) {
     throw new Error('В профиле автовыбора выбран узел, которого больше нет в панели. Обнови выбор узлов.');
+  }
+  const nativeAwg = knownNodes.find(node => allIds.includes(Number(node.id)) && require('./lib_amneziawg').isAmneziaWG(getCachedInbound(node)));
+  if (nativeAwg) {
+    throw new Error(`AmneziaWG (узел #${nativeAwg.id}) не участвует в автовыборе Xray. Уберите его из основного, приоритетного и аварийного пулов; AWG доступен отдельным сервером в INCY.`);
   }
   if (preferredNodeId && normalNodeIds.includes(preferredNodeId)) throw new Error('Приоритетный узел не должен одновременно входить в основной пул.');
   if (emergencyNodeId && normalNodeIds.includes(emergencyNodeId)) throw new Error('Аварийный узел не должен одновременно входить в основной пул.');
@@ -8913,8 +8918,10 @@ function buildOutboundShareLinks(node, inbound, uuid, email, displayName, nodeNa
   if (require('./lib_amneziawg').isAmneziaWG(inbound)) {
     const advertised = getInboundExternalProxyEntries(inbound);
     const endpoints = advertised.length ? advertised : [{ dest: getInboundShareHost(node, inbound), port: getNodeInboundPort(node, inbound) }];
+    // Native AWG embeds its endpoint inside the encoded .conf. Apply the same
+    // subscription redirect as other protocols before encoding that config.
     return endpoints.map(endpoint => require('./lib_amneziawg').shareLink(inbound, uuid, email,
-      endpoint.dest, endpoint.port, nodeName)).filter(Boolean);
+      getRedirectReplacementHost(node.node_id || node.id, endpoint.dest), endpoint.port, nodeName)).filter(Boolean);
   }
   const protocol = normalizeInboundProtocol(inbound?.protocol || 'vless');
   if (protocol === 'vless') {
