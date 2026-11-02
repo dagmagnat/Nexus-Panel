@@ -14593,7 +14593,8 @@ app.post('/routing', requireAuth, (req, res) => {
       sniffingRouteOnly: req.body.sniffing_route_only === '1'
     } : directDnsSettings(previousRoutingCfg);
     if (directOptions.directDnsEnabled) parseDirectDnsServers(directOptions.directDnsPreset, directOptions.directDnsCustom);
-    const routableNodeIds = new Set(db.prepare('SELECT id FROM nodes WHERE enabled = 1 AND node_type != ?').all(NODE_TYPE_H1CLOUD).filter(isClientManagedNode).map(row => Number(row.id)));
+    const routableNodeIds = new Set(db.prepare('SELECT * FROM nodes WHERE enabled = 1 AND node_type != ?').all(NODE_TYPE_H1CLOUD)
+      .filter(isClientManagedNode).filter(node => !require('./lib_amneziawg').isAmneziaWG(getCachedInbound(node))).map(row => Number(row.id)));
     const allowedModes = ['proxy-except', 'node-selective'];
     const requestedModesRaw = req.body.routing_modes;
     const requestedModes = uniqueList((Array.isArray(requestedModesRaw) ? requestedModesRaw : (requestedModesRaw ? [requestedModesRaw] : [])).map(String).filter(mode => allowedModes.includes(mode)));
@@ -19666,8 +19667,16 @@ app.get('/json/:slug', async (req, res) => {
       // independently configured profiles before the individual regions in Happ.
       const resultConfigs = isClientExpired(client) ? [] : buildAutoSelectJsonConfigs(client, vlessEntries, subscriptionName);
       const nativeJsonCache = new Map();
-      for (let index = 0; index < vlessEntries.length; index += 1) {
-        const entry = vlessEntries[index];
+      // Keep native AWG containers in the same node order as text subscriptions.
+      // Auto-select profiles intentionally remain before all physical nodes.
+      const orderedEntries = incyJson ? entries.filter(entry => /^(?:vless|amneziawg|awg):\/\//.test(String(entry.line))) : vlessEntries;
+      for (let index = 0; index < orderedEntries.length; index += 1) {
+        const entry = orderedEntries[index];
+        const nativeAwg = incyJson && require('./lib_amneziawg').jsonContainer(entry);
+        if (nativeAwg) {
+          resultConfigs.push(nativeAwg);
+          continue;
+        }
         const remark = getRemarkFromVlessLine(entry.line) || entry.nodeName || `Server ${index + 1}`;
         if (entry.nodeType === NODE_TYPE_H1CLOUD_3XUI && entry.providerJsonUrl) {
           try {
@@ -19704,7 +19713,7 @@ app.get('/json/:slug', async (req, res) => {
           }
         ));
       }
-      return res.json([...resultConfigs, ...awgConfigs]);
+      return res.json(resultConfigs);
     }
 
     // Compatibility endpoint for clients that require a single Xray object:

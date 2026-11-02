@@ -138,6 +138,28 @@ test('HTTP: add AWG node for all clients, mixed SUB/JSON, lifecycle and isolated
   let response = await request('/sub-plain/awg-subscription-1'); assert.match(response.text, /amneziawg:\/\//); assert.match(response.text, /vless:\/\//);
   configs = JSON.parse((await request('/json/awg-subscription-1?format=incy')).text);
   assert.equal(configs.length, 2); assert.ok(configs.some(c => c.type === 'amneziawg')); assert.ok(configs.some(c => c.outbounds));
+  async function reorder(order) {
+    const r = await fetch(`http://127.0.0.1:${port}/nodes/reorder`, { method: 'POST', redirect: 'manual',
+      headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrf, 'x-nexus-workspace': 'main' },
+      body: JSON.stringify({ order, _workspace: 'main' }) });
+    assert.equal(r.status, 200, await r.text());
+  }
+  await reorder([nodeId, vlessId]);
+  configs = JSON.parse((await request('/json/awg-subscription-1?format=incy')).text);
+  assert.equal(configs[0].type, 'amneziawg', 'AWG must follow node ordering instead of appending at the end');
+  await reorder([vlessId, nodeId]);
+  configs = JSON.parse((await request('/json/awg-subscription-1?format=incy')).text);
+  assert.ok(configs[0].outbounds); assert.equal(configs[1].type, 'amneziawg');
+  const routingPage = await request('/routing');
+  assert.equal(routingPage.status, 200); assert.match(routingPage.text, /AWG-узлы ниже недоступны/);
+  assert.match(routingPage.text, new RegExp(`value="${nodeId}" disabled`));
+  successful(await request('/routing', { routing_enabled: '1', routing_modes: ['proxy-except'],
+    routing_mode_nodes_proxy_except: [vlessId, nodeId], except_domains: 'domain:bank.example.ru' }));
+  const routingCfg = JSON.parse(db.prepare("SELECT value FROM app_settings WHERE key='routing_config'").get().value);
+  assert.deepEqual(routingCfg.modeAssignments['proxy-except'], [vlessId], 'server must reject assigning Xray rules to native AWG');
+  configs = JSON.parse((await request('/json/awg-subscription-1?format=incy')).text);
+  assert.ok(configs[0].routing.rules.some(rule => rule.domain?.includes('domain:bank.example.ru') && rule.outboundTag === 'direct'));
+  assert.equal(configs[1].routing, undefined, 'must not claim to apply Xray routing to AWG');
   configs = JSON.parse((await request('/json/awg-subscription-1', undefined, { 'user-agent': 'INCY/2.6.2/ios' })).text); assert.equal(configs.length, 2);
   configs = JSON.parse((await request('/awg-subscription-1?format=incy')).text); assert.equal(configs.length, 2, 'clean INCY link');
   assert.equal(inbounds.get(42).settings.clients[0].privateKey, key(5), 'VLESS update preserves AWG key');

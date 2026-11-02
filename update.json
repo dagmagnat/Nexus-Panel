@@ -1,11 +1,12 @@
 {
-  "version": "2.7.23",
-  "name": "Nexus Panel 2.7.23 — AmneziaWG 3.1 / INCY",
+  "version": "2.7.24",
+  "name": "Nexus Panel 2.7.24 — AWG ordering and routing scope",
   "repository": "https://github.com/dagmagnat/Nexus-Panel",
   "archive_url": "https://github.com/dagmagnat/Nexus-Panel/archive/refs/heads/main.zip",
   "archive": "Nexus-Panel-main.zip",
   "filename": "Nexus-Panel-main.zip",
   "notes": [
+    "Исправлен порядок AWG в смешанном JSON INCY. Xray-маршрутизация в интерфейсе больше не обещает применение к нативному AWG; сохранены исключения Docker для базы и настроек.",
     "AmneziaWG 3.1 из 3x-ui: добавление узла и клиентов, общая SUB/JSON-подписка INCY, сохранение ключей и адресов при изменении срока/лимитов.",
     "Маршрутизация: общий видимый блок «Всегда через VPN» для доменов и IP, приоритетнее RU/direct-исключений. Сохранены существующие списки и DNS-приоритет; только JSON назначенных узлов.",
     "Кнопка удаления в карточке узла и мобильных действиях, с подтверждением. Удаляется подключение Nexus, без ожидания удалённой панели и без удаления VPS/удалённых учётных записей.",

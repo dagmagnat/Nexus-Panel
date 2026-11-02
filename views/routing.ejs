@@ -134,6 +134,9 @@
     <h2>Маршрутизация JSON</h2>
     <p class="muted">Правила встраиваются непосредственно в каждый выбранный JSON-конфиг. Отдельный Happ routing-профиль настраивается независимо в разделе «Подписки и приложения».</p>
     <p class="hint">Работает для выбранных узлов 3x-ui и Remnawave через JSON-ссылку Nexus. Обычные VLESS/SUB-ссылки не содержат эти правила. Профили и серверная маршрутизация Remnawave не изменяются.</p>
+    <% if (nodes.some(n => n.inbound_protocol === 'amneziawg')) { %>
+      <div class="alert" role="note"><strong>AmneziaWG использует отдельный движок.</strong> Эти правила Xray не переносятся в AWG-конфигурацию: исключения Domain/GeoSite, DNS и блокировка рекламы не применяются к ней через эту форму. AWG-узлы ниже недоступны для выбора. Одна подписка может содержать оба протокола, но их способы маршрутизации различаются.</div>
+    <% } %>
 
     <form method="post" action="/routing" class="routing-form">
       <input type="hidden" name="routing_dns_controls" value="1" />
@@ -158,9 +161,9 @@
               <div class="routing-node-picker-head"><strong>Узлы этого режима</strong><span><button type="button" data-routing-select-all>Все доступные</button><button type="button" data-routing-clear>Снять</button></span></div>
               <div class="routing-node-checkboxes">
                 <% nodes.forEach(n => { %>
-                  <label data-routing-node-option data-node-id="<%= n.id %>">
-                    <input type="checkbox" name="routing_mode_nodes_<%= mode.replace(/-/g, '_') %>" value="<%= n.id %>" <%= assigned.includes(Number(n.id)) ? 'checked' : '' %> />
-                    <span><%- flagHtml(n.country_code, n.country_flag, n.country_name_ru || n.name) %><strong><%= n.country_name_ru || n.name %></strong><small><%= n.transport_label || 'параметры не загружены' %></small></span>
+                  <label data-routing-node-option data-node-id="<%= n.id %>" data-routing-unsupported="<%= n.inbound_protocol === 'amneziawg' ? '1' : '0' %>">
+                    <input type="checkbox" name="routing_mode_nodes_<%= mode.replace(/-/g, '_') %>" value="<%= n.id %>" <%= n.inbound_protocol === 'amneziawg' ? 'disabled' : (assigned.includes(Number(n.id)) ? 'checked' : '') %> />
+                    <span><%- flagHtml(n.country_code, n.country_flag, n.country_name_ru || n.name) %><strong><%= n.country_name_ru || n.name %></strong><small><%= n.transport_label || 'параметры не загружены' %><%= n.inbound_protocol === 'amneziawg' ? ' · без правил Xray' : '' %></small></span>
                   </label>
                 <% }) %>
               </div>
@@ -407,10 +410,11 @@ function syncRoutingModeAssignments() {
     card.querySelectorAll('[data-routing-node-option]').forEach(option => {
       const input = option.querySelector('input');
       const owner = owners.get(String(input?.value || ''));
-      const unavailable = !!owner && owner !== card.dataset.routingModeCard;
+      const unsupported = option.dataset.routingUnsupported === '1';
+      const unavailable = unsupported || (!!owner && owner !== card.dataset.routingModeCard);
       if (input) input.disabled = unavailable;
       option.classList.toggle('is-unavailable', unavailable);
-      option.title = unavailable ? 'Узел уже выбран в другом режиме' : '';
+      option.title = unsupported ? 'Правила Xray не встраиваются в нативный AmneziaWG-конфиг' : (unavailable ? 'Узел уже выбран в другом режиме' : '');
     });
   });
 }
