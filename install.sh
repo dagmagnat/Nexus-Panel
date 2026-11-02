@@ -1647,6 +1647,43 @@ PY
   return 1
 }
 
+ensure_docker_build_context() {
+  # Append after custom rules so a prior negation cannot include runtime data.
+  # Also covers installations updated from archives without hidden files.
+  local ignore_file="$APP_DIR/.dockerignore"
+  if ! grep -q '^# Nexus runtime exclusions v1$' "$ignore_file" 2>/dev/null; then
+    cat >> "$ignore_file" <<'NEXUS_DOCKERIGNORE'
+
+# Nexus runtime exclusions v1
+data
+**/data
+.env
+.env.*
+**/.env
+**/.env.*
+.install.conf
+.source.conf
+node_modules
+**/node_modules
+.git
+tmp
+backup
+backups
+**/backup
+**/backups
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.log
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+NEXUS_DOCKERIGNORE
+  fi
+}
+
 docker_compose_build_once() {
   if docker compose --help 2>&1 | grep -q -- '--progress'; then
     docker compose --progress plain up -d --build
@@ -1657,6 +1694,7 @@ docker_compose_build_once() {
 
 compose_up_build() {
   cd "$APP_DIR"
+  ensure_docker_build_context || return 1
   local configured_password
   configured_password="$(read_env_literal "$(sed -n 's/^ADMIN_PASSWORD=//p' "$APP_DIR/.env" | tail -n 1)")"
   validate_admin_runtime_password "$configured_password" || return 1
