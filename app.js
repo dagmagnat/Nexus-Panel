@@ -32,6 +32,9 @@ const { createAsyncReadCache, cooperativeMap, yieldToRequests } = require('./lib
 const { supportAccess, supportReasonText, parseSupportDays, initSupportSchema } = require('./lib_expired_support');
 const { directDnsSettings, parseDirectDnsServers, applyJsonRoutingDns } = require('./lib_json_routing_dns');
 const { udp443FormValue, nodeVisionFlow, applyNodeUdp443 } = require('./lib_node_udp443');
+const { mlkemFormValue, appendRealityHint } = require('./lib_reality_compat');
+const { connectionKey, createInboundRevalidator } = require('./lib_inbound_revalidation');
+const { parseEndpoint, endpointFormValue, applySubscriptionEndpoint } = require('./lib_subscription_endpoint');
 const { subscriptionUrl, cleanSubscriptionTarget } = require('./lib_subscription_links');
 const { initNexusNodeControlSchema, attachNexusNodeControl } = require('./lib_nexus_node_control');
 
@@ -1554,6 +1557,8 @@ function initDb() {
   addColumnIfMissing('nodes', 'remnawave_remark_mode', "TEXT NOT NULL DEFAULT 'aggregator'");
   addColumnIfMissing('nodes', 'inherit_3xui_mux', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing('nodes', 'allow_udp443', 'INTEGER NOT NULL DEFAULT 1');
+  addColumnIfMissing('nodes', 'reality_mlkem_hint', 'INTEGER NOT NULL DEFAULT 1');
+addColumnIfMissing('nodes', 'subscription_endpoint', "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing('nodes', 'inherit_3xui_fragment', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing('nodes', 'inherit_3xui_noises', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing('nodes', 'source_sub_json_mux', "TEXT DEFAULT ''");
@@ -5956,6 +5961,24 @@ function getCachedInbound(node) {
   }
 }
 
+const getSubscriptionInbound = createInboundRevalidator({
+  read(node) {
+    const inbound = getCachedInbound(node);
+    const row = db.prepare('SELECT updated_at FROM node_inbound_cache WHERE node_id=? AND inbound_id=?').get(node.id, node.inbound_id);
+    const raw = String(row?.updated_at || '');
+    const updatedAt = Date.parse(raw.includes('T') ? raw : raw.replace(' ', 'T') + 'Z');
+    return { inbound, updatedAt };
+  },
+  async load(node) {
+    const inbound = await fetchSelectedInboundExact(node, SUBSCRIPTION_STATS_TIMEOUT_MS);
+    const current = db.prepare('SELECT * FROM nodes WHERE id=?').get(node.id);
+    if (!current || connectionKey(current) !== connectionKey(node)) throw inboundError('Connection changed during refresh', 'NODE_CONNECTION_CHANGED');
+    saveInboundCache(node, inbound);
+    return inbound;
+  },
+  onError(node, err) { console.warn('Inbound refresh failed; using last saved parameters, node', Number(node.id), String(err?.code || 'API_ERROR')); }
+});
+
 function saveInboundCache(node, inbound) {
   if (!node || !node.id || !inbound) return;
   validateSelectedInbound(node, inbound);
@@ -8677,19 +8700,10 @@ async function buildSubscriptionEntryForRow(row, clientRow, includeOffline = tru
     if (Number(row.client_node_enabled) !== 1) return null;
     if (!includeOffline && row.last_status === 'offline') return null;
 
-    let inbound = getCachedInbound(row);
-
-    if (!inbound) {
-      try {
-        inbound = await getInboundFast(row);
-      } catch (err) {
-        console.error(`No cached inbound and node is unavailable (${row.node_id}):`, err.message);
-        return null;
-      }
-    }
+    const inbound = await getSubscriptionInbound(row);
 
     const subscriptionInfo = await getSubscriptionNodeInfo(row, clientRow, inbound);
-    inbound = subscriptionInfo.inbound || inbound;
+    // Parameters were validated/refreshed above; usage reads must not replace them.
 
     const baseNodeName = getNodePublicName(row);
     const visibleNodeName = buildNodeLimitRemark(baseNodeName, subscriptionInfo);
@@ -8773,6 +8787,8 @@ async function buildSubscriptionEntries(clientRow, includeOffline = true, option
       n.remnawave_link_filter,
       n.remnawave_remark_mode,
       n.allow_udp443,
+      n.reality_mlkem_hint,
+      n.subscription_endpoint,
       n.inbound_id,
       n.enabled AS node_enabled,
       n.last_status,
@@ -8900,6 +8916,7 @@ function buildVlessExternalProxyLinks(node, inbound, uuid, displayName, nodeName
       if (proxySpiderX) query.set('spx', proxySpiderX);
       const pqv = String(inner.mldsa65Verify || reality.mldsa65Verify || '').trim();
       if (pqv) query.set('pqv', pqv);
+      appendRealityHint(query, node, reality);
     }
 
     appendTransportQuery(query, streamSettings);
@@ -8915,13 +8932,21 @@ function buildVlessExternalProxyLinks(node, inbound, uuid, displayName, nodeName
 }
 
 function buildOutboundShareLinks(node, inbound, uuid, email, displayName, nodeName) {
+  const lines = buildOutboundShareLinksFromInbound(node, inbound, uuid, email, displayName, nodeName);
+  return getNodeType(node) === NODE_TYPE_3XUI && node.subscription_endpoint
+    ? lines.map(line => applySubscriptionEndpoint(line, node.subscription_endpoint)) : lines;
+}
+
+function buildOutboundShareLinksFromInbound(node, inbound, uuid, email, displayName, nodeName) {
   if (require('./lib_amneziawg').isAmneziaWG(inbound)) {
     const advertised = getInboundExternalProxyEntries(inbound);
-    const endpoints = advertised.length ? advertised : [{ dest: getInboundShareHost(node, inbound), port: getNodeInboundPort(node, inbound) }];
+    const manual = getNodeType(node) === NODE_TYPE_3XUI ? parseEndpoint(node.subscription_endpoint) : null;
+    const endpoints = manual ? [{ dest: manual.host, port: manual.port }]
+      : advertised.length ? advertised : [{ dest: getInboundShareHost(node, inbound), port: getNodeInboundPort(node, inbound) }];
     // Native AWG embeds its endpoint inside the encoded .conf. Apply the same
     // subscription redirect as other protocols before encoding that config.
     return endpoints.map(endpoint => require('./lib_amneziawg').shareLink(inbound, uuid, email,
-      getRedirectReplacementHost(node.node_id || node.id, endpoint.dest), endpoint.port, nodeName)).filter(Boolean);
+      manual ? endpoint.dest : getRedirectReplacementHost(node.node_id || node.id, endpoint.dest), endpoint.port, nodeName)).filter(Boolean);
   }
   const protocol = normalizeInboundProtocol(inbound?.protocol || 'vless');
   if (protocol === 'vless') {
@@ -8993,6 +9018,7 @@ function buildVlessRealityLink(node, inbound, uuid, displayName, nodeName, email
     if (sid) query.set('sid', sid);
     if (spiderX) query.set('spx', spiderX);
     if (pqv) query.set('pqv', pqv);
+    appendRealityHint(query, node, realitySettings);
   } else if (security === 'tls') {
     const sni = getEffectiveNodeSni(node, tlsSettings, {}) || tlsSettings.serverName || getTlsServerNameFromStream(streamSettings);
     if (sni) query.set('sni', sni);
@@ -16026,6 +16052,7 @@ app.post('/nodes', requireAuth, async (req, res) => {
     }
 
     const normalizedNodeType = normalizeNodeTypeValue(node_type || NODE_TYPE_3XUI);
+    const subscriptionEndpoint = normalizedNodeType === NODE_TYPE_3XUI ? endpointFormValue(req.body) : '';
     const isH1ApiType = normalizedNodeType === NODE_TYPE_H1CLOUD;
     const isH1PanelType = normalizedNodeType === NODE_TYPE_H1CLOUD_3XUI;
     const isRemnawaveType = normalizedNodeType === NODE_TYPE_REMNAWAVE;
@@ -16223,6 +16250,7 @@ app.post('/nodes', requireAuth, async (req, res) => {
       Number(db.prepare('SELECT COALESCE(MAX(sort_order), 0) + 1 AS n FROM nodes').get().n || 1)
     );
 
+    db.prepare('UPDATE nodes SET reality_mlkem_hint=?, subscription_endpoint=? WHERE id=?').run(mlkemFormValue(req.body), subscriptionEndpoint, info.lastInsertRowid);
     const node = db.prepare('SELECT * FROM nodes WHERE id = ?').get(info.lastInsertRowid);
     setExpiredSupportNode(node, req.body.expired_support === '1');
     if (importedInbound) saveInboundCache(node, importedInbound);
@@ -16470,6 +16498,7 @@ app.post('/nodes/:id/edit', requireAuth, async (req, res) => {
     } = req.body;
 
     const normalizedNodeType = normalizeNodeTypeValue(node_type || existingNode.node_type || NODE_TYPE_3XUI);
+    const subscriptionEndpoint = normalizedNodeType === NODE_TYPE_3XUI ? endpointFormValue(req.body, existingNode) : '';
     const previousNodeType = normalizeNodeTypeValue(existingNode.node_type || NODE_TYPE_3XUI);
     const isH1ApiType = normalizedNodeType === NODE_TYPE_H1CLOUD;
     const isH1PanelType = normalizedNodeType === NODE_TYPE_H1CLOUD_3XUI;
@@ -16691,8 +16720,9 @@ app.post('/nodes/:id/edit', requireAuth, async (req, res) => {
     for (const key of remnawaveHostDescriptorCache.keys()) {
       if (String(key).startsWith(`${nodeId}:`)) remnawaveHostDescriptorCache.delete(key);
     }
+    db.prepare('UPDATE nodes SET reality_mlkem_hint=?, subscription_endpoint=? WHERE id=?').run(mlkemFormValue(req.body, existingNode), subscriptionEndpoint, nodeId);
     const updatedNode = db.prepare('SELECT * FROM nodes WHERE id = ?').get(nodeId);
-    if (normalizedNodeType === NODE_TYPE_3XUI && Number(existingNode.allow_udp443) !== Number(updatedNode.allow_udp443)) {
+    if (normalizedNodeType === NODE_TYPE_3XUI && (Number(existingNode.allow_udp443) !== Number(updatedNode.allow_udp443) || Number(existingNode.reality_mlkem_hint) !== Number(updatedNode.reality_mlkem_hint) || existingNode.subscription_endpoint !== updatedNode.subscription_endpoint)) {
       bumpSubscriptionRevision();
     }
     setExpiredSupportNode(updatedNode, req.body.expired_support === '1');
@@ -18338,6 +18368,9 @@ function parseVlessLineToOutbound(line, index = 0, options = {}) {
       spiderX: spx || '/',
       allowInsecure: false
     };
+    // ML-KEM URI hint belongs to importers such as Mihomo, not Xray's
+    // REALITYConfig. Preserve native Xray fields only.
+    if (q.get('pqv')) outbound.streamSettings.realitySettings.mldsa65Verify = q.get('pqv');
   } else if (security === 'tls') {
     const alpn = String(q.get('alpn') || '')
       .split(',')

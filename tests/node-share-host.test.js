@@ -29,6 +29,7 @@ test('real VLESS builder uses public address and preserves inbound port and Real
   const source = fs.readFileSync(path.join(__dirname, '../app.js'), 'utf8');
   const fn = source.split('function buildVlessRealityLink(')[1].split('\nfunction buildTrojanLink(')[0];
   const context = vm.createContext({ URL, URLSearchParams, Buffer,
+    appendRealityHint: require('../lib_reality_compat').appendRealityHint,
     safeParseJsonField: value => typeof value === 'string' ? JSON.parse(value) : (value || {}),
     getInboundShareHost: (n, i) => shareHost(n, i, env),
     getRedirectReplacementHost: (_, host) => host,
@@ -46,4 +47,5 @@ test('real VLESS builder uses public address and preserves inbound port and Real
   assert.equal(link.port, '28140');
   assert.equal(link.searchParams.get('security'), 'reality');
   assert.equal(link.searchParams.get('sni'), 'example.org');
+  assert.equal(link.searchParams.get('support-x25519mlkem768'), 'true');
 });

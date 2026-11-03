@@ -21,16 +21,17 @@ test('UDP443 defaults on, old edit forms preserve values and new unchecked forms
   assert.equal(nodeCloneValues(on, 5).allow_udp443, 1);
 });
 
-test('Vision client suffix changes both ways without changing keys, transport or enabling mux', () => {
+test('Vision source flow is preserved by default, including an explicit source suffix; off normalizes it', () => {
   const cfg = fixture(), original = structuredClone(cfg);
   applyNodeUdp443(cfg, on);
-  assert.equal(cfg.settings.vnext[0].users[0].flow, permitted);
+  assert.equal(cfg.settings.vnext[0].users[0].flow, vision);
   assert.equal(cfg.mux, undefined);
   applyNodeUdp443(cfg, on); // idempotent
   applyNodeUdp443(cfg, off);
   assert.deepEqual(cfg, original);
   for (const network of ['raw', 'tcp']) for (const security of ['tls', 'reality']) {
-    assert.equal(nodeVisionFlow(vision, on, network, security), permitted);
+    assert.equal(nodeVisionFlow(vision, on, network, security), vision);
+    assert.equal(nodeVisionFlow(permitted, on, network, security), permitted);
     assert.equal(nodeVisionFlow(permitted, off, network, security), vision);
   }
 });
@@ -42,7 +43,7 @@ test('no new flow for other transports, security modes, flows or protocols', () 
   const cfg = fixture(); delete cfg.settings.vnext[0].users[0].flow;
   const before = structuredClone(cfg); applyNodeUdp443(cfg, on); assert.deepEqual(cfg, before);
   cfg.streamSettings.security = 'tls'; applyNodeUdp443(cfg, on, vision);
-  assert.equal(cfg.settings.vnext[0].users[0].flow, permitted, 'preserve source TLS Vision as well as REALITY');
+  assert.equal(cfg.settings.vnext[0].users[0].flow, vision, 'preserve source TLS Vision as well as REALITY');
   delete cfg.settings.vnext[0].users[0].flow; cfg.streamSettings.network = 'xhttp';
   applyNodeUdp443(cfg, on, vision); assert.equal(cfg.settings.vnext[0].users[0].flow, undefined);
   cfg.protocol = 'trojan'; const trojan = structuredClone(cfg); applyNodeUdp443(cfg, off); assert.deepEqual(cfg, trojan);

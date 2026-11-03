@@ -118,12 +118,17 @@ test('HTTP: add AWG node for all clients, mixed SUB/JSON, lifecycle and isolated
     .run(i, `user${i}`, `user${i}`, `10000000-0000-4000-8000-00000000000${i}`, `awg-subscription-${i}`);
   const nodeForm = { node_type: '3xui', panel_url: `http://127.0.0.1:${remote.address().port}`, api_auth_mode: 'token', api_token: 'test-token',
     country_code: 'DE', inbound_id: 42, subscription_protocol: 'amneziawg', create_existing_clients_on_node: '1' };
-  successful(await request('/nodes', nodeForm));
+  successful(await request('/nodes', { ...nodeForm, subscription_endpoint:'initial.example:26589' }));
   assert.equal(db.prepare('SELECT COUNT(*) n FROM client_nodes').get().n, 2, logs);
   assert.equal(writes.filter(w => w.route.endsWith('/add')).length, 2);
   assert.notEqual(inbounds.get(42).settings.clients[0].privateKey, inbounds.get(42).settings.clients[1].privateKey);
   assert.equal(db.prepare('SELECT sub_slug FROM clients WHERE id=1').get().sub_slug, 'awg-subscription-1');
   const nodeId = db.prepare('SELECT id FROM nodes WHERE inbound_id=42').get().id;
+  assert.equal(db.prepare('SELECT subscription_endpoint FROM nodes WHERE id=?').get(nodeId).subscription_endpoint, 'initial.example:26589');
+  const initialLine = (await request('/sub-plain/awg-subscription-1')).text;
+  assert.match(Buffer.from(initialLine.split('://')[1].split('#')[0], 'base64url').toString(), /Endpoint = initial.example:26589/);
+  await request('/nodes/' + nodeId + '/edit');
+  successful(await request('/nodes/' + nodeId + '/edit', { ...nodeForm, subscription_endpoint:'' }));
   const uri = (await request('/sub-plain/awg-subscription-1')).text;
   assert.match(uri, /^amneziawg:\/\//, logs);
   const conf = Buffer.from(uri.split('://')[1].split('#')[0], 'base64url').toString();
@@ -178,6 +183,24 @@ test('HTTP: add AWG node for all clients, mixed SUB/JSON, lifecycle and isolated
     conf.replace('Endpoint = vpn.example:51820', 'Endpoint = relay.example.com:51820'), 'custom domain replaces previous IP');
   successful(await request(`/redirects/${redirectRule.id}/delete`, {}));
   assert.equal(awgConf((await request('/sub-plain/awg-subscription-1')).text), conf, 'deleted rule restores endpoint');
+  await request('/nodes/' + nodeId + '/edit');
+  const saveEndpoint = async endpoint => successful(await request('/nodes/' + nodeId + '/edit',
+    { ...nodeForm, subscription_endpoint: endpoint }));
+  await saveEndpoint('[2001:db8::20]:26589');
+  inbounds.get(42).shareAddr = '0.0.0.0'; // explicit Endpoint must also work when automatic sharing is unusable
+  db.prepare("UPDATE node_inbound_cache SET updated_at='2000-01-01 00:00:00' WHERE node_id=?").run(nodeId);
+  const manualConf = conf.replace('Endpoint = vpn.example:51820', 'Endpoint = [2001:db8::20]:26589');
+  assert.equal(awgConf((await request('/sub-plain/awg-subscription-1')).text), manualConf);
+  const manualJson = JSON.parse((await request('/json/awg-subscription-1?format=incy')).text).find(c=>c.type==='amneziawg');
+  assert.equal(Buffer.from(manualJson.servers[0].config,'base64url').toString(), manualConf);
+  assert.equal(inbounds.get(42).port, 51820, 'manual endpoint never changes server listener');
+  successful(await request('/redirects/apply', redirectForm));
+  assert.equal(awgConf((await request('/sub-plain/awg-subscription-1')).text), manualConf, 'explicit Endpoint wins over redirect');
+  const manualRule = db.prepare('SELECT id FROM redirect_rules WHERE node_id=?').get(nodeId);
+  successful(await request('/redirects/' + manualRule.id + '/delete', {}));
+  inbounds.get(42).shareAddr = 'vpn.example';
+  await saveEndpoint('');
+  assert.equal(awgConf((await request('/sub-plain/awg-subscription-1')).text), conf, 'clearing restores automatic endpoint');
   async function reorder(order) {
     const r = await fetch(`http://127.0.0.1:${port}/nodes/reorder`, { method: 'POST', redirect: 'manual',
       headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrf, 'x-nexus-workspace': 'main' },
@@ -220,11 +243,15 @@ test('HTTP: add AWG node for all clients, mixed SUB/JSON, lifecycle and isolated
   configs = JSON.parse((await request('/json/awg-subscription-1')).text); assert.equal(configs.length, 1, 'ordinary Xray JSON stays usable');
   assert.match((await request('/open/awg-subscription-1')).text, /format=incy/);
   // Persisted per-inbound credentials and clean URLs must survive a restart.
+  await saveEndpoint('manual.example:26589');
   child.kill(); await new Promise(resolve => child.once('exit', resolve));
   child = startApp(); port = await ready(child); cookie = ''; csrf = '';
   assert.match((await request('/awg-subscription-1?format=incy')).text, /amneziawg/);
   await request('/login'); successful(await request('/login', { username: 'owner', password: 'test-owner-password' }));
   await request('/nodes');
+  assert.equal(db.prepare('SELECT subscription_endpoint FROM nodes WHERE id=?').get(nodeId).subscription_endpoint, 'manual.example:26589');
+  assert.match(awgConf((await request('/sub-plain/awg-subscription-1')).text), /Endpoint = manual\.example:26589/);
+  await saveEndpoint('');
   db.prepare('UPDATE clients SET expiry_time=? WHERE id=1').run(Date.now() - 86400000);
   assert.doesNotMatch((await request('/sub-plain/awg-subscription-1')).text, /amneziawg:\/\//);
   assert.match((await request('/sub-plain/awg-subscription-2')).text, /amneziawg:\/\//);

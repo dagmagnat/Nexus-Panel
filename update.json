@@ -1,11 +1,15 @@
 {
-  "version": "2.7.24",
-  "name": "Nexus Panel 2.7.24 — AWG ordering and routing scope",
+  "version": "2.7.25",
+  "name": "Nexus Panel 2.7.25 — REALITY compatibility and manual Endpoint",
   "repository": "https://github.com/dagmagnat/Nexus-Panel",
   "archive_url": "https://github.com/dagmagnat/Nexus-Panel/archive/refs/heads/main.zip",
   "archive": "Nexus-Panel-main.zip",
   "filename": "Nexus-Panel-main.zip",
   "notes": [
+    "3x-ui: обновление параметров inbound при выдаче подписки после устаревания минутного кэша; защита от подмены ID, ограничение одновременных запросов и повторов при сбое API.",
+    "REALITY: URI hint ML-KEM как в новых 3x-ui, с выключателем в узле; исходный Vision Flow больше не заменяется автоматически на -udp443. Native Xray JSON сохраняет mldsa65Verify.",
+    "Ручной Endpoint в добавлении/редакторе узла 3x-ui: домен:порт, IPv4:порт, [IPv6]:порт. Применяется к SUB и JSON, включая AmneziaWG INCY, отдельно от API панели и SNI.",
+    "В активности узлов указана доступность API; она не выдаётся за проверку VPN. Восстановлены исключения Docker и безопасный build network в комплектном Compose.",
     "Исправлен порядок AWG в смешанном JSON INCY. Xray-маршрутизация в интерфейсе больше не обещает применение к нативному AWG; сохранены исключения Docker для базы и настроек.",
     "AmneziaWG 3.1 из 3x-ui: добавление узла и клиентов, общая SUB/JSON-подписка INCY, сохранение ключей и адресов при изменении срока/лимитов.",
     "Маршрутизация: общий видимый блок «Всегда через VPN» для доменов и IP, приоритетнее RU/direct-исключений. Сохранены существующие списки и DNS-приоритет; только JSON назначенных узлов.",

@@ -55,13 +55,14 @@
   }
   function activityLabel(value) {
     const key = String(value || 'unknown').toLowerCase();
-    return ({ online: 'В сети', offline: 'Не в сети', disabled: 'Отключён', unknown: 'Нет данных', checking: 'Проверяю' })[key] || 'Нет данных';
+    return ({ online: 'API доступен', offline: 'API недоступен', disabled: 'Отключён', unknown: 'Нет данных', checking: 'Проверяю' })[key] || 'Нет данных';
   }
   const nodesById = new Map(nodes.map(node => [Number(node.id), node]));
   function connectionLabel(node) {
     const source = nodesById.get(Number(node.id)) || node;
     return String(source.transport_label || 'транспорт не загружен').replace(/\bRAW\b/g, 'TCP (RAW)');
   }
+  function isNativeAwg(node) { return String((nodesById.get(Number(node.id)) || node).inbound_protocol || '').toLowerCase() === 'amneziawg'; }
 %>
 
 <%- include('partials_header', { pageTitle: 'Узлы', pageSubtitle: 'Добавление, проверка и управление 3x-ui и Remnawave', activePage: 'nodes', hidePageHeader: true }) %>
@@ -171,7 +172,7 @@
           <select name="auto_select_preferred_node_id">
             <option value="0">Не задан — выбирать по пингу</option>
             <% nodes.forEach(node => { const suffix = String(node.label_suffix || '').trim(); const baseName = node.country_name_ru || node.name; const displayName = suffix ? (/^\d+$/.test(suffix) ? `${baseName}-${suffix}` : `${baseName} ${suffix}`) : baseName; %>
-              <option value="<%= node.id %>"><%= displayName %> · <%= connectionLabel(node) %> · #<%= node.id %></option>
+              <option value="<%= node.id %>" <%= isNativeAwg(node) ? 'disabled' : '' %>><%= displayName %> · <%= connectionLabel(node) %> · #<%= node.id %></option>
             <% }) %>
           </select>
           <small class="hint">Пока через этот узел есть интернет, он предпочтительнее более быстрых узлов.</small>
@@ -182,7 +183,7 @@
           <select name="auto_select_emergency_node_id">
             <option value="0">Не задан</option>
             <% nodes.forEach(node => { const suffix = String(node.label_suffix || '').trim(); const baseName = node.country_name_ru || node.name; const displayName = suffix ? (/^\d+$/.test(suffix) ? `${baseName}-${suffix}` : `${baseName} ${suffix}`) : baseName; %>
-              <option value="<%= node.id %>"><%= displayName %> · <%= connectionLabel(node) %> · #<%= node.id %></option>
+              <option value="<%= node.id %>" <%= isNativeAwg(node) ? 'disabled' : '' %>><%= displayName %> · <%= connectionLabel(node) %> · #<%= node.id %></option>
             <% }) %>
           </select>
           <small class="hint">Используется только если ни один узел основного пула не проходит интернет-проверку.</small>
@@ -193,7 +194,7 @@
           <div class="auto-select-node-grid">
             <% nodes.forEach(node => { const suffix = String(node.label_suffix || '').trim(); const baseName = node.country_name_ru || node.name; const displayName = suffix ? (/^\d+$/.test(suffix) ? `${baseName}-${suffix}` : `${baseName} ${suffix}`) : baseName; %>
               <label class="auto-select-node-option">
-                <input type="checkbox" name="auto_select_node_ids" value="<%= node.id %>" />
+                <input type="checkbox" name="auto_select_node_ids" value="<%= node.id %>" <%= isNativeAwg(node) ? 'disabled' : '' %> />
                 <span><%- flagHtml(node.country_code, node.country_flag, node.country_name_ru || node.name, node.node_type) %><strong><%= displayName %></strong><small class="auto-member-transport"><%= connectionLabel(node) %> · #<%= node.id %></small><small><%= Number(node.enabled) === 1 ? 'включён' : 'отключён' %></small></span>
               </label>
             <% }) %>
@@ -205,6 +206,12 @@
           <label data-node-endpoint-label>3x-ui Panel URL</label>
           <input name="panel_url" placeholder="https://panel.example.com:2053" required data-node-endpoint-input />
           <small class="hint" data-node-endpoint-hint>Адрес обычной панели 3x-ui, установленной на сервере.</small>
+        </div>
+
+        <div class="field half js-node-3xui-only">
+          <label>Endpoint в подписке (необязательно)</label>
+          <input name="subscription_endpoint" placeholder="vpn.example.com:10443 или [2001:db8::1]:10443" maxlength="320" autocomplete="off" />
+          <small class="hint">Домен/IP и порт подключения клиента, включая AmneziaWG. Пусто — автоматически. Ручной адрес приоритетнее 3x-ui и перенаправления, применяется ко всем ссылкам узла. API, SNI, Host, путь, ключи и серверный порт не меняются; TCP/UDP-порт должен быть настроен отдельно.</small>
         </div>
 
         <div class="field half js-node-3xui-only">
@@ -310,7 +317,9 @@
 
         <div class="field full js-node-3xui-only js-node-3xui-editable-only">
           <input type="hidden" name="udp443_controls" value="1" />
-          <label class="switch-row compact"><input type="checkbox" name="allow_udp443" value="1" checked /><span><strong>Разрешать UDP/443 · Vision / Mux</strong><small>Для обычной 3x-ui: включено по умолчанию. В ссылках и JSON Nexus снимает ограничение UDP/443 у VLESS Vision; в уже используемом Mux JSON выбирает skip. Mux не включается. Без галочки — стандартный Vision и reject в Mux. Для VLESS без Vision и без Mux галочка ничего не меняет; это не общий firewall.</small></span></label>
+          <label class="switch-row compact"><input type="checkbox" name="allow_udp443" value="1" checked /><span><strong>UDP/443 · сохранять исходный Vision / Mux</strong><small>Не добавляет суффикс -udp443 к обычному Vision: flow сохраняется как в 3x-ui. Уже заданный исходный -udp443 разрешён. В существующем Mux — skip; без галочки — стандартный Vision и reject. Mux не включается, это не общий firewall.</small></span></label>
+          <input type="hidden" name="reality_compat_controls" value="1" />
+          <label class="switch-row compact"><input type="checkbox" name="reality_mlkem_hint" value="1" checked /><span><strong>REALITY ML-KEM · совместимость VLESS-ссылок</strong><small>Передавать support-x25519mlkem768=true, как в новой 3x-ui. Для старого REALITY-сервера можно выключить. Только ссылки SUB; в Xray JSON не добавляется неподдерживаемое поле. Версия ядра приложения всё равно важна.</small></span></label>
           <small class="hint">Обнови подписку Nexus и переподключись. Настройки сервера, Remnawave и каскада не меняются; серверный запрет UDP не отменяется.</small>
         </div>
 
@@ -417,7 +426,7 @@
                       <select name="auto_select_preferred_node_id">
                         <option value="0" <%= !profile.preferredNodeId ? 'selected' : '' %>>Не задан — выбирать по пингу</option>
                         <% nodes.forEach(node => { const suffix = String(node.label_suffix || '').trim(); const baseName = node.country_name_ru || node.name; const displayName = suffix ? (/^\d+$/.test(suffix) ? `${baseName}-${suffix}` : `${baseName} ${suffix}`) : baseName; %>
-                          <option value="<%= node.id %>" <%= Number(profile.preferredNodeId) === Number(node.id) ? 'selected' : '' %>><%= displayName %> · <%= connectionLabel(node) %> · #<%= node.id %></option>
+                          <option value="<%= node.id %>" <%= isNativeAwg(node) ? 'disabled' : '' %> <%= Number(profile.preferredNodeId) === Number(node.id) ? 'selected' : '' %>><%= displayName %> · <%= connectionLabel(node) %> · #<%= node.id %></option>
                         <% }) %>
                       </select>
                       <small class="hint">Используется, пока через него проходит интернет-проверка.</small>
@@ -427,7 +436,7 @@
                       <select name="auto_select_emergency_node_id">
                         <option value="0" <%= !profile.emergencyNodeId ? 'selected' : '' %>>Не задан</option>
                         <% nodes.forEach(node => { const suffix = String(node.label_suffix || '').trim(); const baseName = node.country_name_ru || node.name; const displayName = suffix ? (/^\d+$/.test(suffix) ? `${baseName}-${suffix}` : `${baseName} ${suffix}`) : baseName; %>
-                          <option value="<%= node.id %>" <%= Number(profile.emergencyNodeId) === Number(node.id) ? 'selected' : '' %>><%= displayName %> · <%= connectionLabel(node) %> · #<%= node.id %></option>
+                          <option value="<%= node.id %>" <%= isNativeAwg(node) ? 'disabled' : '' %> <%= Number(profile.emergencyNodeId) === Number(node.id) ? 'selected' : '' %>><%= displayName %> · <%= connectionLabel(node) %> · #<%= node.id %></option>
                         <% }) %>
                       </select>
                       <small class="hint">Проверяется только после отказа всего основного пула.</small>
@@ -437,7 +446,7 @@
                       <div class="auto-select-node-grid compact">
                         <% nodes.forEach(node => { const suffix = String(node.label_suffix || '').trim(); const baseName = node.country_name_ru || node.name; const displayName = suffix ? (/^\d+$/.test(suffix) ? `${baseName}-${suffix}` : `${baseName} ${suffix}`) : baseName; %>
                           <label class="auto-select-node-option">
-                            <input type="checkbox" name="auto_select_node_ids" value="<%= node.id %>" <%= profile.normalNodeIds.includes(Number(node.id)) ? 'checked' : '' %> />
+                            <input type="checkbox" name="auto_select_node_ids" value="<%= node.id %>" <%= isNativeAwg(node) ? 'disabled' : '' %> <%= profile.normalNodeIds.includes(Number(node.id)) ? 'checked' : '' %> />
                             <span><%- flagHtml(node.country_code, node.country_flag, node.country_name_ru || node.name, node.node_type) %><strong><%= displayName %></strong><small class="auto-member-transport"><%= connectionLabel(node) %> · #<%= node.id %></small><small><%= Number(node.enabled) === 1 ? 'включён' : 'отключён' %></small></span>
                           </label>
                         <% }) %>
@@ -496,6 +505,7 @@
     <div class="nodes-modern-head">
       <div class="section-title-row nodes-order-title">
         <h2>Список узлов <span class="count-chip"><%= nodes.length + autoProfiles.length %></span></h2>
+        <small class="hint">Активность проверяет API панели, не VPN-handshake и не выход в интернет.</small>
         <% if (nodes.length || autoProfiles.length) { %><span id="nodeOrderStatus" class="muted">Перетащи ⠿ на ПК или используй ↑/↓ на телефоне, чтобы изменить порядок в приложении</span><% } %>
       </div>
       <% if (nodes.length || autoProfiles.length) { %>
@@ -1354,7 +1364,7 @@ async function refreshNodeStatuses() {
     if (!response.ok || !data.ok) throw new Error(data.error || 'Не удалось проверить узлы');
     (data.checks || []).forEach(check => {
       const state = ['online', 'offline', 'disabled'].includes(String(check.status)) ? String(check.status) : 'unknown';
-      const label = check.statusLabel || ({ online: 'В сети', offline: 'Не в сети', disabled: 'Отключён', unknown: 'Нет данных' })[state] || 'Нет данных';
+      const label = ({ online: 'API доступен', offline: 'API недоступен', disabled: 'Отключён', unknown: 'Нет данных' })[state] || check.statusLabel || 'Нет данных';
       document.querySelectorAll(`[data-node-live-status="${check.nodeId}"]`).forEach(container => {
         container.closest('.node-list-row')?.setAttribute('data-node-activity', state);
         const badge = container.querySelector('[data-node-live-badge]');

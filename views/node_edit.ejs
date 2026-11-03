@@ -79,6 +79,12 @@
         </div>
 
         <div class="field half js-node-3xui-only <%= is3xuiFamily ? '' : 'hidden' %>" <%= is3xuiFamily ? '' : 'hidden style="display:none!important"' %>>
+          <label>Endpoint в подписке (необязательно)</label>
+          <input name="subscription_endpoint" value="<%= node.subscription_endpoint || '' %>" placeholder="vpn.example.com:10443 или [2001:db8::1]:10443" maxlength="320" autocomplete="off" />
+          <small class="hint">Адрес подключения клиента, включая AmneziaWG. Пусто — автоматически из 3x-ui и перенаправления. Ручной Endpoint приоритетнее обоих, применяется ко всем ссылкам этого узла. API, SNI, Host, путь, ключи и серверный порт не меняются. Адрес должен вести на работающий TCP/UDP-порт нужного протокола.</small>
+        </div>
+
+        <div class="field half js-node-3xui-only <%= is3xuiFamily ? '' : 'hidden' %>" <%= is3xuiFamily ? '' : 'hidden style="display:none!important"' %>>
           <label>Panel Path</label>
           <input name="panel_path" value="<%= node.panel_path || '' %>" />
         </div>
@@ -179,7 +185,9 @@
         <% if (nodeType === '3xui') { %>
         <div class="field full js-node-3xui-only js-node-3xui-editable-only">
           <input type="hidden" name="udp443_controls" value="1" />
-          <label class="switch-row compact"><input type="checkbox" name="allow_udp443" value="1" <%= node.allow_udp443 == null || Number(node.allow_udp443) === 1 ? 'checked' : '' %> /><span><strong>Разрешать UDP/443 · Vision / Mux</strong><small>В ссылках и JSON Nexus снимает ограничение UDP/443 у VLESS Vision; в уже используемом Mux JSON выбирает skip. Mux не включается. Без галочки — стандартный Vision и reject в Mux. Для VLESS без Vision и без Mux галочка ничего не меняет; это не общий firewall.</small></span></label>
+          <label class="switch-row compact"><input type="checkbox" name="allow_udp443" value="1" <%= node.allow_udp443 == null || Number(node.allow_udp443) === 1 ? 'checked' : '' %> /><span><strong>UDP/443 · сохранять исходный Vision / Mux</strong><small>Не добавляет суффикс -udp443 к обычному Vision: flow сохраняется как в 3x-ui. Уже заданный исходный -udp443 разрешён. В существующем Mux — skip; без галочки — стандартный Vision и reject. Mux не включается, это не общий firewall.</small></span></label>
+          <input type="hidden" name="reality_compat_controls" value="1" />
+          <label class="switch-row compact"><input type="checkbox" name="reality_mlkem_hint" value="1" <%= node.reality_mlkem_hint == null || Number(node.reality_mlkem_hint) === 1 ? 'checked' : '' %> /><span><strong>REALITY ML-KEM · совместимость VLESS-ссылок</strong><small>Передавать support-x25519mlkem768=true, как в новой 3x-ui. Для старого REALITY-сервера можно выключить. Только ссылки SUB; в Xray JSON не добавляется неподдерживаемое поле. Версия ядра приложения всё равно важна.</small></span></label>
           <small class="hint">После сохранения обнови подписку Nexus и переподключись. В 3x-ui flow сервера менять не нужно, если нет отдельного запрета исходящего UDP. Remnawave и каскад не затрагиваются.</small>
         </div>
         <% } %>

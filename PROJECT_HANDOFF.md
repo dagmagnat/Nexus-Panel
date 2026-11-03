@@ -1,6 +1,8 @@
 # Nexus Panel — журнал продолжения разработки
 
-Последнее обновление: **2026-10-31**
+Последнее обновление: **2026-11-03 — 2.7.25**
+
+Рабочая папка этого релиза: C:/Users/user/Documents/Codex/2026-09-04/new-chat/work/reality-compat-2.7.25/Nexus-Panel-main. Не продолжать разработку из старой одноимённой папки в корне new-chat: там оставлена 2.7.22 с Docker hotfix.
 
 Этот файл нужно читать первым при продолжении работы из другой учётной записи или нового чата. После каждой доработки обновляйте разделы «Последнее изменение», «Изменённые файлы» и «Проверки».
 
@@ -20,6 +22,23 @@
 - Выполнено в 2.7.17 после запроса «доработай и исправь ошибки»: padding=0 и desktop flex/100dvh растягивали пустой список; добавлены empty-state/компактная высота, действия перенесены в заголовок. Локальные HTTP+Edge 1440/390, переход к форме и отсутствие overflow проверены, screenshots просмотрены. Исходный пункт выше сохранён как история запроса.
 
 ## Последнее изменение
+
+2026-11-03 — Nexus 2.7.25, совместимость обновлённой 3x-ui и ручной Endpoint:
+
+- База — свежий D:/Downloads/Nexus-Panel-main (3).zip, версия 2.7.24, 353 ZIP entry. Сохранены AWG 3.1, INCY, локальные Docker-проверки порта и предыдущие изменения; пользовательский ZIP и старые артефакты не перезаписывались.
+- Пользователь подтвердил, что отдельные TCP REALITY и XHTTP REALITY работают, а выдача Nexus — нет. Они имеют разные порты/ключи, сравнивать их между собой как ошибочные нельзя. В live-выдаче Nexus обнаружены автоматический Vision -udp443 и потеря URI ML-KEM hint. Это возможные причины, реальная end-to-end причина пока не доказана.
+- Проверены upstream 3x-ui PR6712 и документация sing-box. Hint остаётся URI-параметром; fake supportX25519Mlkem768 в native Xray JSON не добавлять. Добавлен импорт pqv/mldsa65Verify.
+- Новый lib_inbound_revalidation: 60s TTL, single-flight по контексту подключения, cap8, transient fallback+15s backoff; hard missing/mismatch/incomplete/context-changed не обслуживаются из старого snapshot. Cache write проверяет актуальную запись подключения после await. Workspaces — отдельные worker-процессы. Свежие авторизация/лимиты не заменяются кешем.
+- Новый lib_reality_compat + nodes.reality_mlkem_hint default1; marker старых форм сохраняет настройку, explicit node/source false отключает hint. В standard/externalProxy REALITY URI включён hint, TLS исключён; native JSON только поддерживаемые поля. UDP helper сохраняет стандартный исходный Flow, без автоматической подстановки суффикса.
+- По дополнительному запросу реализован lib_subscription_endpoint + nodes.subscription_endpoint default empty. Поле в add/edit 3x-ui, включая AWG; валидирует host:port / [IPv6]:port, не URL. Ручной Endpoint выигрывает у source/redirect, применяется к URI/JSON/native AWG, не трогает API/SNI/Host/path/peer keys/server listener. Пусто возвращает auto; clone/restart/старые формы сохраняются. AWG manual применяется до формирования conf, поэтому исправляет даже невалидный автоматически объявленный shareAddr.
+- Активность в nodes EJS и live refresh показывает API available, не обещает VPN handshake. Восстановлены отсутствовавшие в архиве .dockerignore/.gitattributes, комплектный Compose build network default; в add/edit autoselect disabled для nativeAWG, как уже требовал backend.
+- Изменены app.js, lib_node_udp443/lib_node_clone, новые lib_reality_compat/lib_inbound_revalidation/lib_subscription_endpoint, views/nodes/node_edit; тесты и release metadata/helper/manifest/docs. В cumulative manifest добавлены также отсутствовавшие файлы базы 2.7.24: lib_amneziawg/lib_local_inbound_port, header/redirect view, AWG docs/tests. Compose пользователя helper не заменяет шаблоном.
+- Проверки: target24/24, UI4/4 (Edge1440/390 production; снимки work/ui-qa/2.7.25 просмотрены), 20EJS/JS/Bash syntax. Реальный HTTP покрывает устаревание snapshot, TCP→XHTTP, port/pbk/sid/path/extra/pqv/Flow, concurrent refresh, fallback, выключатель/перезапуск, ручной VLESS/AWG Endpoint, IPv6/redirect priority/очистку/сохранение ключей. При открытии каталога остаются нулевые remote reads.
+- Full268:239pass/10fail/19skip. Baseline архива261:230pass/13fail/18skip. Новых fail по именам нет; исправлены три исходных: AWG pool UI, Compose default, missing .gitattributes. Оставшиеся: Python PATH×3; VM apiGet fixture без subscriptionRequestBudget; ожидание inbound999 diagnostic; static CSS count; old grace syntax expectation; device-registry expiry grace; old autoselect syntax expectation; workspace RBAC403. Не заявлять весь проект исправленным или full green.
+- Логи вне ZIP: work/reality-compat-{baseline-2.7.24,full-2.7.25,final-target-2.7.25,ui-2.7.25}.log. Docker/Xray/VPS/физический iPhone и клиентские приложения не проверялись.
+- Артефакты outputs/Nexus-Panel-2.7.25-subscription-compat-patch.zip (manifest + helper) и outputs/Nexus-Panel-2.7.25-source.zip (полные исходники); сборщик work/package_subscription_compat_2_7_25.ps1 проверяет hash/version/manifest/скрытые файлы и исключает .env/DB/dependencies/архивы. Релиз локальный, публикации в GitHub/установки на VPS не было. Инструкция docs/UPDATE_2.7.25.md.
+
+## История предыдущих изменений
 
 2026-10-31 — Nexus 2.7.22, приоритет VPN и удаление узла из каталога:
 

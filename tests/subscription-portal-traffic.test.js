@@ -657,9 +657,9 @@ test('ordinary 3x-ui UDP443 migrates, saves per node and survives JSON, SUB, aut
   }
   const configs = async () => { const r = await request('/json/portal-user?download=1'); assert.equal(r.status, 200); return r.json(); };
   const flows = configs => configs.filter(c => !c.autoSelect).map(c => c.outbounds.find(o => o.protocol === 'vless').settings.vnext[0].users[0].flow);
-  assert.deepEqual(flows(await configs()), ['xtls-rprx-vision-udp443', 'xtls-rprx-vision']);
+  assert.deepEqual(flows(await configs()), ['xtls-rprx-vision', 'xtls-rprx-vision']);
   const rawSub = async () => { const s = await (await request('/sub/portal-user?raw=1')).text(); return s.includes('vless://') ? s : Buffer.from(s, 'base64').toString(); };
-  assert.ok((await rawSub()).includes('flow=xtls-rprx-vision-udp443'));
+  assert.ok(!(await rawSub()).includes('flow=xtls-rprx-vision-udp443'));
   const rev = () => db.prepare("SELECT value FROM app_settings WHERE key='subscription_revision'").get().value;
   const beforeRev = rev();
   await save({ udp443_controls: '1' });
@@ -672,7 +672,7 @@ test('ordinary 3x-ui UDP443 migrates, saves per node and survives JSON, SUB, aut
   assert.equal((await post(`/nodes/${node1.id}/edit`, { ...baseForm, _csrf: '', udp443_controls: '1', allow_udp443: '1' })).status, 403);
   await save({ udp443_controls: '1', allow_udp443: '1', inherit_3xui_mux: '1' });
   const cfg = (await configs())[0], out = cfg.outbounds.find(o => o.protocol === 'vless');
-  assert.equal(out.settings.vnext[0].users[0].flow, 'xtls-rprx-vision-udp443');
+  assert.equal(out.settings.vnext[0].users[0].flow, 'xtls-rprx-vision');
   assert.deepEqual(out.mux, { ...sourceMux, xudpProxyUDP443: 'skip' });
   assert.deepEqual(JSON.parse(db.prepare('SELECT source_sub_json_mux FROM nodes WHERE id=?').get(node1.id).source_sub_json_mux), sourceMux);
   assert.equal(JSON.parse(db.prepare('SELECT inbound_json FROM node_inbound_cache WHERE node_id=?').get(node1.id).inbound_json).settings, inbound(1).settings, 'server flow remains unchanged');
@@ -691,7 +691,7 @@ test('ordinary 3x-ui UDP443 migrates, saves per node and survives JSON, SUB, aut
   const autoSaved = await post('/nodes', autoForm); assert.ok(!autoSaved.headers.get('location').includes('error='));
   const auto = (await configs()).find(c => c.autoSelect);
   assert.ok(auto);
-  assert.deepEqual(auto.outbounds.filter(o => o.protocol === 'vless').map(o => o.settings.vnext[0].users[0].flow), ['xtls-rprx-vision-udp443', 'xtls-rprx-vision']);
+  assert.deepEqual(auto.outbounds.filter(o => o.protocol === 'vless').map(o => o.settings.vnext[0].users[0].flow), ['xtls-rprx-vision', 'xtls-rprx-vision']);
   const backup = await (await request('/backup/download')).json();
   assert.equal(backup.data.nodes.find(n => n.id === node2).allow_udp443, 0);
   assert.ok(mock.requestedPaths.every(p => p.startsWith('GET ') || p === 'POST /panel/api/setting/all'), 'no remote settings/client mutation is needed');
@@ -700,11 +700,11 @@ test('ordinary 3x-ui UDP443 migrates, saves per node and survives JSON, SUB, aut
   assert.equal(restored.status, 302);
   assert.equal(db.prepare('SELECT allow_udp443 FROM nodes WHERE id=?').get(node2).allow_udp443, 0);
   await stopApp(app); app = await startApp(dataDir);
-  assert.deepEqual(flows(await configs()), ['xtls-rprx-vision-udp443', 'xtls-rprx-vision']);
+  assert.deepEqual(flows(await configs()), ['xtls-rprx-vision', 'xtls-rprx-vision']);
   const tlsInbound = inbound(1);
   tlsInbound.streamSettings = JSON.stringify({ network: 'tcp', security: 'tls', tlsSettings: { serverName: 'example.test' } });
   db.prepare('UPDATE node_inbound_cache SET inbound_json=? WHERE node_id=?').run(JSON.stringify(tlsInbound), node1.id);
-  assert.equal(flows(await configs())[0], 'xtls-rprx-vision-udp443', 'TLS Vision is preserved in JSON as well as in the source URI');
+  assert.equal(flows(await configs())[0], 'xtls-rprx-vision', 'TLS Vision is preserved in JSON as well as in the source URI');
 });
 
 test('multiple auto-connections create, edit, toggle and delete independently via HTTP and survive restart', { timeout:60000 }, async t => {

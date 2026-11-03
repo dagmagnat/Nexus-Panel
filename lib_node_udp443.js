@@ -24,7 +24,9 @@ function supportsVisionFlow(flow, network, security) {
 
 function nodeVisionFlow(flow, node, network, security) {
   if (!isOrdinary3xui(node) || !supportsVisionFlow(flow, network, security)) return flow;
-  return allowsUdp443(node) ? 'xtls-rprx-vision-udp443' : 'xtls-rprx-vision';
+  // Keep the source flow by default. The Xray-only suffix is not portable to
+  // every app that imports a VLESS URI or converts Xray JSON.
+  return allowsUdp443(node) ? flow : 'xtls-rprx-vision';
 }
 
 function applyNodeUdp443(outbound, node, sourceFlow = '') {

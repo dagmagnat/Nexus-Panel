@@ -23,9 +23,16 @@ for (const kind of ['3xui-modern', '3xui-legacy', 'remna-3.3', 'remna-3.4']) {
       ? { id: 17, uuid: '40000000-0000-4000-8000-000000000017', username: 'alpha', vlessUuid: uuids[0], activeInternalSquads: [squad(1)], status: 'ACTIVE', trafficLimitBytes: 0, userTraffic: { usedTrafficBytes: 4 * GB }, expireAt: '2099-01-01T00:00:00Z' }
       : { id: uuids[0], email: 'alpha', subId: 'editor-alpha-12345678', enable: true, totalGB: 13 * GB, expiryTime: 0, inboundIds: [1] };
     remote.set('alpha', alpha);
-    const inbound = id => ({ id, port: 20000 + id, protocol: 'vless', enable: true, remark: 'test-' + id,
+    let transportGeneration = 0, unavailable = false;
+    const inbound = id => ({ id, port: transportGeneration && id === 2 ? (transportGeneration === 1 ? 8443 : 10443) : 20000 + id, protocol: 'vless', enable: true, remark: 'test-' + id,
       settings: JSON.stringify({ decryption: 'none', clients: [...remote.values()].filter(c => c.inboundIds?.includes(id)).map(c => ({ ...c })) }),
-      streamSettings: JSON.stringify({ network: 'xhttp', security: 'none', xhttpSettings: { path: '/xhttp/', mode: 'auto' } }), sniffing: '{}',
+      streamSettings: JSON.stringify(transportGeneration && id === 2 ? {
+        network: transportGeneration === 1 ? 'tcp' : 'xhttp', security: 'reality',
+        realitySettings: { serverNames: ['edge.example.test'], shortIds: ['abcd' + transportGeneration], settings: {
+          publicKey: 'synthetic-public-key-' + transportGeneration, fingerprint: 'firefox', spiderX: '/test-spider', mldsa65Verify: 'synthetic-pqv'
+        }},
+        ...(transportGeneration === 2 ? { xhttpSettings: { path: '/xhttp/new/', mode: 'auto', xPaddingBytes: '100-1000' } } : {})
+      } : { network: 'xhttp', security: 'none', xhttpSettings: { path: '/xhttp/', mode: 'auto' } }), sniffing: '{}',
       clientStats: [...remote.values()].filter(c => c.inboundIds?.includes(id)).map(c => ({ email: c.email, up: c.email === 'alpha' ? GB : 0, down: c.email === 'alpha' ? 3 * GB : 0, total: c.totalGB, enable: c.enable })) });
     let originBase;
     const origin = http.createServer(async (req, res) => {
@@ -34,6 +41,7 @@ for (const kind of ['3xui-modern', '3xui-legacy', 'remna-3.3', 'remna-3.4']) {
       const missing = () => { res.writeHead(404, { 'Content-Type': 'application/json' }).end(JSON.stringify({ success: false, message: 'not found' })); };
       if (req.method === 'GET') {
         reads.push(p);
+        if (unavailable && p.includes('/inbounds/')) return res.writeHead(503).end('temporary outage');
         if (remna) {
           if (p === '/api/system/metadata') return ok({ version: kind === 'remna-3.3' ? '3.3.0' : '3.4.5' });
           if (p === '/api/system/stats') return ok({ users: { totalUsers: remote.size } });
@@ -164,6 +172,88 @@ for (const kind of ['3xui-modern', '3xui-legacy', 'remna-3.3', 'remna-3.4']) {
     assert.ok(!checkbox(after, 4).includes('checked'));
     await stop(); await start(); cookies.clear(); csrf = ''; await login();
     assert.ok(checkbox(editor((await request('/clients?q=beta')).text, 2), 2).includes('checked'), 'assignment persists after restart');
+    if (modern) {
+      // A real subscription request must revalidate an old snapshot after a 3x-ui
+      // reinstall, rather than reusing its old port/keys/transport indefinitely.
+      transportGeneration = 1;
+      remote.get('beta').flow = 'xtls-rprx-vision';
+      const expire = () => db.prepare("UPDATE node_inbound_cache SET updated_at='2000-01-01 00:00:00' WHERE node_id=2").run();
+      const sub = async () => {
+        const r = await request('/sub/editor-client-key-2?raw=1');
+        assert.equal(r.status, 200, r.text);
+        return new URL(r.text.split(/\r?\n/).find(s => s.startsWith('vless://')));
+      };
+      const outbound = async () => {
+        const r = await request('/json/editor-client-key-2?raw=1');
+        assert.equal(r.status, 200, r.text);
+        return JSON.parse(r.text).flatMap(c => c.outbounds || []).find(o => o.protocol === 'vless');
+      };
+      expire();
+      let link = await sub(), out = await outbound();
+      assert.equal(link.port, '8443');
+      assert.equal(link.searchParams.get('flow'), 'xtls-rprx-vision');
+      assert.equal(link.searchParams.get('pbk'), 'synthetic-public-key-1');
+      assert.equal(link.searchParams.get('support-x25519mlkem768'), 'true');
+      assert.equal(link.searchParams.get('pqv'), 'synthetic-pqv');
+      assert.equal(out.settings.vnext[0].users[0].flow, 'xtls-rprx-vision');
+      assert.equal(out.streamSettings.realitySettings.mldsa65Verify, 'synthetic-pqv');
+      assert.equal('supportX25519Mlkem768' in out.streamSettings.realitySettings, false, 'URI hint is not an Xray JSON field');
+      await request('/nodes/2/edit');
+      const endpointForm = { node_type: '3xui', panel_url: originBase, inbound_id: '2', api_auth_mode: 'token', country_code: 'FI', sni_mode: 'inbound' };
+      const endpointBefore = db.prepare('SELECT panel_url, subscription_endpoint FROM nodes WHERE id=2').get();
+      const badEndpoint = await request('/nodes/2/edit', { ...endpointForm, subscription_endpoint:'https://bad.example:443/path' });
+      assert.ok(badEndpoint.location.includes('error='));
+      assert.deepEqual(db.prepare('SELECT panel_url, subscription_endpoint FROM nodes WHERE id=2').get(), endpointBefore);
+      const manual = await request('/nodes/2/edit', { ...endpointForm, subscription_endpoint:'manual.example:28443' });
+      assert.ok(!manual.location.includes('error='), manual.location);
+      link = await sub(); out = await outbound();
+      assert.equal(link.hostname, 'manual.example'); assert.equal(link.port,'28443');
+      assert.equal(link.searchParams.get('sni'), 'edge.example.test');
+      assert.equal(link.searchParams.get('pbk'), 'synthetic-public-key-1');
+      assert.equal(out.settings.vnext[0].address, 'manual.example'); assert.equal(out.settings.vnext[0].port,28443);
+      assert.equal(out.streamSettings.realitySettings.serverName, 'edge.example.test');
+      assert.equal(db.prepare('SELECT panel_url FROM nodes WHERE id=2').get().panel_url, originBase);
+      assert.ok(!((await request('/nodes/2/edit', { ...endpointForm, subscription_endpoint:'' })).location.includes('error=')));
+      const freshReads = reads.filter(p => p === '/panel/api/inbounds/get/2').length;
+      await sub(); await outbound();
+      assert.equal(reads.filter(p => p === '/panel/api/inbounds/get/2').length, freshReads, 'fresh snapshot avoids another API read');
+      transportGeneration = 2; expire();
+      const links = await Promise.all([sub(), sub(), sub()]);
+      assert.equal(reads.filter(p => p === '/panel/api/inbounds/get/2').length, freshReads + 1, 'concurrent stale subscriptions share one inbound read');
+      for (link of links) {
+        assert.equal(link.port, '10443'); assert.equal(link.searchParams.get('type'), 'xhttp');
+        assert.equal(link.searchParams.get('pbk'), 'synthetic-public-key-2');
+        assert.equal(link.searchParams.get('sid'), 'abcd2');
+        assert.equal(link.searchParams.get('path'), '/xhttp/new/');
+        assert.equal(link.searchParams.get('mode'), 'auto');
+        assert.equal(link.searchParams.has('flow'), false);
+      }
+      out = await outbound();
+      assert.equal(out.settings.vnext[0].port, 10443);
+      assert.equal(out.streamSettings.network, 'xhttp');
+      assert.equal(out.streamSettings.xhttpSettings.path, '/xhttp/new/');
+      assert.equal(out.streamSettings.xhttpSettings.extra.xPaddingBytes, '100-1000');
+      assert.equal(out.settings.vnext[0].users[0].flow, undefined);
+      const nodeForm = { node_type: '3xui', panel_url: originBase, inbound_id: '2', api_auth_mode: 'token', country_code: 'FI', sni_mode: 'inbound' };
+      const saveNode = async extra => {
+        const r = await request('/nodes/2/edit', { ...nodeForm, ...extra });
+        assert.equal(r.status, 302); assert.ok(!r.location.includes('error='), r.location + log);
+      };
+      await request('/nodes/2/edit');
+      assert.equal(db.prepare('SELECT reality_mlkem_hint FROM nodes WHERE id=2').get().reality_mlkem_hint, 1);
+      await saveNode({ reality_compat_controls: '1' });
+      assert.equal((await sub()).searchParams.has('support-x25519mlkem768'), false);
+      await saveNode({}); // old forms preserve opt-out
+      assert.equal(db.prepare('SELECT reality_mlkem_hint FROM nodes WHERE id=2').get().reality_mlkem_hint, 0);
+      await stop(); await start(); cookies.clear(); csrf = ''; await login(); await request('/nodes/2/edit');
+      assert.equal((await sub()).searchParams.has('support-x25519mlkem768'), false, 'preference survives restart');
+      await saveNode({ reality_compat_controls: '1', reality_mlkem_hint: '1' });
+      assert.equal((await sub()).searchParams.get('support-x25519mlkem768'), 'true');
+      unavailable = true; expire();
+      assert.equal((await sub()).port, '10443', 'temporary API failure retains last validated parameters');
+      unavailable = false;
+      assert.deepEqual(db.prepare('SELECT uuid,sub_slug FROM clients WHERE id=2').get(), stable, 'refresh does not replace client identity');
+    }
     if (modern && process.env.NEXUS_PLAYWRIGHT_MODULE) {
       const { chromium } = require(process.env.NEXUS_PLAYWRIGHT_MODULE); const browser = await chromium.launch({ headless: true, channel: 'msedge' });
       try {
@@ -202,7 +292,17 @@ for (const kind of ['3xui-modern', '3xui-legacy', 'remna-3.3', 'remna-3.4']) {
         const orderBeforeSort = db.prepare('SELECT id,sort_order FROM nodes ORDER BY id').all();
         db.prepare("INSERT INTO auto_select_profiles(name,icon,enabled,normal_node_ids) VALUES('Wi-Fi test','⚡',1,'[1,2]')").run();
         for (const width of [1440, 390]) {
-          await page.setViewportSize({ width, height: 920 }); await page.goto(base + '/nodes');
+          await page.setViewportSize({ width, height: 920 });
+          await page.goto(base + '/nodes/2/edit');
+          const endpoint = page.locator('#nodeEditForm [name=subscription_endpoint]');
+          await endpoint.waitFor({state:'visible'});
+          assert.equal(await endpoint.inputValue(), '');
+          await endpoint.fill('manual.example:26589');
+          assert.equal(await page.locator('#nodeEditForm [name=reality_mlkem_hint]').isChecked(), true);
+          await endpoint.scrollIntoViewIfNeeded();
+          assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false);
+          if (process.env.NEXUS_UI_SCREENSHOT_DIR) await page.screenshot({path:path.join(process.env.NEXUS_UI_SCREENSHOT_DIR,'endpoint-' + width + '.png')});
+          await page.goto(base + '/nodes');
           const order = () => page.locator('#nodesOrderBody .node-list-row').evaluateAll(rows => rows.map(r => r.dataset.nodeId));
           const original = await order();
           for (const key of ['type','transport','enabled','activity']) {

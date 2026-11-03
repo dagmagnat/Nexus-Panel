@@ -1,6 +1,6 @@
 {
   "name": "nexus-panel",
-  "version": "2.7.24",
+  "version": "2.7.25",
   "description": "Nexus Panel — 3x-ui and Remnawave aggregation panel with exact inbound sync, subscriptions and traffic monitoring",
   "homepage": "https://github.com/dagmagnat/Nexus-Panel#readme",
   "bugs": {
@@ -35,7 +35,8 @@
     "test:client-transfer": "node --test tests/client-transfer.test.js",
     "test:settings-transfer": "node --test tests/settings-transfer.test.js",
     "test:xhttp-external-proxy": "node --test tests/xhttp-external-proxy.test.js",
-    "test:amneziawg": "node --test tests/amneziawg.test.js tests/amneziawg-http.test.js tests/subscription-links.test.js tests/local-inbound-port.test.js"
+    "test:amneziawg": "node --test tests/amneziawg.test.js tests/amneziawg-http.test.js tests/subscription-links.test.js tests/local-inbound-port.test.js",
+    "test:subscription-compat": "node --test tests/reality-compat.test.js tests/subscription-endpoint.test.js tests/client-node-editor-http.test.js tests/node-udp443.test.js tests/subscription-portal-traffic.test.js tests/xhttp-external-proxy.test.js tests/amneziawg.test.js tests/amneziawg-http.test.js"
   },
   "dependencies": {
     "better-sqlite3": "11.10.0",
