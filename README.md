@@ -6,7 +6,9 @@
 
 Nexus Panel объединяет узлы **3x-ui** и **Remnawave** в одной панели: клиенты, подписки, лимиты, трафик, маршрутизация, перенаправление, Telegram и резервные копии.
 
-[![Version](https://img.shields.io/badge/version-2.7.25-blue)](https://github.com/dagmagnat/Nexus-Panel)
+[![Version](https://img.shields.io/badge/version-2.7.26-blue)](https://github.com/dagmagnat/Nexus-Panel)
+
+Обновление 2.7.26: [синхронизация параметров, исправление AWG и закрепление API на нужном сервере](docs/UPDATE_2.7.26.md). Принудительная загрузка inbound сохраняет ручной Endpoint; API можно закрепить на IP с сохранением HTTPS-домена. Нативный AWG отображается как UDP, boolean-поля выдаются в формате on/off.
 
 Обновление 2.7.25: [совместимость подписок с обновлённой 3x-ui и ручной Endpoint](docs/UPDATE_2.7.25.md). Обновление сохранённых параметров inbound, исходный Vision Flow, ML-KEM hint в REALITY-ссылках и отдельный адрес подключения клиента в SUB/JSON, включая AmneziaWG.
 

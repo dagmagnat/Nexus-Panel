@@ -172,6 +172,22 @@ for (const kind of ['3xui-modern', '3xui-legacy', 'remna-3.3', 'remna-3.4']) {
     assert.ok(!checkbox(after, 4).includes('checked'));
     await stop(); await start(); cookies.clear(); csrf = ''; await login();
     assert.ok(checkbox(editor((await request('/clients?q=beta')).text, 2), 2).includes('checked'), 'assignment persists after restart');
+    if (!remna) {
+      // Both token and password login must reach the selected server even if
+      // the API domain itself cannot resolve (or has multiple unrelated IPs).
+      const pinForm={node_type:'3xui',panel_url:'http://api-panel.example.invalid:'+origin.address().port,
+        api_connect_ip:'127.0.0.1',inbound_id:'2',api_auth_mode:modern?'token':'password',username:'admin',country_code:'FI',sni_mode:'inbound'};
+      await request('/nodes/2/edit');
+      const pinned=await request('/nodes/2/edit',pinForm);
+      assert.ok(!pinned.location.includes('error='),pinned.location+log);
+      const refreshed=await request('/nodes/2/refresh-parameters',{});
+      assert.ok(!refreshed.location.includes('error='),refreshed.location+log);
+      assert.match((await request('/nodes/2/edit')).text,/data-inbound-sync-state="fresh"/);
+      await stop();await start();cookies.clear();csrf='';await login();await request('/nodes/2/edit');
+      assert.equal(db.prepare('SELECT api_connect_ip FROM nodes WHERE id=2').get().api_connect_ip,'127.0.0.1');
+      const restored=await request('/nodes/2/edit',{...pinForm,panel_url:originBase,api_connect_ip:''});
+      assert.ok(!restored.location.includes('error='),restored.location+log);
+    }
     if (modern) {
       // A real subscription request must revalidate an old snapshot after a 3x-ui
       // reinstall, rather than reusing its old port/keys/transport indefinitely.
@@ -298,6 +314,9 @@ for (const kind of ['3xui-modern', '3xui-legacy', 'remna-3.3', 'remna-3.4']) {
           await endpoint.waitFor({state:'visible'});
           assert.equal(await endpoint.inputValue(), '');
           await endpoint.fill('manual.example:26589');
+          await endpoint.fill('2.27.40.95:50669');
+          await page.locator('#nodeEditForm [data-api-ip-from-endpoint]').click();
+          assert.equal(await page.locator('#nodeEditForm [name=api_connect_ip]').inputValue(),'2.27.40.95');
           assert.equal(await page.locator('#nodeEditForm [name=reality_mlkem_hint]').isChecked(), true);
           await endpoint.scrollIntoViewIfNeeded();
           assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false);

@@ -1,8 +1,8 @@
 # Nexus Panel — журнал продолжения разработки
 
-Последнее обновление: **2026-11-03 — 2.7.25**
+Последнее обновление: **2026-11-03 — 2.7.26**
 
-Рабочая папка этого релиза: C:/Users/user/Documents/Codex/2026-09-04/new-chat/work/reality-compat-2.7.25/Nexus-Panel-main. Не продолжать разработку из старой одноимённой папки в корне new-chat: там оставлена 2.7.22 с Docker hotfix.
+Рабочая папка этого релиза: C:/Users/user/Documents/Codex/2026-09-04/new-chat/work/parameter-sync-2.7.26/Nexus-Panel-main. Основа — полный 2.7.25 из work/reality-compat-2.7.25. Предыдущие ZIP не менялись. Не продолжать разработку из старой одноимённой папки в корне new-chat: там оставлена 2.7.22 с Docker hotfix.
 
 Этот файл нужно читать первым при продолжении работы из другой учётной записи или нового чата. После каждой доработки обновляйте разделы «Последнее изменение», «Изменённые файлы» и «Проверки».
 
@@ -22,6 +22,21 @@
 - Выполнено в 2.7.17 после запроса «доработай и исправь ошибки»: padding=0 и desktop flex/100dvh растягивали пустой список; добавлены empty-state/компактная высота, действия перенесены в заголовок. Локальные HTTP+Edge 1440/390, переход к форме и отсутствие overflow проверены, screenshots просмотрены. Исходный пункт выше сохранён как история запроса.
 
 ## Последнее изменение
+
+2026-11-03 — Nexus 2.7.26, AWG boolean, синхронизация и API IP:
+
+- На скриншоте Endpoint50669, preview26589/RAW/NONE. В живой SUB два AWG с одним Endpoint и разными server parameters. DNS my-plan.top на проверке возвращал5IPv4. Пользователь подтвердил: это5 независимых панелей, а2.27.40.95 — сам нужный сервер. Ключи пользователя в файлы/логи не сохранялись; тесты используют синтетику.
+- Подтверждённая ошибка нашего генератора и старого зеркального unit-теста: RandomTrailers/DisableCookies=true. Upstream amneziawg-tools parse_bool принимает on/off или числа, неtrue/false. lib_amneziawg выдаёт on/off; валидирует диапазоны J/S/H, timers, boolean; publicServerValues не показывает server privateKey/headerProtectionKey, сокращает I1..I5.
+- Автозагрузка при открытии editor была уже в2.7.25; проблема многозначного API-домена делала источник непостоянным. Добавлена nodes.api_connect_ip defaultempty + lib_node_api_transport. Сокет фиксируется custom lookup в HTTP/HTTPS agent, URL/Host/SNI/domain certificate остаются прежними, redirecterror для pinnedAPI; login/token/GET/POST/DELETE учтены. Никаких rejectUnauthorizedfalse. В add/edit preflight uses newIP before save; subscriptionSELECT, clone и connectionKey учитываютpin. Старая форма безполя сохраняетIP.
+- Добавлена кнопка «ВзятьIPизEndpoint» для operator-known same-server IP, без автоматического DNS->Endpoint или Endpoint->API изменения. Нельзя автоматически отправлять учётные данные на внешнийrelay/CDN. Для пользователя рекомендация API IP2.27.40.95, Endpoint2.27.40.95:50669; URLAPIостаетсяmy-plan.topсо своим APIпортом/PanelPath. ПустойIPвозвращаетDNS.
+- refreshNodeParameters selectedinbound+Xray sourceMux/FinalMask; getInbound local publication validation/currentcontext guard. POST/nodes/:id/refresh-parameters protectedCSRF/nodes.manage, bumps revision, не меняетEndpoint. Editor автоfullselectedload, sync fresh/cached timestamp, не показывает stalegreen. Подтверждённые чужие/missing inbound не показываются как cachefallback. Параметры источника применяются вNexus; удалённаяXraywriteпо прежнейгалочке. AWG Xray/fullJSONwriteотклоняется.
+- AWG previewUDP, realport/params; скрыты RAW/sniffing/REALITY/Mux иadvancedwrite. API-domainmulti-address warning & duplicateAWGmanualEndpoint warnings. API DNScheck advisory800msbound, не VPN connectivity test. ServerUDPsocket/firewall/realhandshake via API не доказаны.
+- Изменены app.js/lib_amneziawg/lib_access/lib_node_clone/lib_inbound_revalidation, новыйlib_node_api_transport, viewsnode_edit/nodes, public/js/node-api-ip.js,testsAWG/clienteditor/newAPItransport, metadata/helper/manifest/docs. Сохранены2.7.25manualEndpoint/Flow/MLKEM/Dockerfixes/AWGINCY.
+- Целевые npm run test:subscription-compat29/29. UI5/5 на1440/390 (AWG forcebutton/Endpoint/UDP/noXray; editor/каталог/маршрутизация legacy/modernRemna3.3/3.4). Screenshotwork/ui-qa/2.7.26 просмотрены. 20EJS/JS/Bashsyntax. Реальныеlocal HTTP иHTTPS pin: noDNSdomain→127.0.0.1; Host/SNIretained; mismatching trustedcert rejected; token/password fullapi preflight/restart; staleAPI/error/CSRF/preservedEndpoint.
+- Full273:244pass/10oldfail/19skip, compareимёнс2.7.25 совпало (PythonPATH×3, VM apiGet, inbound999diagnostic, CSScount, oldgracesyntax/devicegrace/autoselectsyntax/workspaceRBAC). Не fullgreen. Логиwork/parameter-sync-{target,ui,api,full,final-target}-2.7.26.log.
+- outputs/Nexus-Panel-2.7.26-parameter-sync-patch.zip иNexus-Panel-2.7.26-source.zip; сборщикwork/package_parameter_sync_2_7_26.ps1. docs/UPDATE_2.7.26.md. Подготовлено локально, не опубликовано и не развёрнуто. Docker/VPS/realclientAWGhandshake не проверялись. Пользователю после обновления сначала сохранить API IP, затем refresh и обновитьподписку.
+
+## Предыдущий релиз
 
 2026-11-03 — Nexus 2.7.25, совместимость обновлённой 3x-ui и ручной Endpoint:
 

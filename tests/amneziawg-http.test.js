@@ -16,6 +16,7 @@ test('HTTP: add AWG node for all clients, mixed SUB/JSON, lifecycle and isolated
       settings: { clients: [] }, streamSettings: { network: 'tcp', security: 'none' } }]
   ]);
   const clients = new Map(), writes = [], unexpected = [];
+  let inboundApiUnavailable = false;
   const remote = http.createServer(async (req, res) => {
     const route = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
     let text = ''; for await (const chunk of req) text += chunk;
@@ -24,6 +25,7 @@ test('HTTP: add AWG node for all clients, mixed SUB/JSON, lifecycle and isolated
     if (route === '/panel/api/server/status') obj = { version: '3.10.0' };
     else if (route === '/panel/api/setting/all') obj = {};
     else if (/\/inbounds\/get\/\d+$/.test(route)) {
+      if (inboundApiUnavailable) { res.writeHead(503).end('temporary outage'); return; }
       const inbound = inbounds.get(Number(route.split('/').pop()));
       obj = { ...inbound, settings: JSON.stringify(inbound.settings) };
     } else if (route === '/panel/api/clients/list') obj = [...clients.values()].map(c => ({ client: c, inboundIds: c.inboundIds }));
@@ -75,7 +77,7 @@ test('HTTP: add AWG node for all clients, mixed SUB/JSON, lifecycle and isolated
   let child;
   function startApp() {
   const app = fork(path.join(__dirname, '../app.js'), [], { cwd: path.join(__dirname, '..'), stdio: ['ignore', 'pipe', 'pipe', 'ipc'], env: {
-    ...process.env, DOTENV_CONFIG_PATH: path.join(dir, 'absent.env'), DATA_DIR: dir, NEXUS_CONTROL_DIR: dir, NODE_ENV: 'development', PORT: '0',
+    ...process.env, DOTENV_CONFIG_PATH: path.join(dir, 'absent.env'), DATA_DIR: dir, NEXUS_CONTROL_DIR: dir, NODE_ENV: 'production', PORT: '0',
     ADMIN_USERNAME: 'owner', ADMIN_PASSWORD: 'test-owner-password', APP_SECRET: 'a'.repeat(64), SESSION_SECRET: 's'.repeat(64),
     SESSION_SECURE: '0', TRUST_PROXY: '0', NEXUS_NODE_ENABLED: '0', PANEL_PUBLIC_URL: 'http://localhost:3000', SUB_PUBLIC_URL: 'http://localhost:3000'
   } });
@@ -125,6 +127,55 @@ test('HTTP: add AWG node for all clients, mixed SUB/JSON, lifecycle and isolated
   assert.equal(db.prepare('SELECT sub_slug FROM clients WHERE id=1').get().sub_slug, 'awg-subscription-1');
   const nodeId = db.prepare('SELECT id FROM nodes WHERE inbound_id=42').get().id;
   assert.equal(db.prepare('SELECT subscription_endpoint FROM nodes WHERE id=?').get(nodeId).subscription_endpoint, 'initial.example:26589');
+  const initialServer = structuredClone(inbounds.get(42).settings.server);
+  const writesBeforeRefresh = writes.length;
+  inbounds.get(42).port = 50669; inbounds.get(42).settings.server.jc = 60;
+  let editor = await request('/nodes/' + nodeId + '/edit');
+  assert.equal(editor.status,200); assert.match(editor.text,/data-inbound-sync-state="fresh"/);
+  assert.match(editor.text,/name="inbound_port"[^>]*value="50669"[^>]*readonly/);
+  assert.match(editor.text,/value="UDP"/); assert.match(editor.text,/&#34;jc&#34;: 60/);
+  for(const name of ['inbound_sniffing_enabled','inbound_network','apply_inbound_settings','apply_inbound_advanced_json','allow_udp443','reality_mlkem_hint'])
+    assert.ok(!editor.text.includes('name="' + name + '"'), 'native AWG must not show Xray control ' + name);
+  successful(await request('/nodes/' + nodeId + '/refresh-parameters',{}));
+  assert.equal(db.prepare('SELECT subscription_endpoint FROM nodes WHERE id=?').get(nodeId).subscription_endpoint,'initial.example:26589');
+  assert.equal(JSON.parse(db.prepare('SELECT inbound_json FROM node_inbound_cache WHERE node_id=?').get(nodeId).inbound_json).port,50669);
+  assert.equal(writes.length,writesBeforeRefresh,'sync never writes server settings or clients');
+  if (process.env.NEXUS_PLAYWRIGHT_MODULE) {
+    const {chromium}=require(process.env.NEXUS_PLAYWRIGHT_MODULE), browser=await chromium.launch({headless:true,channel:'msedge'});
+    try {
+      const page=await browser.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
+      await page.route('**/*',r=>new URL(r.request().url()).hostname==='127.0.0.1'?r.continue():r.abort());
+      const base='http://127.0.0.1:' + port;
+      await page.goto(base+'/login');await page.locator('[name=username]').fill('owner');await page.locator('[name=password]').fill('test-owner-password');
+      await Promise.all([page.waitForURL('**/dashboard'),page.locator('button[type=submit]').click()]);
+      for(const width of [1440,390]) {
+        await page.setViewportSize({width,height:920});await page.goto(base+'/nodes/'+nodeId+'/edit');
+        const form=page.locator('form[action="/nodes/'+nodeId+'/refresh-parameters"]');
+        await form.locator('button').click();await page.waitForURL(url=>url.searchParams.has('message'));
+        assert.equal(await page.locator('[name=subscription_endpoint]').inputValue(),'initial.example:26589');
+        assert.equal(await page.locator('[name=inbound_port]').inputValue(),'50669');
+        assert.equal(await page.locator('[name=inbound_sniffing_enabled]').count(),0);
+        assert.equal(await page.locator('[data-inbound-sync-state]').getAttribute('data-inbound-sync-state'),'fresh');
+        await page.locator('[name=subscription_endpoint]').scrollIntoViewIfNeeded();
+        assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1),false);
+        if(process.env.NEXUS_UI_SCREENSHOT_DIR)await page.screenshot({path:path.join(process.env.NEXUS_UI_SCREENSHOT_DIR,'awg-parameters-'+width+'.png')});
+      }
+      assert.deepEqual(errors,[]);
+    } finally {await browser.close();}
+  }
+  const csrfFail=await fetch('http://127.0.0.1:' + port + '/nodes/' + nodeId + '/refresh-parameters',
+    {method:'POST',headers:{cookie,'content-type':'application/x-www-form-urlencoded'},body:'_csrf=invalid&_workspace=main',redirect:'manual'});
+  assert.equal(csrfFail.status,403);
+  inboundApiUnavailable=true;
+  const failedRefresh=await request('/nodes/' + nodeId + '/refresh-parameters',{});
+  assert.ok(failedRefresh.location.includes('error='));
+  editor=await request('/nodes/' + nodeId + '/edit');
+  assert.match(editor.text,/data-inbound-sync-state="cached"/);
+  assert.doesNotMatch(editor.text,/Inbound синхронизирован с 3x-ui/);
+  assert.equal(db.prepare('SELECT subscription_endpoint FROM nodes WHERE id=?').get(nodeId).subscription_endpoint,'initial.example:26589');
+  inboundApiUnavailable=false;
+  inbounds.get(42).port=51820;inbounds.get(42).settings.server=initialServer;
+  successful(await request('/nodes/' + nodeId + '/refresh-parameters',{}));
   const initialLine = (await request('/sub-plain/awg-subscription-1')).text;
   assert.match(Buffer.from(initialLine.split('://')[1].split('#')[0], 'base64url').toString(), /Endpoint = initial.example:26589/);
   await request('/nodes/' + nodeId + '/edit');
@@ -132,6 +183,7 @@ test('HTTP: add AWG node for all clients, mixed SUB/JSON, lifecycle and isolated
   const uri = (await request('/sub-plain/awg-subscription-1')).text;
   assert.match(uri, /^amneziawg:\/\//, logs);
   const conf = Buffer.from(uri.split('://')[1].split('#')[0], 'base64url').toString();
+  assert.match(conf,/^RandomTrailers = on$/m);assert.match(conf,/^DisableCookies = on$/m);
   assert.match(conf, /Endpoint = vpn.example:51820/); assert.match(conf, /PersistentKeepalive = 15-25/);
   assert.ok(conf.includes(key(5))); assert.ok(!conf.includes(key(20))); assert.ok(!conf.includes(key(2)));
   let configs = JSON.parse((await request('/json/awg-subscription-1?format=incy')).text);

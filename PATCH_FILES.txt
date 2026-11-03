@@ -95,3 +95,7 @@ tests/docker-context.test.js
 docs/AMNEZIAWG_INCY.md
 docs/FIX_DOCKER_CONTEXT.md
 docs/UPDATE_2.7.25.md
+lib_node_api_transport.js
+public/js/node-api-ip.js
+tests/node-api-transport.test.js
+docs/UPDATE_2.7.26.md

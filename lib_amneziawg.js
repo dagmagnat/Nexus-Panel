@@ -21,7 +21,30 @@ function validateServer(inbound) {
   if (!server || typeof server !== 'object') throw new Error('AmneziaWG: 3x-ui не вернула settings.server');
   key(server.publicKey, 'PublicKey сервера');
   if (server.headerProtectionKey) key(server.headerProtectionKey, 'HeaderProtectionKey');
+  for (const field of ['jc','jmin','jmax','s1','s2','s3','s4']) if (server[field] !== undefined) validateRange(server[field], field, 65535, false);
+  for (const field of ['h1','h2','h3','h4']) if (server[field] !== undefined) validateRange(server[field], field, 4294967295);
+  for (const field of ['contentPaddingAddition','rekeyAfterTime','rekeyTimeout','rejectAfterTime','keepaliveTimeout','maxHandshakeAttempts'])
+    if (server[field] !== undefined && server[field] !== '') validateRange(server[field], field, 65535);
+  if (server.jmin !== undefined && server.jmax !== undefined && Number(server.jmin) > Number(server.jmax)) throw new Error('AmneziaWG: Jmin больше Jmax');
+  for (const field of ['randomTrailers','disableCookies']) if (server[field] !== undefined) booleanConfig(server[field], field);
   return server;
+}
+function validateRange(value, field, maximum, range = true) {
+  const text = scalar(value, field);
+  if (!(range ? /^\d+(?:-\d+)?$/ : /^\d+$/).test(text)) throw new Error('AmneziaWG: некорректный ' + field);
+  const [lo, hi = lo] = text.split('-').map(Number);
+  if (hi < lo || hi > maximum) throw new Error('AmneziaWG: некорректный диапазон ' + field);
+}
+function booleanConfig(value, field) {
+  const text = scalar(value, field).toLowerCase();
+  if (['true','on','1'].includes(text)) return 'on';
+  if (['false','off','0'].includes(text)) return 'off';
+  throw new Error('AmneziaWG: некорректный ' + field);
+}
+function publicServerValues(inbound) {
+  const server = validateServer(inbound);
+  return Object.fromEntries(Object.entries(server).filter(([k]) => !['privateKey','headerProtectionKey'].includes(k))
+    .map(([k,v]) => [k, /^i[1-5]$/.test(k) ? 'задан (' + String(v).length + ' символов)' : v]));
 }
 function clientConfig(inbound, uuid, email, host, port, name) {
   const settings = parse(inbound.settings), server = validateServer(inbound);
@@ -52,7 +75,7 @@ function clientConfig(inbound, uuid, email, host, port, name) {
     'RekeyAfterTime', 'RekeyTimeout', 'RejectAfterTime', 'KeepaliveTimeout', 'MaxHandshakeAttempts',
     'RandomTrailers', 'DisableCookies']) {
     const property = field[0].toLowerCase() + field.slice(1);
-    const value = server[property];
+    const value = ['RandomTrailers','DisableCookies'].includes(field) && server[property] !== undefined ? booleanConfig(server[property], field) : server[property];
     if (value !== undefined && value !== null && value !== '') lines.push(`${field} = ${scalar(value, field)}`);
   }
   lines.push('', '[Peer]', `PublicKey = ${key(server.publicKey, 'PublicKey сервера')}`);
@@ -81,4 +104,4 @@ function jsonContainer(entry) {
   return { type: 'amneziawg', version: 1, servers: [{ name: entry.nodeName || '', config: match[1] }] };
 }
 
-module.exports = { isAmneziaWG, validateServer, clientConfig, shareLink, jsonContainer, normalizeKeepAlive };
+module.exports = { isAmneziaWG, validateServer, clientConfig, shareLink, jsonContainer, normalizeKeepAlive, booleanConfig, publicServerValues };

@@ -1,7 +1,7 @@
 'use strict';
 // Refresh connection parameters, never authorization/traffic decisions.
 function connectionKey(node) {
-  return JSON.stringify(['id','inbound_id','panel_url','panel_path','api_auth_mode','username','password_enc','api_token_enc'].map(k => node[k] ?? ''));
+  return JSON.stringify(['id','inbound_id','panel_url','panel_path','api_connect_ip','api_auth_mode','username','password_enc','api_token_enc'].map(k => node[k] ?? ''));
 }
 function createInboundRevalidator({ read, load, now = Date.now, ttlMs = 60000, retryMs = 15000, maxConcurrent = 8, onError = () => {} }) {
   const jobs = new Map(), retries = new Map();

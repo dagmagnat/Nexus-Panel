@@ -35,6 +35,7 @@ const { udp443FormValue, nodeVisionFlow, applyNodeUdp443 } = require('./lib_node
 const { mlkemFormValue, appendRealityHint } = require('./lib_reality_compat');
 const { connectionKey, createInboundRevalidator } = require('./lib_inbound_revalidation');
 const { parseEndpoint, endpointFormValue, applySubscriptionEndpoint } = require('./lib_subscription_endpoint');
+const { apiIpFormValue, apiTransport, apiAddressWarning } = require('./lib_node_api_transport');
 const { subscriptionUrl, cleanSubscriptionTarget } = require('./lib_subscription_links');
 const { initNexusNodeControlSchema, attachNexusNodeControl } = require('./lib_nexus_node_control');
 
@@ -1559,6 +1560,7 @@ function initDb() {
   addColumnIfMissing('nodes', 'allow_udp443', 'INTEGER NOT NULL DEFAULT 1');
   addColumnIfMissing('nodes', 'reality_mlkem_hint', 'INTEGER NOT NULL DEFAULT 1');
 addColumnIfMissing('nodes', 'subscription_endpoint', "TEXT NOT NULL DEFAULT ''");
+addColumnIfMissing('nodes', 'api_connect_ip', "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing('nodes', 'inherit_3xui_fragment', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing('nodes', 'inherit_3xui_noises', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing('nodes', 'source_sub_json_mux', "TEXT DEFAULT ''");
@@ -5773,6 +5775,7 @@ async function loginNode(node, timeoutMs = NODE_API_TIMEOUT_MS) {
   });
 
   const response = await fetchWithTimeout(`${rootUrl}/login`, {
+    ...apiTransport(node),
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
@@ -5797,6 +5800,7 @@ async function apiGet(node, path, timeoutMs = NODE_API_TIMEOUT_MS) {
   const auth = await buildNodeApiAuth(node, remaining());
 
   const response = await fetchWithTimeout(`${auth.rootUrl}${path}`, {
+    ...apiTransport(node),
     headers: {
       'Accept': 'application/json',
       ...auth.headers
@@ -5836,6 +5840,7 @@ async function apiPost(node, path, body, asForm = false, timeoutMs = NODE_API_TI
 
   const response = await fetchWithTimeout(`${auth.rootUrl}${path}`, {
     method: 'POST',
+    ...apiTransport(node),
     headers,
     body: payload
   }, timeoutMs);
@@ -5906,7 +5911,7 @@ async function apiDelete(node, path, body = null, timeoutMs = NODE_API_TIMEOUT_M
     'Accept': 'application/json',
     ...auth.headers
   };
-  const options = { method: 'DELETE', headers };
+  const options = { method: 'DELETE', headers, ...apiTransport(node) };
   if (body !== null && body !== undefined) {
     headers['Content-Type'] = 'application/json';
     options.body = JSON.stringify(body);
@@ -5970,11 +5975,7 @@ const getSubscriptionInbound = createInboundRevalidator({
     return { inbound, updatedAt };
   },
   async load(node) {
-    const inbound = await fetchSelectedInboundExact(node, SUBSCRIPTION_STATS_TIMEOUT_MS);
-    const current = db.prepare('SELECT * FROM nodes WHERE id=?').get(node.id);
-    if (!current || connectionKey(current) !== connectionKey(node)) throw inboundError('Connection changed during refresh', 'NODE_CONNECTION_CHANGED');
-    saveInboundCache(node, inbound);
-    return inbound;
+    return getInbound(node, SUBSCRIPTION_STATS_TIMEOUT_MS);
   },
   onError(node, err) { console.warn('Inbound refresh failed; using last saved parameters, node', Number(node.id), String(err?.code || 'API_ERROR')); }
 });
@@ -6071,6 +6072,11 @@ async function fetchSelectedInboundExact(node, timeoutMs = NODE_API_TIMEOUT_MS) 
 
 async function getInbound(node, timeoutMs = NODE_API_TIMEOUT_MS) {
   const inbound = await fetchSelectedInboundExact(node, timeoutMs);
+  if (node.id) {
+    const current = db.prepare('SELECT * FROM nodes WHERE id=?').get(node.id);
+    if (!current || connectionKey(current) !== connectionKey(node)) throw inboundError('Connection changed during refresh', 'NODE_CONNECTION_CHANGED');
+  }
+  require('./lib_local_inbound_port').validateLocalInboundPort(node, inbound);
   saveInboundCache(node, inbound);
   return inbound;
 }
@@ -6323,6 +6329,11 @@ function applyRealitySniTarget(reality, sniValue, targetValue) {
 
 function extractInboundEditorValues(inbound) {
   if (!inbound) return null;
+  if (require('./lib_amneziawg').isAmneziaWG(inbound)) return {
+    id: inbound.id, remark: inbound.remark || inbound.tag || '', port: inbound.port || '',
+    protocol: 'amneziawg', network: 'udp', security: '', sniffingEnabled: false,
+    awgServer: require('./lib_amneziawg').publicServerValues(inbound), raw: inbound
+  };
   const stream = parseInboundJsonField(inbound.streamSettings, {});
   const sniffing = parseInboundJsonField(inbound.sniffing, {});
   if (!stream || typeof stream !== 'object') throw new Error('streamSettings inbound пустой или повреждён');
@@ -6468,6 +6479,9 @@ async function updateInboundBasicSettings(node, form) {
     throw new Error('H1Cloud 3x-ui: параметры провайдерского inbound доступны только для чтения и не могут быть изменены агрегатором.');
   }
   const inbound = await getInbound(node, 15000);
+  if (require('./lib_amneziawg').isAmneziaWG(inbound)) {
+    throw new Error('AmneziaWG: параметры сервера изменяются в 3x-ui; обновите их кнопкой синхронизации. Xray RAW/Sniffing/полный JSON здесь не применяются.');
+  }
   const advancedPayload = parseAdvancedInboundPayload(form, node, inbound);
   if (advancedPayload) {
     const data = await apiPost(node, `/panel/api/inbounds/update/${encodeURIComponent(advancedPayload.id)}`, advancedPayload, true);
@@ -8789,6 +8803,7 @@ async function buildSubscriptionEntries(clientRow, includeOffline = true, option
       n.allow_udp443,
       n.reality_mlkem_hint,
       n.subscription_endpoint,
+      n.api_connect_ip,
       n.inbound_id,
       n.enabled AS node_enabled,
       n.last_status,
@@ -16053,6 +16068,7 @@ app.post('/nodes', requireAuth, async (req, res) => {
 
     const normalizedNodeType = normalizeNodeTypeValue(node_type || NODE_TYPE_3XUI);
     const subscriptionEndpoint = normalizedNodeType === NODE_TYPE_3XUI ? endpointFormValue(req.body) : '';
+    const apiConnectIp = normalizedNodeType === NODE_TYPE_3XUI ? apiIpFormValue(req.body) : '';
     const isH1ApiType = normalizedNodeType === NODE_TYPE_H1CLOUD;
     const isH1PanelType = normalizedNodeType === NODE_TYPE_H1CLOUD_3XUI;
     const isRemnawaveType = normalizedNodeType === NODE_TYPE_REMNAWAVE;
@@ -16148,6 +16164,7 @@ app.post('/nodes', requireAuth, async (req, res) => {
         password_enc: storedPasswordEnc,
         api_auth_mode: apiMode,
         api_token_enc: storedApiTokenEnc,
+        api_connect_ip: apiConnectIp,
         inbound_id: Number(inbound_id)
       };
       const statusData = await apiGet(pendingNode, '/panel/api/server/status', NODE_API_TIMEOUT_MS);
@@ -16251,6 +16268,7 @@ app.post('/nodes', requireAuth, async (req, res) => {
     );
 
     db.prepare('UPDATE nodes SET reality_mlkem_hint=?, subscription_endpoint=? WHERE id=?').run(mlkemFormValue(req.body), subscriptionEndpoint, info.lastInsertRowid);
+    db.prepare('UPDATE nodes SET api_connect_ip=? WHERE id=?').run(apiConnectIp, info.lastInsertRowid);
     const node = db.prepare('SELECT * FROM nodes WHERE id = ?').get(info.lastInsertRowid);
     setExpiredSupportNode(node, req.body.expired_support === '1');
     if (importedInbound) saveInboundCache(node, importedInbound);
@@ -16421,8 +16439,33 @@ app.post('/nodes/:id/toggle', requireAuth, (req, res) => {
   }
 });
 
+async function refreshNodeParameters(node) {
+  const inbound = await getInbound(node, SUBSCRIPTION_STATS_TIMEOUT_MS);
+  if (getNodeType(node) === NODE_TYPE_3XUI && !require('./lib_amneziawg').isAmneziaWG(inbound)) {
+    const source = await fetch3xuiSubscriptionSource(node, SUBSCRIPTION_STATS_TIMEOUT_MS);
+    const current = db.prepare('SELECT * FROM nodes WHERE id=?').get(node.id);
+    if (!current || connectionKey(current) !== connectionKey(node)) throw inboundError('Connection changed during refresh', 'NODE_CONNECTION_CHANGED');
+    if (!source.error) db.prepare('UPDATE nodes SET source_sub_json_mux=?, source_sub_json_finalmask=?, source_sub_settings_error=? WHERE id=?').run(source.mux, source.finalmask, '', node.id);
+    else db.prepare('UPDATE nodes SET source_sub_settings_error=? WHERE id=?').run(source.error, node.id);
+  }
+  return inbound;
+}
+
+app.post('/nodes/:id/refresh-parameters', requireAuth, async (req, res) => {
+  const node = db.prepare('SELECT * FROM nodes WHERE id=?').get(Number(req.params.id));
+  const target = '/nodes/' + Number(req.params.id) + '/edit';
+  try {
+    if (!node || getNodeType(node) !== NODE_TYPE_3XUI) throw new Error('Выберите узел 3x-ui.');
+    await refreshNodeParameters(node);
+    bumpSubscriptionRevision();
+    res.redirect(target + '?message=' + encodeURIComponent('Параметры выбранного inbound загружены и проверены. Ручной Endpoint сохранён. Обновите подписку в приложении.'));
+  } catch (err) {
+    res.redirect(target + '?error=' + encodeURIComponent('Не удалось загрузить свежие параметры: ' + String(err.message || err)));
+  }
+});
+
 app.get('/nodes/:id/edit', requireAuth, async (req, res) => {
-  const node = db.prepare('SELECT * FROM nodes WHERE id = ?').get(Number(req.params.id));
+  let node = db.prepare('SELECT * FROM nodes WHERE id = ?').get(Number(req.params.id));
 
   if (!node) {
     return res.redirect('/nodes?tab=list&error=' + encodeURIComponent('Узел не найден'));
@@ -16435,21 +16478,33 @@ app.get('/nodes/:id/edit', requireAuth, async (req, res) => {
     try {
       // Страница редактирования всегда синхронизирует именно выбранный ID,
       // чтобы не показывать параметры старого/другого inbound.
-      const inbound = await getInboundForNodeHealthCheck(node);
+      const inbound = getNodeType(node) === NODE_TYPE_3XUI ? await refreshNodeParameters(node) : await getInboundForNodeHealthCheck(node);
       inboundPreview = extractInboundEditorValues(inbound);
     } catch (err) {
       const enriched = enrich3xuiError(node, err);
       loadError = String(enriched?.message || enriched || err);
-      if (cachedInbound) {
+      if (cachedInbound && !['INBOUND_NOT_FOUND','INBOUND_ID_MISMATCH','NODE_CONNECTION_CHANGED'].includes(err.code)) {
         inboundPreview = extractInboundEditorValues(cachedInbound);
         loadError += ' Показана последняя сохранённая копия этого inbound.';
       }
     }
   }
 
+  node = db.prepare('SELECT * FROM nodes WHERE id=?').get(node.id);
+  const inboundSync = { fresh: !!inboundPreview && !loadError, updatedAt: db.prepare('SELECT updated_at FROM node_inbound_cache WHERE node_id=?').get(node.id)?.updated_at || '' };
+  const endpointWarnings = [];
+  if (inboundPreview?.protocol === 'amneziawg' && node.subscription_endpoint) {
+    for (const other of db.prepare("SELECT * FROM nodes WHERE id!=? AND enabled=1 AND node_type='3xui' AND subscription_endpoint=?").all(node.id,node.subscription_endpoint)) {
+      const cached = getCachedInbound(other);
+      if (require('./lib_amneziawg').isAmneziaWG(cached)) endpointWarnings.push('AWG-узел #' + other.id + ' также использует этот ручной Endpoint. Убедитесь, что у профилей совпадают серверные ключи и параметры AWG либо задайте разные адреса/порты.');
+    }
+  }
   render(res, 'node_edit', {
     node,
     inboundPreview,
+    inboundSync,
+    endpointWarnings,
+    apiAddressWarning: getNodeType(node) === NODE_TYPE_3XUI ? await apiAddressWarning(node) : '',
     sourceSubscriptionSummary: summarize3xuiSubscriptionSource({
       mux: node.source_sub_json_mux,
       finalmask: node.source_sub_json_finalmask
@@ -16499,6 +16554,7 @@ app.post('/nodes/:id/edit', requireAuth, async (req, res) => {
 
     const normalizedNodeType = normalizeNodeTypeValue(node_type || existingNode.node_type || NODE_TYPE_3XUI);
     const subscriptionEndpoint = normalizedNodeType === NODE_TYPE_3XUI ? endpointFormValue(req.body, existingNode) : '';
+    const apiConnectIp = normalizedNodeType === NODE_TYPE_3XUI ? apiIpFormValue(req.body, existingNode) : '';
     const previousNodeType = normalizeNodeTypeValue(existingNode.node_type || NODE_TYPE_3XUI);
     const isH1ApiType = normalizedNodeType === NODE_TYPE_H1CLOUD;
     const isH1PanelType = normalizedNodeType === NODE_TYPE_H1CLOUD_3XUI;
@@ -16617,6 +16673,7 @@ app.post('/nodes/:id/edit', requireAuth, async (req, res) => {
         password_enc: updatedPasswordEnc,
         api_auth_mode: apiMode,
         api_token_enc: updatedApiTokenEnc,
+        api_connect_ip: apiConnectIp,
         inbound_id: Number(inbound_id)
       };
       await apiGet(pendingNode, '/panel/api/server/status', NODE_API_TIMEOUT_MS);
@@ -16721,6 +16778,7 @@ app.post('/nodes/:id/edit', requireAuth, async (req, res) => {
       if (String(key).startsWith(`${nodeId}:`)) remnawaveHostDescriptorCache.delete(key);
     }
     db.prepare('UPDATE nodes SET reality_mlkem_hint=?, subscription_endpoint=? WHERE id=?').run(mlkemFormValue(req.body, existingNode), subscriptionEndpoint, nodeId);
+    db.prepare('UPDATE nodes SET api_connect_ip=? WHERE id=?').run(apiConnectIp, nodeId);
     const updatedNode = db.prepare('SELECT * FROM nodes WHERE id = ?').get(nodeId);
     if (normalizedNodeType === NODE_TYPE_3XUI && (Number(existingNode.allow_udp443) !== Number(updatedNode.allow_udp443) || Number(existingNode.reality_mlkem_hint) !== Number(updatedNode.reality_mlkem_hint) || existingNode.subscription_endpoint !== updatedNode.subscription_endpoint)) {
       bumpSubscriptionRevision();

@@ -19,6 +19,8 @@
   const currentNet = inboundPreview ? String(inboundPreview.network || 'raw').toLowerCase() : '';
   const currentSecurity = inboundPreview ? String(inboundPreview.security || 'none').toLowerCase() : '';
   const inboundUsesSni = ['tls', 'reality'].includes(currentSecurity);
+  const isNativeAwg = inboundPreview && inboundPreview.protocol === 'amneziawg';
+  const freshInbound = typeof inboundSync !== 'undefined' && inboundSync.fresh;
 %>
 
 <div class="grid node-edit-layout">
@@ -26,7 +28,7 @@
     <h2>Параметры узла</h2>
     <div class="actions node-edit-top-actions" style="margin-bottom:14px;">
       <% if (is3xuiFamily) { %>
-        <a class="link-btn secondary" href="/nodes/<%= node.id %>/edit?load_inbound=1">Загрузить параметры из 3x-ui</a>
+        <form method="post" action="/nodes/<%= node.id %>/refresh-parameters" class="inline-form js-long-action" data-loading-title="Синхронизация параметров" data-loading-text="Читаю выбранный inbound из 3x-ui. Ручной Endpoint сохраняется."><button type="submit" class="secondary">Загрузить и проверить параметры из 3x-ui</button></form>
       <% } %>
       <form method="post" action="/nodes/<%= node.id %>/clone" class="inline-form" onsubmit="return confirm('Скопировать сохранённые параметры подключения? Несохранённые правки не копируются. Копия будет выключена.');"><button type="submit" class="btn-secondary">Клонировать узел</button></form>
       <% if (!isRemnawave) { %>
@@ -35,6 +37,9 @@
         </form>
       <% } %>
     </div>
+    <div class="alert <%= freshInbound ? 'ok' : 'warning' %>" data-inbound-sync-state="<%= freshInbound ? 'fresh' : 'cached' %>"><%= freshInbound ? 'Выбранный inbound получен из 3x-ui и проверен.' : 'Свежие параметры не подтверждены. Проверьте сообщение об ошибке; сохранённая копия может устареть.' %> <%= typeof inboundSync !== 'undefined' && inboundSync.updatedAt ? 'Последняя загрузка: ' + inboundSync.updatedAt + ' UTC.' : '' %> Ручной Endpoint не заменяется. Проверка API не подтверждает VPN-handshake.</div>
+    <% (typeof endpointWarnings !== 'undefined' ? endpointWarnings : []).forEach(warning => { %><div class="alert warning" data-endpoint-warning><%= warning %></div><% }) %>
+    <% if (typeof apiAddressWarning !== 'undefined' && apiAddressWarning) { %><div class="alert warning" data-api-address-warning><%= apiAddressWarning %></div><% } %>
     <form id="nodeEditForm" method="post" action="/nodes/<%= node.id %>/edit" class="<%= apiMode === 'password' ? 'auth-password-active' : 'auth-token-active' %>">
       <div class="form-grid">
         <div class="field">
@@ -82,6 +87,13 @@
           <label>Endpoint в подписке (необязательно)</label>
           <input name="subscription_endpoint" value="<%= node.subscription_endpoint || '' %>" placeholder="vpn.example.com:10443 или [2001:db8::1]:10443" maxlength="320" autocomplete="off" />
           <small class="hint">Адрес подключения клиента, включая AmneziaWG. Пусто — автоматически из 3x-ui и перенаправления. Ручной Endpoint приоритетнее обоих, применяется ко всем ссылкам этого узла. API, SNI, Host, путь, ключи и серверный порт не меняются. Адрес должен вести на работающий TCP/UDP-порт нужного протокола.</small>
+        </div>
+
+        <div class="field half js-node-3xui-only <%= is3xuiFamily ? '' : 'hidden' %>" <%= is3xuiFamily ? '' : 'hidden style="display:none!important"' %>>
+          <label>IP сервера для API (необязательно)</label>
+          <input name="api_connect_ip" value="<%= node.api_connect_ip || '' %>" placeholder="IPv4 или IPv6 без порта" autocomplete="off" />
+          <button type="button" class="secondary" data-api-ip-from-endpoint>Взять IP из Endpoint</button>
+          <small class="hint">При нескольких независимых панелях за одним доменом укажи IP именно этой панели. HTTPS-домен, Host и SNI сохраняются, проверка сертификата не отключается. Пусто — обычный DNS. Это отдельная настройка от VPN Endpoint.</small>
         </div>
 
         <div class="field half js-node-3xui-only <%= is3xuiFamily ? '' : 'hidden' %>" <%= is3xuiFamily ? '' : 'hidden style="display:none!important"' %>>
@@ -182,7 +194,7 @@
           <small class="hint">При сохранении панель проверит этот ID и загрузит параметры и порт выбранного inbound. Для локальной Docker-панели порт должен быть опубликован: команда на сервере x-ui ports. Случайный порт не назначается.</small>
         </div>
 
-        <% if (nodeType === '3xui') { %>
+        <% if (nodeType === '3xui' && !isNativeAwg) { %>
         <div class="field full js-node-3xui-only js-node-3xui-editable-only">
           <input type="hidden" name="udp443_controls" value="1" />
           <label class="switch-row compact"><input type="checkbox" name="allow_udp443" value="1" <%= node.allow_udp443 == null || Number(node.allow_udp443) === 1 ? 'checked' : '' %> /><span><strong>UDP/443 · сохранять исходный Vision / Mux</strong><small>Не добавляет суффикс -udp443 к обычному Vision: flow сохраняется как в 3x-ui. Уже заданный исходный -udp443 разрешён. В существующем Mux — skip; без галочки — стандартный Vision и reject. Mux не включается, это не общий firewall.</small></span></label>
@@ -192,6 +204,7 @@
         </div>
         <% } %>
 
+        <% if (!isNativeAwg) { %>
         <div class="field full js-node-3xui-only source-subscription-controls <%= is3xuiFamily ? '' : 'hidden' %>" <%= is3xuiFamily ? '' : 'hidden style="display:none!important"' %>>
           <div class="source-subscription-controls-head">
             <div>
@@ -212,6 +225,7 @@
           </div>
         </div>
 
+        <% } %>
         <% if (!inboundPreview || inboundUsesSni) { %>
         <div class="field js-node-3xui-only js-node-3xui-editable-only <%= nodeType === '3xui' ? '' : 'hidden' %>" <%= nodeType === '3xui' ? '' : 'hidden style="display:none!important"' %>>
           <h3 style="margin:10px 0 0;">SNI в подписках</h3>
@@ -246,10 +260,10 @@
       <% if (nodeType === '3xui' && inboundPreview) { %>
         <div class="field">
           <h3 style="margin:18px 0 0;">Параметры Inbound #<%= inboundPreview.id || node.inbound_id %></h3>
-          <small class="hint">Показаны только поля выбранного inbound, его транспорта <strong><%= currentNet || 'raw' %></strong> и security <strong><%= currentSecurity || 'none' %></strong>. Protocol и Transport импортированы из 3x-ui и защищены от случайной подмены.</small>
+          <small class="hint">Параметры выбранного inbound из 3x-ui. Транспорт: <strong><%= currentNet || 'raw' %></strong><%= isNativeAwg ? '. Нативный AWG; настройки Xray не применяются.' : '; security: ' + (currentSecurity || 'none') %></small>
         </div>
         <div class="form-grid inbound-editor-box">
-          <div class="field third"><label>Port</label><input name="inbound_port" type="number" min="1" max="65535" value="<%= inboundPreview.port || '' %>" /><small class="hint">80 и 443 запрещены для inbound: они зарезервированы под панель/Caddy.</small></div>
+          <div class="field third"><label><%= isNativeAwg ? 'UDP-порт на сервере' : 'Port' %></label><input name="inbound_port" type="number" min="1" max="65535" value="<%= inboundPreview.port || '' %>" <%= isNativeAwg ? 'readonly' : '' %> /><small class="hint"><%= isNativeAwg ? 'Источник — 3x-ui. Endpoint клиента может отличаться при настроенном перенаправлении.' : '80 и 443 запрещены для inbound: они зарезервированы под панель/Caddy.' %></small></div>
           <div class="field third">
             <label>Protocol</label>
             <input value="<%= String(inboundPreview.protocol || 'vless').toUpperCase() %>" readonly />
@@ -260,15 +274,18 @@
             <label>Transport / Security</label>
             <div class="inline-select-grid">
               <input value="<%= currentNet === 'httpupgrade' ? 'HTTP Upgrade' : (currentNet === 'xhttp' ? 'xHTTP' : currentNet.toUpperCase()) %>" readonly />
-              <input value="<%= (currentSecurity || 'none').toUpperCase() %>" readonly />
+              <input value="<%= isNativeAwg ? 'Нативный AWG' : (currentSecurity || 'none').toUpperCase() %>" readonly />
             </div>
-            <input type="hidden" name="inbound_network" id="inboundNetworkSelect" value="<%= currentNet || 'raw' %>" />
+            <% if (!isNativeAwg) { %><input type="hidden" name="inbound_network" id="inboundNetworkSelect" value="<%= currentNet || 'raw' %>" /><% } %>
             <small class="hint">Оба значения прочитаны из Inbound #<%= inboundPreview.id || node.inbound_id %>.</small>
           </div>
           <div class="field">
-            <div class="alert ok">Inbound синхронизирован с 3x-ui. Aggregator будет добавлять, импортировать и считать трафик клиентов только в Inbound #<%= inboundPreview.id || node.inbound_id %>.</div>
+            <div class="alert <%= freshInbound ? 'ok' : 'warning' %>"><%= freshInbound ? 'Параметры inbound проверены по API.' : 'Показана сохранённая копия; актуальность не подтверждена.' %> Клиенты и трафик относятся к Inbound #<%= inboundPreview.id || node.inbound_id %>.</div>
           </div>
-          <div class="field half"><label>Remark</label><input name="inbound_remark" value="<%= inboundPreview.remark || '' %>" /></div>
+          <div class="field half"><label>Remark</label><input name="inbound_remark" value="<%= inboundPreview.remark || '' %>" <%= isNativeAwg ? 'readonly' : '' %> /></div>
+          <% if (isNativeAwg) { %>
+            <div class="field full"><label>Параметры сервера AmneziaWG из 3x-ui</label><pre class="inbound-json-editor" style="white-space:pre-wrap;overflow-wrap:anywhere"><%= JSON.stringify(inboundPreview.awgServer, null, 2) %></pre><small class="hint">Загружаются автоматически. Серверный private key и HeaderProtectionKey не показываются. Клиентские ключи берутся только из выбранного inbound. Изменения сервера выполняйте в 3x-ui, затем нажмите кнопку загрузки параметров.</small></div>
+          <% } else { %>
 
           <% if (inboundUsesSni) { %>
           <div class="field half"><label>SNI / ServerName</label><input id="inboundSniInput" name="inbound_sni" value="<%= inboundPreview.sni || '' %>" placeholder="www.apple.com" /></div>
@@ -365,6 +382,7 @@
               <span><strong>Сохранить эти параметры в 3x-ui</strong><small>Без этой галочки параметры выше только показываются. С галочкой агрегатор отправит изменения в 3x-ui.</small></span>
             </label>
           </div>
+          <% } %>
         </div>
       <% } else if (isRemnawave) { %>
         <div class="alert ok">Remnawave не использует inbound editor Aggregator. После сохранения нажми «Проверить». Создание, обновление и удаление пользователей выполняются через API, а ссылки из их Remnawave subscription добавляются в общую SUB/JSON.</div>
@@ -415,6 +433,7 @@
 </div>
 
 <script src="/js/node-edit-preview.js?v=272" defer></script>
+<script src="/js/node-api-ip.js?v=2726" defer></script>
 
 <script>
 (function(){

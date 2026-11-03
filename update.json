@@ -1,11 +1,15 @@
 {
-  "version": "2.7.25",
-  "name": "Nexus Panel 2.7.25 — REALITY compatibility and manual Endpoint",
+  "version": "2.7.26",
+  "name": "Nexus Panel 2.7.26 — parameter sync and fixed API server",
   "repository": "https://github.com/dagmagnat/Nexus-Panel",
   "archive_url": "https://github.com/dagmagnat/Nexus-Panel/archive/refs/heads/main.zip",
   "archive": "Nexus-Panel-main.zip",
   "filename": "Nexus-Panel-main.zip",
   "notes": [
+    "Исправлена AWG-сериализация RandomTrailers/DisableCookies: on/off вместо true/false, как требует официальный парсер. Добавлены проверки диапазонов параметров.",
+    "Синхронизация и проверка параметров выбранного inbound при открытии редактора и по отдельной кнопке. Ручной Endpoint не меняется; устаревшая копия при недоступном API явно отмечена.",
+    "IP сервера для API: привязка доменного HTTPS URL к конкретному IPv4/IPv6 при нескольких независимых панелях за одним доменом. SNI/Host/проверка сертификата сохраняются. Кнопка копирования IP из Endpoint.",
+    "AmneziaWG показан как UDP; скрыты неприменимые Xray RAW/Sniffing/REALITY/Mux поля. Предупреждения о нескольких IP API-домена и повторяющемся ручном Endpoint у AWG.",
     "3x-ui: обновление параметров inbound при выдаче подписки после устаревания минутного кэша; защита от подмены ID, ограничение одновременных запросов и повторов при сбое API.",
     "REALITY: URI hint ML-KEM как в новых 3x-ui, с выключателем в узле; исходный Vision Flow больше не заменяется автоматически на -udp443. Native Xray JSON сохраняет mldsa65Verify.",
     "Ручной Endpoint в добавлении/редакторе узла 3x-ui: домен:порт, IPv4:порт, [IPv6]:порт. Применяется к SUB и JSON, включая AmneziaWG INCY, отдельно от API панели и SNI.",

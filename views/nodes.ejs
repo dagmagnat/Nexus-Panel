@@ -215,6 +215,13 @@
         </div>
 
         <div class="field half js-node-3xui-only">
+          <label>IP сервера для API (необязательно)</label>
+          <input name="api_connect_ip" placeholder="IPv4 или IPv6 без порта" autocomplete="off" />
+          <button type="button" class="secondary" data-api-ip-from-endpoint>Взять IP из Endpoint</button>
+          <small class="hint">Для домена с несколькими независимыми панелями закрепляет API на выбранном IP. URL, HTTPS/SNI и сертификат остаются доменными. Пусто — обычный DNS. VPN Endpoint задаётся отдельно.</small>
+        </div>
+
+        <div class="field half js-node-3xui-only">
           <label>Panel Path</label>
           <input name="panel_path" placeholder="/qwerty123" />
         </div>
@@ -1426,6 +1433,7 @@ document.addEventListener('DOMContentLoaded', () => {
 </script>
 
 <%- include('partials_footer') %>
+<script src="/js/node-api-ip.js?v=2726" defer></script>
 
 <script>
 (function() {

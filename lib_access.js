@@ -29,7 +29,7 @@ function permissionFor(method, url) {
   if (/^\/clients(?:\/\d+(?:\/summary\.json)?|\/usage\.json)?$/.test(url) && read) return 'clients.read';
   if (/^\/clients\/\d+\/delete$/.test(url)) return 'clients.delete';
   if (!read && (url === '/clients' || /^\/clients\/\d+\/(?:sync|edit|extend|toggle|traffic\/reset|devices\/reset|devices\/\d+\/delete)$/.test(url) || /^\/client-(?:groups|tags)(?:\/\d+\/delete)?$/.test(url))) return 'clients.write';
-  if (/^\/nodes(?:\/\d+(?:\/(?:edit|check|sync-clients|create-missing-clients|toggle|delete|clone|clone-remnawave|renew-support|h1cloud-transport|remnawave-resources\.json))?|\/reorder)?$/.test(url) || /^\/auto-select-profiles\/\d+\/(?:edit|toggle|delete)$/.test(url)) return 'nodes.manage';
+  if (/^\/nodes(?:\/\d+(?:\/(?:edit|check|refresh-parameters|sync-clients|create-missing-clients|toggle|delete|clone|clone-remnawave|renew-support|h1cloud-transport|remnawave-resources\.json))?|\/reorder)?$/.test(url) || /^\/auto-select-profiles\/\d+\/(?:edit|toggle|delete)$/.test(url)) return 'nodes.manage';
   if (/^\/routing(?:\/geodata-index)?$/.test(url)) return 'routing.manage';
   // No wildcard grants for diagnostics, backup, SSH/VPN tools, host operations,
   // credential settings, Telegram administration or newly introduced routes.

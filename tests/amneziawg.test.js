@@ -30,7 +30,7 @@ test('AWG 3.1 preserves inbound identity, ranges, DNS, IPv6, MTU and every obfus
     'Address = 10.8.1.2/32, fd00::2/128', 'MTU = 1396', 'DNS = 1.1.1.1, 2606:4700:4700::1111',
     'H1 = 1-100', 'I5 = <b 0x1234>', `HeaderProtectionKey = ${key(3)}`, 'ContentPaddingAddition = 16-52',
     'RekeyAfterTime = 114-132', 'RekeyTimeout = 4-8', 'RejectAfterTime = 164-214', 'KeepaliveTimeout = 8-15',
-    'MaxHandshakeAttempts = 20-40', 'RandomTrailers = true', 'DisableCookies = true',
+    'MaxHandshakeAttempts = 20-40', 'RandomTrailers = on', 'DisableCookies = on',
     'Endpoint = [2001:db8::1]:51820', 'PersistentKeepalive = 15-25', 'AllowedIPs = 0.0.0.0/0, ::/0']) assert.ok(conf.includes(text), text);
   assert.ok(!conf.includes(key(2)), 'server private key must never be exported');
   assert.ok(!conf.includes(key(7)), 'another peer must never be exported');
@@ -56,4 +56,20 @@ test('local Docker AmneziaWG requires a published UDP port', () => {
   const node = { panel_url: 'http://local-3xui:2053', inbound_id: 42 };
   assert.throws(() => validateLocalInboundPort(node, fixture(), { NEXUS_LOCAL_XUI_VPN_PORTS: '51820/tcp' }), /51820\/udp/);
   validateLocalInboundPort(node, fixture(), { NEXUS_LOCAL_XUI_VPN_PORTS: '51820/udp' });
+});
+
+test('AWG booleans follow the upstream parser on/off syntax; invalid ranges fail before export', () => {
+  for (const value of [true,1,'1','true','on','ON']) assert.equal(awg.booleanConfig(value,'RandomTrailers'),'on');
+  for (const value of [false,0,'0','false','off','OFF']) assert.equal(awg.booleanConfig(value,'DisableCookies'),'off');
+  assert.throws(()=>awg.booleanConfig('maybe','RandomTrailers'),/RandomTrailers/);
+  const inbound=fixture();
+  inbound.settings.server.randomTrailers=false;
+  assert.match(awg.clientConfig(inbound,'uuid-a','alice','vpn.example',50669,'AWG'),/^RandomTrailers = off$/m);
+  inbound.settings.server.jmin=100; inbound.settings.server.jmax=50;
+  assert.throws(()=>awg.validateServer(inbound),/Jmin/);
+  inbound.settings.server.jmax=200; inbound.settings.server.rekeyTimeout='9-6';
+  assert.throws(()=>awg.validateServer(inbound),/rekeyTimeout/);
+  const visible=awg.publicServerValues(fixture());
+  assert.equal(visible.privateKey,undefined);assert.equal(visible.headerProtectionKey,undefined);
+  assert.equal(visible.i1,'задан (6 символов)');
 });
