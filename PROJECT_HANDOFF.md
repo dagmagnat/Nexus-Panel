@@ -1,8 +1,8 @@
 # Nexus Panel — журнал продолжения разработки
 
-Последнее обновление: **2026-11-03 — 2.7.26**
+Последнее обновление: **2026-11-05 — 2.7.28**
 
-Рабочая папка этого релиза: C:/Users/user/Documents/Codex/2026-09-04/new-chat/work/parameter-sync-2.7.26/Nexus-Panel-main. Основа — полный 2.7.25 из work/reality-compat-2.7.25. Предыдущие ZIP не менялись. Не продолжать разработку из старой одноимённой папки в корне new-chat: там оставлена 2.7.22 с Docker hotfix.
+Рабочая папка этого релиза: C:/Users/user/Documents/Codex/2026-09-04/new-chat/work/vision-sync-2.7.28/Nexus-Panel-main. Основа — рабочая 2.7.27, архив изменений собирается относительно immutable outputs/Nexus-Panel-2.7.26-source.zip. Предыдущие ZIP не менялись. Не продолжать разработку из старой одноимённой папки в корне new-chat: там оставлена 2.7.22 с Docker hotfix.
 
 Этот файл нужно читать первым при продолжении работы из другой учётной записи или нового чата. После каждой доработки обновляйте разделы «Последнее изменение», «Изменённые файлы» и «Проверки».
 
@@ -22,6 +22,38 @@
 - Выполнено в 2.7.17 после запроса «доработай и исправь ошибки»: padding=0 и desktop flex/100dvh растягивали пустой список; добавлены empty-state/компактная высота, действия перенесены в заголовок. Локальные HTTP+Edge 1440/390, переход к форме и отсутствие overflow проверены, screenshots просмотрены. Исходный пункт выше сохранён как история запроса.
 
 ## Последнее изменение
+
+2026-11-05 — Nexus 2.7.28: Flow Vision, создание/attach/исправление существующих клиентов.
+
+- Пользователь подтвердил: у большинства созданных пользователей Flow был пустым, ручной Vision восстановил работу. Под Full Vision понимается xtls-rprx-vision. Исправляем исходники Nexus, без изменений live VPS/пользователей и без обещания, что это причина всех сетевых отвалов.
+- База — рабочая2.7.27, предыдущие исходники/ZIP сохранены. Изменения в work/vision-sync-2.7.28/Nexus-Panel-main. При упаковке сравнение с immutable2.7.26-source ZIP; архив только changed/new, совместим с26/27.
+- Подтверждённые пути: attach глобального клиента с пустым Flow +skip_existing; batch найденные клиенты вообще не синхронизировали Flow; old inbound API не проходил общую нормализацию; fallback Flow первого клиента в URI маскировал реальный пустой Flow нужного.
+- app.js: getDefaultClientFlowForInbound включает TCP/RAW TLS+REALITY, уважает disableFlow; normalizeLegacyClientFlowPayload для add/update старого и нового API. Стандартный серверный Vision, без суффикса udp443. repairClientVisionOnNode адресует конкретный inbound через его client update и readback, только matching UUID. Batch использует свежий snapshot операции, исправные не перечитываются поштучно. После нового create/update confirmClientVision проверяет реальный Flow. Несохранение не выдаётся за успех.
+- Новый Clients update передаёт inboundIds query (проверено по официальному controller/service v3.11.0); при неподдерживаемом выбранном транспорте сохраняет current globalFlow вместо очистки. Scoped legacy client update для отдельного исправления не должен переписывать UUID/квоты/subId. H1Cloud provider-managed исключён. XHTTP без Encryption/WS/gRPC/AWG/disableFlow не получают принудительный Vision.
+- URI/pickClientFlow exact match с пустым flow больше не использует чужой flow. Нет автоперезапуска ядра/автопонижения версий/массовой записи во время GET подписки. После обновления существующие TCP записи исправляются кнопкой Создать недостающих; sourceparams refresh остаётся чтением.
+- views/nodes.ejs поясняет исправление существующих TCP клиентов; результаты массовых операций показывают remoteUpdated. Новые tests/vision-lifecycle-http.test.js: 2 настоящих HTTP сценария (legacy/global+perlink), add-node create-all, new client, global attach, correction, idempotency, quota+subId unchanged, XHTTP isolation, actual SUBflow, refusal readback, TLS, scopeddelete, CSRF, UUID conflict.
+- Целевой npm run test:vision20/20 (новые2+редактор4+bulkremove+AWG+REALITY). Full285:256pass/10старыхfail/19skip, имена10 совпадают с27. Среди них прежний inbound999 diagnostic; добавление этого файла к target даёт20pass/1oldfail, основной script его не включает. JS/EJS20/Bash syntax. Логи work/vision-{final-target,full}-2.7.28.log; после оптимизации snapshot full повторён: те же256pass/10oldfail/19skip, имена fail совпали с27.
+- Официальные источники: https://raw.githubusercontent.com/MHSanaei/3x-ui/v3.11.0/internal/web/controller/client.go (inboundIds filter), service/client_crud.go/client_link.go/client_inbound_apply.go (FlowOverride/Attach); https://xtls.github.io/en/config/outbounds/vless.html. Копии без credentials work/vision-upstream. Новые mock APIs моделируют2.5.8 и3.11.0; реальное старое ядро/все версии панелей не проверялись.
+- outputs/Nexus-Panel-2.7.28-flow-vision-patch.zip и docs/UPDATE_2.7.28.md. apply-vision-update.sh с backup внеbuildcontext, допускает26/27/28, не заменяетCompose/.env/DB. Публикации/установки на VPS не было.
+- Предыдущая диагностика s8 (read-only): configserver/clientmatch;16/16 HTTP204 через реальный Xray26.10.21; память/диск норм; перезапуски5Nov03:00/10:45MSK. Пользователь уточнил: отвалы в обеих сетях. Remove Inbound User не новое удаление (официальный issue7054). Конкретная причина каждого рестарта/сбоя не доказана. Пароль SSH не сохранялся; не помещать его в новые файлы/логи/ответы.
+
+## Предыдущее изменение
+
+2026-11-03 — Nexus 2.7.27, AWG по устройствам; delta только относительно 2.7.26:
+
+- Новая lib_awg_devices: owners/peers/manual_links, устойчивые собственные remote email+UUID на устройство/узел, выделение ключей/IP исходной 3x-ui, без копирования общего peer. Индексы, per-node serialization, same-device single-flight, read-back, защита от повторяющихся ключей/IP и гонки удаления устройства во время API-запроса.
+- Старый общий AWG detach только от выбранного inbound, paid VLESS сохраняется. Сохранён контекст API для отзыва после удаления узла/смены сервера, текущие credentials при том же network identity. Смена сервера сначала отзывает старое. Rename общего аккаунта учитывается; restore не присоединяет чужой UUID.
+- Отдельная настройка defaultOFF. Существующая device registry/limit принудительно используются для AWG; только ручной reset policy. Без HWID нет общего AWG; доступны персональные JSON/SUB token links и .conf из окна устройств. Token client-scoped/40hex/hash+encrypted, создание registry+link атомарно; после delete/reset token невалиден. Bearer/private key copy физически не предотвращается.
+- Durable revoke triggers на device/map/client/node delete; flush при device delete/reset, retries startup/30s. API failure не подтверждает отзыв, блокирует новую AWG-выдачу на affected node. Удаление собственного peer проверяется повторным чтением inbound. ModeOFF сначала disables personal, затем restores shared; перед rollback дождаться ошибок0.
+- Accounting сохраняет baseline+монотонные peer deltas/history при remote reset/deletion; local traffic reset меняет offset, не сбрасывает общий VLESS. Общая node quota делится между peers, reductions before increases; unused rest redistributed30s, возможна короткая пауза. Zero-byte rounded budget disables peer (0totalGB не превращается в unlimited). Desired-state write dedup. Это не атомарная гарантия каждого сетевого байта при удалённой гонке/offline.
+- app.js adapters/subscription/direct file/traffic/import/backup/settings/device routes; views/settings+clients, lib_access, tests. Existing VM fixtures client-activation/expired-support получили stub clientHasDeviceAwg=false; product behavior там не изменён. NODE_PATH тестовый runtime вне ZIP.
+- Целевые test:awg-devices15/15 (9manager+1HTTP+5native). Optional HTTP+Edge1440/390 прошёл, 4 screenshots work/ui-qa/2.7.27 просмотрены, нет overflow/pageerrors. Затем добавлена zero-budget regression; она прошла в финальном полном наборе. Повторно JS/EJS20/Bash syntax. Логи work/awg-devices-final-target-2.7.27.log и work/awg-devices-full-final-2.7.27.log.
+- Full283:254pass/10fail/19skip. Имена10fail совпадают с immutable2.7.26 baseline: PythonPATH×3, apiGet VM fixture, inbound999 diagnostic, CSS count, grace static/device grace, auto-select syntax, workspace RBAC. Новых падений нет, fullgreen не заявлять. Docker/VPS/iPhone/realAWGhandshake не проверены.
+- outputs/Nexus-Panel-2.7.27-AWG-devices-delta.zip: только файлы, hash-different/new относительно outputs/Nexus-Panel-2.7.26-source.zip + DELTA_FILES.txt. Сборщик work/package_awg_devices_2_7_27.ps1 проверяет версии, отсутствие DB/.env/dependencies/runtime/unchanged, roundtrip SHA. apply-awg-devices-update.sh принимает только installed26/27, backup outsidebuildcontext; старый broadhelper для delta не использовать. Старые ZIP не менять, полный27 не запрошен.
+- Последнее уточнение скриншотов Happ: live JSON пользователя проверен read-only, DE/NL/SE имеют streamSettings.security=reality +realitySettings, Anti-jammer XHTTP/TLS. Надпись TCP не означает отсутствие REALITY; точная причина различия label приложения не доказана. Не подменять это утверждением об успешном VPN-handshake.
+- Релиз подготовлен локально, не опубликован в GitHub и не развёрнут. docs/UPDATE_2.7.27.md содержит установку, включение/миграцию/ограничения/откат.
+
+## Предыдущее изменение
 
 2026-11-03 — Nexus 2.7.26, AWG boolean, синхронизация и API IP:
 

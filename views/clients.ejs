@@ -1356,6 +1356,7 @@
       <div class="device-details-head">
         <div>
           <h2>Устройства клиента</h2>
+          <% if (client.awg_devices_enabled) { %><form method="post" action="/clients/<%= client.id %>/devices/create"><button type="submit" class="secondary">Создать ссылку устройства без HWID</button></form><% } %>
           <p class="muted"><%= client.login %> · <strong><%= clientDeviceUsage(client) %></strong></p>
         </div>
         <% if ((client.devices || []).length) { %>
@@ -1378,6 +1379,8 @@
                 <span><%= deviceMeta(device) || 'Данные платформы не переданы' %></span>
                 <small>Последнее обновление: <%= relativeDeviceSeen(device.last_seen_at) %> · запросов: <%= device.request_count || 1 %></small>
                 <small>HWID: <code><%= device.hwid_hint || 'скрыт' %></code></small>
+                <% if (device.personal_json) { %><small><a href="<%= device.personal_json %>">JSON устройства</a> · <a href="<%= device.personal_sub %>">SUB устройства</a></small><small>Ссылка занимает один слот. Передавайте только владельцу этого устройства.</small><% } %>
+                <% (device.personal_awg || []).forEach(item=>{ %><small><a href="<%= item.url %>">Скачать AWG .conf — <%= item.name %></a></small><% }) %>
               </div>
               <form method="post" action="/clients/<%= client.id %>/devices/<%= device.id %>/delete" onsubmit="return confirm('Удалить это устройство и освободить слот?')">
                 <input type="hidden" name="back" value="/clients?q=<%= encodeURIComponent(client.login || '') %>&edit=<%= client.id %>" />

@@ -1,6 +1,6 @@
 {
   "name": "nexus-panel",
-  "version": "2.7.26",
+  "version": "2.7.28",
   "description": "Nexus Panel — 3x-ui and Remnawave aggregation panel with exact inbound sync, subscriptions and traffic monitoring",
   "homepage": "https://github.com/dagmagnat/Nexus-Panel#readme",
   "bugs": {
@@ -22,6 +22,7 @@
     "check:spectrum": "npm run predev && node scripts/http-check-spectrum.js",
     "check:views": "node scripts/check-views.js",
     "test": "node --test tests/*.test.js",
+    "test:awg-devices": "node --test tests/awg-devices.test.js tests/awg-devices-http.test.js tests/amneziawg.test.js tests/amneziawg-http.test.js",
     "test:node-traffic": "node --test tests/node-traffic.test.js tests/node-traffic-http.test.js tests/node-quota-preservation.test.js tests/remnawave-live-usage.test.js",
     "test:clients": "node --test tests/client-directory.test.js tests/device-refresh.test.js tests/client-activation.test.js tests/node-traffic.test.js tests/node-traffic-http.test.js tests/node-quota-preservation.test.js tests/remnawave-live-usage.test.js",
     "test:performance": "node --test tests/performance.test.js tests/performance-http.test.js",
@@ -36,7 +37,8 @@
     "test:settings-transfer": "node --test tests/settings-transfer.test.js",
     "test:xhttp-external-proxy": "node --test tests/xhttp-external-proxy.test.js",
     "test:amneziawg": "node --test tests/amneziawg.test.js tests/amneziawg-http.test.js tests/subscription-links.test.js tests/local-inbound-port.test.js",
-    "test:subscription-compat": "node --test tests/reality-compat.test.js tests/subscription-endpoint.test.js tests/client-node-editor-http.test.js tests/node-udp443.test.js tests/subscription-portal-traffic.test.js tests/xhttp-external-proxy.test.js tests/amneziawg.test.js tests/amneziawg-http.test.js tests/node-api-transport.test.js"
+    "test:subscription-compat": "node --test tests/reality-compat.test.js tests/subscription-endpoint.test.js tests/client-node-editor-http.test.js tests/node-udp443.test.js tests/subscription-portal-traffic.test.js tests/xhttp-external-proxy.test.js tests/amneziawg.test.js tests/amneziawg-http.test.js tests/node-api-transport.test.js",
+    "test:vision": "node --test tests/vision-lifecycle-http.test.js tests/client-node-editor-http.test.js tests/bulk-remove-node.test.js tests/awg-devices.test.js tests/awg-devices-http.test.js tests/reality-compat.test.js"
   },
   "dependencies": {
     "better-sqlite3": "11.10.0",

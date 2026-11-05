@@ -139,6 +139,9 @@
           </div>
 
           <div class="happ-section-title">2. Устройства и блокировки</div>
+          <input type="hidden" name="awg_device_controls" value="1" />
+          <label class="switch-row compact"><input type="checkbox" name="awg_device_peers_enabled" value="1" <%= typeof awgDevicePeersEnabled !== 'undefined' && awgDevicePeersEnabled ? 'checked' : '' %> /><span><strong>Отдельный AWG-конфиг на устройство</strong><small>Одна подписка, отдельные ключи и IP для каждого HWID. Действует лимит устройств клиента, автоматический сброс заменяется ручным. Общий старый AWG-конфиг отзывается; приложение без HWID получает AWG только по персональной ссылке из «Устройства». Отзыв/срок/квота сверяются в фоне каждые 30 секунд; сбой API откладывает отзыв и новую AWG-выдачу. Копирование ключа физически не блокируется.</small></span></label>
+          <% if (typeof awgDeviceSyncError !== 'undefined' && awgDeviceSyncError) { %><div class="alert warning">Синхронизация устройств AWG: <%= awgDeviceSyncError %></div><% } %>
           <div class="subscription-device-refresh-policy">
             <label>Смена приложения при обновлении подписки
               <select name="subscription_device_refresh_mode">

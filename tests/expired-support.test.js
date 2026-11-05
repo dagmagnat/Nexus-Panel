@@ -215,6 +215,7 @@ test('real subscription policy returns notice first and support only; active sub
   const h = harness(t), builds = [];
   Object.assign(h.ctx, {
     isClientActivationPending: () => false, isClientExpired: c => c.expiry_time > 0 && c.expiry_time <= Date.now(),
+    clientHasDeviceAwg: () => false,
     registerSubscriptionDevice: () => ({ allowed: true }), applySubscriptionDeviceHeaders: () => {},
     isExpiredSubscriptionNoticeEnabled: () => true, getSubscriptionPolicyNodesByIds: ids => ids.map(id => h.db.prepare('SELECT * FROM nodes WHERE id=?').get(id)),
     syncSupportPair: async () => {}, enforceExpiredClientRemoteState: async () => {},

@@ -1867,7 +1867,10 @@ app.post('/clients/traffic/reset-selected',requireAuth,async(req,res) => {
       if (action.isCancelled()) break;
       const map=maps[i],node=db.prepare('SELECT * FROM nodes WHERE id=?').get(map.node_id),client=db.prepare('SELECT * FROM clients WHERE id=?').get(map.client_id);
       try {
-        if (isRemnawaveNode(node)) {
+        if(awgDevicesEnabled() && require('./lib_amneziawg').isAmneziaWG(getCachedInbound(node))) {
+          await awgDevices.sweep();awgDevices.reset(client.id,node.id);
+          zeroClientNodeTraffic(map.id,client.id,node.id);setImmediate(scheduleAwgDeviceReconcile);
+        } else if (isRemnawaveNode(node)) {
           const user=await getRemnawaveUserByUuid(node,map.remote_uuid);
           if (!user) throw new Error('Пользователь не найден в Remnawave.');
           // Only an explicit all-node reset may touch a shared native account counter.
@@ -2818,13 +2821,23 @@ function registerSubscriptionDevice(req, clientRow, options = {}) {
   // An activation-on-first-device client must be bound even when the optional
   // global device registry is turned off. Its first HWID is the proof that a
   // VPN application, rather than a browser page, consumed the subscription.
-  const trackingEnabled = options.forceTracking === true || isSubscriptionDeviceTrackingEnabled();
+  const trackingEnabled = options.forceTracking === true || isSubscriptionDeviceTrackingEnabled() || clientHasDeviceAwg(clientRow.id);
   const limit = getClientDeviceLimit(clientRow);
-  const info = getSubscriptionDeviceFromRequest(req);
+  const personalAwg = clientHasDeviceAwg(clientRow.id);
+  const enforceLimit = personalAwg || isSubscriptionDeviceLimitEnforced();
+  let info = getSubscriptionDeviceFromRequest(req);
+  let invalidDeviceLink=false;
+  if(req.query?.device !== undefined) {
+    const token=String(req.query.device);
+    const hash=createHash('sha256').update(String(clientRow.uuid)+':'+token).digest('hex');
+    const link=/^[a-f0-9]{40}$/.test(token) && db.prepare('SELECT device_id FROM awg_manual_links WHERE client_id=? AND token_hash=?').get(clientRow.id,hash);
+    if(!link)invalidDeviceLink=true;
+    else info={...info,hwid:'m'+token,hwidHint:'ссылка устройства',appName:'Персональная ссылка'};
+  }
   const base = {
     trackingEnabled,
     limit,
-    limitActive: trackingEnabled && limit > 0 && isSubscriptionDeviceLimitEnforced(),
+    limitActive: trackingEnabled && limit > 0 && enforceLimit,
     count: countSubscriptionDevices(clientRow?.id),
     hasHwid: Boolean(info.hwid),
     allowed: true,
@@ -2834,6 +2847,7 @@ function registerSubscriptionDevice(req, clientRow, options = {}) {
     registered: false
   };
 
+  if(invalidDeviceLink)return {...base,allowed:false,reason:'device-link-invalid'};
   if (!trackingEnabled || !clientRow?.id) return base;
 
   if (!info.hwid) {
@@ -2849,9 +2863,9 @@ function registerSubscriptionDevice(req, clientRow, options = {}) {
   const hwidHash = subscriptionDeviceHash(clientRow, info.hwid);
   const upsertDevice = db.transaction(() => {
     applyDeviceRefreshPolicy(db, Number(clientRow.id), hwidHash, {
-      mode: getSetting('subscription_device_refresh_mode', 'manual'),
+      mode: personalAwg ? 'manual' : getSetting('subscription_device_refresh_mode', 'manual'),
       staleHours: getSetting('subscription_device_stale_hours', '72'),
-      allowNew: options.allowNew, limit, enforced: isSubscriptionDeviceLimitEnforced()
+      allowNew: options.allowNew, limit, enforced: enforceLimit
     });
     const existing = db.prepare('SELECT id FROM subscription_devices WHERE client_id = ? AND hwid_hash = ?')
       .get(Number(clientRow.id), hwidHash);
@@ -2875,7 +2889,7 @@ function registerSubscriptionDevice(req, clientRow, options = {}) {
         FROM subscription_devices
         WHERE client_id = ? AND id <= ?
       `).get(Number(clientRow.id), Number(existing.id))?.slot || 0);
-      const blockedByCurrentLimit = limit > 0 && isSubscriptionDeviceLimitEnforced() && slot > limit;
+      const blockedByCurrentLimit = limit > 0 && enforceLimit && slot > limit;
       return {
         allowed: !blockedByCurrentLimit,
         existing: true,
@@ -2889,7 +2903,7 @@ function registerSubscriptionDevice(req, clientRow, options = {}) {
     if (options.allowNew === false) {
       return { allowed: true, existing: false, registered: false, count: currentCount, reason: 'new-device-skipped' };
     }
-    if (limit > 0 && isSubscriptionDeviceLimitEnforced() && currentCount >= limit) {
+    if (limit > 0 && enforceLimit && currentCount >= limit) {
       return { allowed: false, existing: false, registered: false, count: currentCount, reason: 'device-limit' };
     }
 
@@ -2904,7 +2918,9 @@ function registerSubscriptionDevice(req, clientRow, options = {}) {
     return { allowed: true, existing: false, registered: true, count: currentCount + 1 };
   });
 
-  return { ...base, ...upsertDevice() };
+  const result={ ...base, ...upsertDevice() };
+  result.deviceId=result.registered?db.prepare('SELECT id FROM subscription_devices WHERE client_id=? AND hwid_hash=?').get(clientRow.id,hwidHash)?.id:0;
+  return result;
 }
 
 function applySubscriptionDeviceHeaders(res, deviceState) {
@@ -2923,6 +2939,8 @@ function isExpiredSubscriptionNoticeEnabled() {
 }
 
 function getSubscriptionNoticeTitle(kind) {
+  if(kind==='awg-device-required')return '🔐 AWG: нужен HWID или персональная ссылка устройства';
+  if(kind==='awg-device-error')return '⚠️ AWG: синхронизация не завершена, обновите позже';
   const fallback = kind === 'device-limit' ? '⚠️ Превышен лимит устройств' : '⛔ Продлите подписку';
   const key = kind === 'device-limit' ? 'subscription_device_limit_notice_title' : 'subscription_expired_notice_title';
   return sanitizeSubscriptionDeviceText(getSetting(key, fallback), 80) || fallback;
@@ -3436,6 +3454,9 @@ async function buildSubscriptionEntriesForRequest(req, res, clientRow, options =
     forceTracking: activationPending,
     requireHwid: activationPending
   });
+  if(deviceState.reason==='device-link-invalid') {res.status(403);return {entries:[],deviceState,accessState:'device-link-invalid'};}
+  options={...options,awgDeviceId:deviceState.allowed?deviceState.deviceId||0:0,awgDeviceErrors:[]};
+  if(clientHasDeviceAwg(clientRow.id) && !options.awgDeviceId) res.setHeader('x-nexus-awg-device-required','1');
 
   if (activationPending) {
     res.setHeader('x-nexus-activation-required', 'hwid');
@@ -3541,6 +3562,8 @@ async function buildSubscriptionEntriesForRequest(req, res, clientRow, options =
     excludeNodeIds: uniqueList([...explicitExcluded, ...reservedNodeIds]),
     excludePolicyOnly: true
   });
+  if(options.awgDeviceErrors.length) {res.setHeader('x-nexus-awg-sync-error','1');entries.unshift(buildSubscriptionNoticeEntry('awg-device-error'));}
+  else if(clientHasDeviceAwg(clientRow.id) && !options.awgDeviceId)entries.unshift(buildSubscriptionNoticeEntry('awg-device-required'));
   return { entries, deviceState, accessState: 'active', subscriptionExpiryOverride: 0 };
 }
 
@@ -5980,6 +6003,56 @@ const getSubscriptionInbound = createInboundRevalidator({
   onError(node, err) { console.warn('Inbound refresh failed; using last saved parameters, node', Number(node.id), String(err?.code || 'API_ERROR')); }
 });
 
+
+function awgDevicesEnabled() { return getSetting('awg_device_peers_enabled','0') === '1'; }
+async function scheduleAwgDeviceReconcile() {
+  if(!awgDevicesEnabled() && !db.prepare('SELECT 1 FROM awg_device_owners WHERE detached=1 UNION SELECT 1 FROM awg_device_peers WHERE revoked=1 AND removed=0 LIMIT 1').get())return;
+  try {const errors=await awgDevices.sweep();setSetting('awg_device_sync_error',errors.map(e=>'Узел #'+e.nodeId+': '+e.error).join(' | ').slice(0,1500));}
+  catch(e){setSetting('awg_device_sync_error',String(e.message||e).slice(0,500));}
+}
+function clientHasDeviceAwg(clientId) {
+  return awgDevicesEnabled() && db.prepare('SELECT n.* FROM nodes n JOIN client_nodes cn ON cn.node_id=n.id WHERE cn.client_id=? AND n.enabled=1 AND cn.enabled=1').all(clientId)
+    .some(n=>require('./lib_amneziawg').isAmneziaWG(getCachedInbound(n)));
+}
+const awgDevices = require('./lib_awg_devices').createManager({
+  db, enabled: awgDevicesEnabled, readInbound:n=>getInbound(n,SUBSCRIPTION_STATS_TIMEOUT_MS),
+  add:(n,p,state)=>addClientViaNewApi(n,{id:n.inbound_id,settings:JSON.stringify({clients:[{id:p.uuid,email:p.email,subId:randomUUID().replace(/-/g,''),limitIp:0,...state}]})}),
+  update:(n,p,state)=>updateClientViaNewApi(n,p.email,{id:n.inbound_id,settings:JSON.stringify({clients:[{id:p.uuid,email:p.email,...state}]})}),
+  async remove(n,p) {
+    await deleteClientViaNewApi(n,p.email,p.uuid);
+    const inbound=await getInbound(n);
+    const settings=safeParseJsonField(inbound.settings,{});
+    if((settings.clients||[]).some(c=>String(c.email||'').toLowerCase()===p.email.toLowerCase()))throw Error('AWG: ключ остался в выбранном inbound после удаления.');
+  },
+  detachLegacy:(n,o)=>deleteClientFromSpecificNode(n,o.legacy_uuid,o.legacy_email),
+  async restoreLegacy(n,o,c,m) {
+    const existing=await findClientViaNewApi(n,o.legacy_email);
+    if(existing && String(existing.uuid||existing.id||'')!==String(o.legacy_uuid))throw Error('AWG: имя общей учётной записи занято другим UUID; восстановление остановлено.');
+    if(existing) await apiPost(n,'/panel/api/clients/'+encodeURIComponent(o.legacy_email)+'/attach',{inboundIds:[Number(n.inbound_id)]});
+    else await addClientViaNewApi(n,{id:n.inbound_id,settings:JSON.stringify({clients:[{id:o.legacy_uuid,email:o.legacy_email,subId:c.sub_slug,enable:!!c.enabled&&!!m.enabled,expiryTime:c.expiry_time||0,totalGB:Number(m.traffic_gb||0)*1024**3,limitIp:0}]})});
+    const restored=await getInbound(n);
+    const restoredSettings=safeParseJsonField(restored.settings,{});
+    if(!(restoredSettings.clients||[]).some(p=>String(p.email||'').toLowerCase()===o.legacy_email.toLowerCase()))throw Error('AWG: восстановление общей привязки не подтверждено.');
+  },
+  async usage(n,p,inbound) {
+    const stat=findClientStat(inbound,p.uuid,p.email);
+    if(stat && hasTrafficStatFields(stat))return extractTrafficInfoFromClientTraffic(stat);
+    try { return await getClientTrafficFromApi(n,p.email,SUBSCRIPTION_STATS_TIMEOUT_MS,p.uuid); } catch {return null;}
+  },
+  policy(n,c,m) { return {
+    enabled:Number(n.enabled)!==0 && Number(c.enabled)!==0 && Number(m.enabled)!==0 && !isClientExpired(c) && !isClientActivationPending(c),
+    expiryTimeMs:Number(c.expiry_time)||0,
+    limitBytes:getClientNodeLimitBytes(c,{client_node_traffic_gb:m.traffic_gb},0)
+  }; },
+  onUsage(clientId,nodeId,value) {
+    const map=db.prepare('SELECT id FROM client_nodes WHERE client_id=? AND node_id=?').get(clientId,nodeId);
+    if(!map)return;
+    updateClientNodeUsage(map.id,value);
+    nodeTraffic.recordCounter(clientId,nodeId,value);
+    recordClientTrafficSnapshot(clientId,nodeId,value);
+  }
+});
+
 function saveInboundCache(node, inbound) {
   if (!node || !node.id || !inbound) return;
   validateSelectedInbound(node, inbound);
@@ -7038,7 +7111,7 @@ function getDefaultClientFlowForInbound(inbound) {
   const stream = safeParseJsonField(inbound.streamSettings, {});
   const network = normalizeInboundNetwork(stream.network || 'raw');
   const security = String(stream.security || '').toLowerCase();
-  if (protocol === 'vless' && security === 'reality' && ['raw', 'tcp'].includes(network)) return 'xtls-rprx-vision';
+  if (protocol === 'vless' && !inbound.disableFlow && ['tls', 'reality'].includes(security) && ['raw', 'tcp'].includes(network)) return 'xtls-rprx-vision';
   return '';
 }
 
@@ -7067,8 +7140,8 @@ function normalizeClientFlowForInbound(node, client) {
     (network === 'raw' && ['tls', 'reality'].includes(security)) ||
     (network === 'xhttp' && hasVlessEncryption)
   );
-  if (allowsVisionFlow) {
-    client.flow = String(client.flow || getDefaultClientFlowForInbound(inbound) || '').trim();
+  if (allowsVisionFlow && !inbound.disableFlow) {
+    client.flow = String(getDefaultClientFlowForInbound(inbound) || client.flow || '').trim();
   } else if (client.flow !== undefined) {
     delete client.flow;
   }
@@ -7078,6 +7151,12 @@ function normalizeClientFlowForInbound(node, client) {
 function legacyPayloadToClientCreatePayload(node, payload) {
   const client = normalizeClientFlowForInbound(node, normalizeClientFor3xuiV3(extractLegacyClientFromPayload(payload)));
   return { client, inboundIds: [Number(node.inbound_id || payload?.id)].filter(Boolean) };
+}
+
+function normalizeLegacyClientFlowPayload(node, payload) {
+  const settings = safeParseJsonField(payload?.settings, {});
+  if (!Array.isArray(settings.clients)) return payload;
+  return {...payload, settings:JSON.stringify({...settings,clients:settings.clients.map(c=>normalizeClientFlowForInbound(node,{...c}))})};
 }
 
 function legacyPayloadToClientUpdatePayload(payload, node = null) {
@@ -7095,6 +7174,38 @@ async function addClientViaNewApi(node, payload) {
   if (!body.client.email) throw new Error('Не указан email/login клиента для нового API 3x-ui.');
   if (!body.inboundIds.length) throw new Error('Не выбран inbound для нового API 3x-ui.');
   return apiPost(node, '/panel/api/clients/add', body, false);
+}
+
+// Only the selected inbound's flow is repaired. A global client can also belong
+// to XHTTP/AWG; replacing its whole record to repair Flow would affect those links.
+async function repairClientVisionOnNode(node, client, snapshot = null) {
+  if (getNodeType(node) !== NODE_TYPE_3XUI || isH1Cloud3xuiNode(node)) return false;
+  if (!getDefaultClientFlowForInbound(getCachedInbound(node))) return false;
+  const inbound = snapshot || await getInbound(node);
+  const desired = getDefaultClientFlowForInbound(inbound);
+  if (!desired) return false;
+  const settings = safeParseJsonField(inbound.settings, {});
+  const uuid = String(client.id || client.uuid || '');
+  const current = (settings.clients || []).find(c => sameText(c.id || c.uuid, uuid));
+  if (!current) throw new Error('Проверка Vision: клиент отсутствует в выбранном inbound.');
+  if (String(current.flow || '') === desired) return false;
+  const repaired = { ...current, id: uuid, flow: desired };
+  await apiPost(node, '/panel/api/inbounds/updateClient/' + encodeURIComponent(uuid), {
+    id: Number(node.inbound_id), settings: JSON.stringify({clients:[repaired]})
+  }, true);
+  const verified = await getInbound(node);
+  const actual = safeParseJsonField(verified.settings, {}).clients?.find(c => sameText(c.id || c.uuid, uuid));
+  if (!actual || String(actual.flow || '') !== desired) throw new Error('3x-ui не сохранил Vision в выбранном inbound; операция не подтверждена.');
+  return true;
+}
+
+async function confirmClientVision(node, payload, result) {
+  if (getNodeType(node) !== NODE_TYPE_3XUI || isH1Cloud3xuiNode(node) || !getDefaultClientFlowForInbound(getCachedInbound(node))) return result;
+  const wanted = extractLegacyClientFromPayload(payload);
+  const inbound = await getInbound(node);
+  const actual = safeParseJsonField(inbound.settings, {}).clients?.find(c => sameText(c.id || c.uuid, wanted.id || wanted.uuid));
+  if (!actual || actual.flow !== 'xtls-rprx-vision') throw new Error('3x-ui не подтвердил сохранение клиента с Vision. Обновите параметры узла и повторите операцию.');
+  return result;
 }
 
 async function updateClientViaNewApi(node, clientUuidOrEmail, payload) {
@@ -7123,6 +7234,8 @@ async function updateClientViaNewApi(node, clientUuidOrEmail, payload) {
   if (!lookupEmail || !email) throw new Error('3x-ui вернул запись клиента без email/login; обновление отменено.');
 
   const client = normalizeClientFlowForInbound(node, normalizeClientFor3xuiV3({ ...current, ...requested, email }));
+  // An unsupported transport must not clear a shared global record's Vision.
+  if (client.flow === undefined && current.flow !== undefined) client.flow = String(current.flow || '');
   if (require('./lib_amneziawg').isAmneziaWG(getCachedInbound(node))) client.flow = String(current.flow || '');
   assertSupportRemoteIdentity(node, current, requested);
   // A VLESS edit can share this global record with an AWG inbound. Omitted
@@ -7131,7 +7244,7 @@ async function updateClientViaNewApi(node, clientUuidOrEmail, payload) {
     if (!Object.prototype.hasOwnProperty.call(requested, field)) delete client[field];
   }
   for (const key of ['recordId', 'inboundIds', 'inboundTags', 'traffic', 'externalLinks']) delete client[key];
-  return apiPost(node, `/panel/api/clients/update/${encodeURIComponent(lookupEmail)}`, client, false);
+  return apiPost(node, `/panel/api/clients/update/${encodeURIComponent(lookupEmail)}?inboundIds=${Number(node.inbound_id)}`, client, false);
 }
 
 async function attachClientViaNewApi(node, email, inboundIds = null) {
@@ -7376,7 +7489,9 @@ async function deleteClientViaNewApi(node, email, clientUuid = '', timeoutMs = C
 }
 
 async function addClient(node, payload) {
+  payload = normalizeLegacyClientFlowPayload(node, payload);
   if (require('./lib_amneziawg').isAmneziaWG(getCachedInbound(node))) {
+    if(awgDevicesEnabled())return {success:true,deviceManaged:true};
     const result = await addClientViaNewApi(node, payload);
     await getInbound(node); // Cache keys/address allocated by 3x-ui.
     return result;
@@ -7386,21 +7501,21 @@ async function addClient(node, payload) {
   // client in settings.clients without a matching DB record, after which the
   // panel answers `record not found` and may show duplicates.
   if (isH1Cloud3xuiNode(node)) {
-    try { return await addClientViaNewApi(node, payload); }
+    try { return await confirmClientVision(node,payload,await addClientViaNewApi(node, payload)); }
     catch (err) { throw enrich3xuiError(node, err, payload); }
   }
 
   if (is3xuiV3Mode(node)) {
-    try { return await addClientViaNewApi(node, payload); }
+    try { return await confirmClientVision(node,payload,await addClientViaNewApi(node, payload)); }
     catch (err) { if (!isMissingApiEndpointError(err)) throw enrich3xuiError(node, err, payload); }
   }
 
   try {
-    return await apiPost(node, '/panel/api/inbounds/addClient', payload, true);
+    return await confirmClientVision(node,payload,await apiPost(node, '/panel/api/inbounds/addClient', payload, true));
   } catch (err) {
     const enriched = enrich3xuiError(node, err, payload);
     if (shouldFallbackToClientApi(enriched)) {
-      try { return await addClientViaNewApi(node, payload); }
+      try { return await confirmClientVision(node,payload,await addClientViaNewApi(node, payload)); }
       catch (err2) { throw enrich3xuiError(node, err2, payload); }
     }
     throw enriched;
@@ -7408,7 +7523,9 @@ async function addClient(node, payload) {
 }
 
 async function updateClient(node, clientUuid, payload) {
+  payload = normalizeLegacyClientFlowPayload(node, payload);
   if (require('./lib_amneziawg').isAmneziaWG(getCachedInbound(node))) {
+    if(awgDevicesEnabled())return {success:true,deviceManaged:true};
     const result = await updateClientViaNewApi(node, clientUuid, payload);
     await getInbound(node);
     return result;
@@ -7418,16 +7535,16 @@ async function updateClient(node, clientUuid, payload) {
   }
 
   if (is3xuiV3Mode(node)) {
-    try { return await updateClientViaNewApi(node, clientUuid, payload); }
+    try { return await confirmClientVision(node,payload,await updateClientViaNewApi(node, clientUuid, payload)); }
     catch (err) { if (!isMissingApiEndpointError(err)) throw enrich3xuiError(node, err, payload); }
   }
 
   try {
-    return await apiPost(node, `/panel/api/inbounds/updateClient/${encodeURIComponent(clientUuid)}`, payload, true);
+    return await confirmClientVision(node,payload,await apiPost(node, `/panel/api/inbounds/updateClient/${encodeURIComponent(clientUuid)}`, payload, true));
   } catch (err) {
     const enriched = enrich3xuiError(node, err, payload);
     if (shouldFallbackToClientApi(enriched)) {
-      try { return await updateClientViaNewApi(node, clientUuid, payload); }
+      try { return await confirmClientVision(node,payload,await updateClientViaNewApi(node, clientUuid, payload)); }
       catch (err2) { throw enrich3xuiError(node, err2, payload); }
     }
     throw enriched;
@@ -8706,7 +8823,7 @@ async function buildRemnawaveSubscriptionEntries(row, clientRow, includeOffline 
   }
 }
 
-async function buildSubscriptionEntryForRow(row, clientRow, includeOffline = true) {
+async function buildSubscriptionEntryForRow(row, clientRow, includeOffline = true, options = {}) {
   try {
     if (isRemnawaveNode(row)) return buildRemnawaveSubscriptionEntries(row, clientRow, includeOffline);
     if (isH1CloudNode(row)) return buildH1CloudSubscriptionEntries(row, clientRow, includeOffline);
@@ -8714,13 +8831,22 @@ async function buildSubscriptionEntryForRow(row, clientRow, includeOffline = tru
     if (Number(row.client_node_enabled) !== 1) return null;
     if (!includeOffline && row.last_status === 'offline') return null;
 
-    const inbound = await getSubscriptionInbound(row);
+    let inbound = await getSubscriptionInbound(row);
+    let deviceSuffix='';
+    if(awgDevicesEnabled() && require('./lib_amneziawg').isAmneziaWG(inbound)) {
+      if(!options.awgDeviceId)return null;
+      const result=await awgDevices.ensure(db.prepare('SELECT * FROM nodes WHERE id=?').get(row.node_id),clientRow,options.awgDeviceId);
+      if(!result)return null;
+      inbound=result.inbound;
+      row={...row,remote_uuid:result.peer.uuid,remote_email:result.peer.email};
+      deviceSuffix=' · '+clientRow.login+'-Device'+result.peer.slot;
+    }
 
     const subscriptionInfo = await getSubscriptionNodeInfo(row, clientRow, inbound);
     // Parameters were validated/refreshed above; usage reads must not replace them.
 
     const baseNodeName = getNodePublicName(row);
-    const visibleNodeName = buildNodeLimitRemark(baseNodeName, subscriptionInfo);
+    const visibleNodeName = buildNodeLimitRemark(baseNodeName, subscriptionInfo)+deviceSuffix;
     if (isH1Cloud3xuiNode(row)) {
       const remoteEntries = await buildH1Cloud3xuiSubscriptionEntries(
         row,
@@ -8754,6 +8880,7 @@ async function buildSubscriptionEntryForRow(row, clientRow, includeOffline = tru
     }));
   } catch (err) {
     console.error('Build subscription line failed:', err.message);
+    if(awgDevicesEnabled() && options.awgDeviceId) options.awgDeviceErrors?.push(Number(row.node_id));
     return null;
   }
 }
@@ -8834,7 +8961,7 @@ async function buildSubscriptionEntries(clientRow, includeOffline = true, option
     return true;
   });
   const seen = new Set();
-  const results = await Promise.all(rows.map(row => buildSubscriptionEntryForRow(row, clientRow, includeOffline)));
+  const results = await Promise.all(rows.map(row => buildSubscriptionEntryForRow(row, clientRow, includeOffline, options)));
   const entries = [];
 
   for (const item of results) {
@@ -9044,10 +9171,8 @@ function buildVlessRealityLink(node, inbound, uuid, displayName, nodeName, email
 
   appendTransportQuery(query, streamSettings);
 
-  const flow =
-    settings?.clients?.find(c => c.id === uuid || c.email === email)?.flow ||
-    settings?.clients?.[0]?.flow ||
-    '';
+  const selectedFlowClient = settings?.clients?.find(c => c.id === uuid || c.email === email);
+  const flow = selectedFlowClient ? String(selectedFlowClient.flow || '') : '';
 
   if (flow && canUseVlessVision(network, security, settings)) query.set('flow', nodeVisionFlow(flow, node, network, security));
 
@@ -9367,7 +9492,7 @@ async function importClientsFromNode(node) {
 
   return clients
     .map(c => buildRemoteClientRecord(node, inbound, c))
-    .filter(c => c.uuid && c.email);
+    .filter(c => c.uuid && c.email && !String(c.email).startsWith('nxawg_') && !db.prepare('SELECT 1 FROM awg_device_peers WHERE uuid=? OR email=?').get(c.uuid,c.email));
 }
 
 function makeUniqueLogin(baseLogin, existingId = 0) {
@@ -10122,6 +10247,10 @@ function buildNodeLimitRemark(baseName, info) {
 }
 
 async function getSubscriptionNodeInfo(row, clientRow, cachedInbound = null) {
+  if(awgDevicesEnabled() && require('./lib_amneziawg').isAmneziaWG(cachedInbound)) {
+    const value=awgDevices.total(clientRow.id,row.node_id||row.id)||{uploadBytes:0,downloadBytes:0,usedBytes:0};
+    return {...value,inbound:cachedInbound,source:'device-peers',totalBytes:getClientNodeLimitBytes(clientRow,row,0),expiryTimeMs:Number(clientRow.expiry_time)||0,enabled:!!clientRow.enabled};
+  }
   let inbound = cachedInbound || null;
   let source = inbound ? 'cache' : 'local';
   let liveTrafficInfo = null;
@@ -10904,6 +11033,7 @@ async function createExistingClientsOnNode(targetNode, operation = null, options
           if (result.mapCreated) mappingsCreated++;
           if (result.remoteUpdated) remoteUpdated++;
         } else {
+          if (getNodeType(targetNode) === NODE_TYPE_3XUI && await repairClientVisionOnNode(targetNode, {id:match.row.uuid || match.row.id}, getCachedInbound(targetNode))) remoteUpdated++;
           const mapResult = upsertClientNodeMap(
             client,
             targetNode,
@@ -11106,7 +11236,8 @@ async function getClientConfigFromNode(node, clientUuid, clientEmail) {
 
 function pickClientFlow(settings, uuid, fallback = '') {
   const clients = Array.isArray(settings?.clients) ? settings.clients : [];
-  return clients.find(c => c.id === uuid)?.flow || fallback || clients[0]?.flow || '';
+  const selected = clients.find(c => c.id === uuid);
+  return selected ? String(selected.flow || '') : (fallback || clients[0]?.flow || '');
 }
 
 function findCurrentRemoteClient(settings, map, client, opts = {}) {
@@ -12166,6 +12297,8 @@ async function ensureAggregatorClientOnNode(node, client, opts = {}) {
   const comment = String(opts.comment ?? client.comment ?? current?.comment ?? '').trim();
   const flow = current?.flow || client.flow || pickClientFlow(settings, remoteUuid, getDefaultClientFlowForInbound(inbound));
 
+  const flowRepaired = current ? await repairClientVisionOnNode(node, current, remoteAttached ? null : inbound) : false;
+  if (flowRepaired) current.flow = getDefaultClientFlowForInbound(inbound);
   if (current && opts.skip_existing === true) {
     const mapResult = upsertClientNodeMap(client, node, {
       ...current,
@@ -12174,7 +12307,7 @@ async function ensureAggregatorClientOnNode(node, client, opts = {}) {
       subId: current.subId || subId,
       enable: current.enable !== false
     }, trafficGbFromRemoteValue(current.totalGB));
-    return { mapCreated: mapResult.created, remoteCreated: false, remoteUpdated: false, remoteAttached, skippedExisting: true };
+    return { mapCreated: mapResult.created, remoteCreated: false, remoteUpdated: flowRepaired, remoteAttached, skippedExisting: true };
   }
 
   const payload = {
@@ -12220,6 +12353,8 @@ async function ensureAggregatorClientOnNode(node, client, opts = {}) {
           expiryTime
         });
       }
+      const raceFlowRepaired = await repairClientVisionOnNode(node, fresh);
+      if (raceFlowRepaired) fresh.flow = getDefaultClientFlowForInbound(freshInbound);
       if (opts.skip_existing === true) {
         const mapResult = upsertClientNodeMap(client, node, {
           ...fresh,
@@ -12228,7 +12363,7 @@ async function ensureAggregatorClientOnNode(node, client, opts = {}) {
           subId: fresh.subId || subId,
           enable: fresh.enable !== false
         }, trafficGbFromRemoteValue(fresh.totalGB));
-        return { mapCreated: mapResult.created, remoteCreated: false, remoteUpdated: false, remoteAttached, skippedExisting: true };
+        return { mapCreated: mapResult.created, remoteCreated: false, remoteUpdated: raceFlowRepaired, remoteAttached, skippedExisting: true };
       }
       await updateClient(node, fresh.id || remoteUuid, payload);
       remoteUpdated = true;
@@ -12685,6 +12820,10 @@ async function collectAllClientUsageFromNodes() {
     }
 
     if (!inbound && !trafficList.length) return;
+    if(awgDevicesEnabled() && require('./lib_amneziawg').isAmneziaWG(inbound)) {
+      await awgDevices.sweep();
+      return;
+    }
     const nowMs = Date.now();
     // Small local-only transactions amortize disk syncs. Never hold a SQLite
     // write transaction while awaiting a remote API.
@@ -15162,6 +15301,8 @@ app.get('/settings', requireAuth, async (req, res) => {
     subscriptionExpiredNoticeTitle: getSubscriptionNoticeTitle('expired'),
     subscriptionDeviceLimitNoticeTitle: getSubscriptionNoticeTitle('device-limit'),
     subscriptionDeviceRefreshMode: deviceRefreshPolicy(getSetting('subscription_device_refresh_mode','manual')).mode,
+    awgDevicePeersEnabled: awgDevicesEnabled(),
+    awgDeviceSyncError: getSetting('awg_device_sync_error',''),
     subscriptionDeviceStaleHours: deviceRefreshPolicy('',getSetting('subscription_device_stale_hours','72')).staleHours,
     subscriptionExpiredGraceDays: getSubscriptionExpiredGraceDays(),
     subscriptionExpiredGraceNodeIds: getSubscriptionExpiredGraceNodeIds(),
@@ -15353,8 +15494,9 @@ app.post('/settings/subscription-revision/bump', requireAuth, (req, res) => {
 
 app.post('/settings/happ-control', requireAuth, (req, res) => {
   try {
+    const deviceAwg=req.body.awg_device_controls==='1'?req.body.awg_device_peers_enabled==='1':awgDevicesEnabled();
     const devicePolicy = deviceRefreshPolicy(String(req.body.subscription_device_refresh_mode || getSetting('subscription_device_refresh_mode','manual')), req.body.subscription_device_stale_hours ?? getSetting('subscription_device_stale_hours','72'));
-    if (devicePolicy.mode === 'reset-on-refresh' && req.body.subscription_device_refresh_mode === 'reset-on-refresh' && req.body.subscription_device_reset_ack !== '1') throw new Error('Подтверди ослабление лимита устройств для полного сброса при обновлении.');
+    if (!deviceAwg && devicePolicy.mode === 'reset-on-refresh' && req.body.subscription_device_refresh_mode === 'reset-on-refresh' && req.body.subscription_device_reset_ack !== '1') throw new Error('Подтверди ослабление лимита устройств для полного сброса при обновлении.');
     const beforeSnapshot = JSON.stringify({
       showHappLinks: getSetting('show_happ_links', '0'),
       userinfo: getSetting('subscription_userinfo_header', '1'),
@@ -15414,6 +15556,9 @@ app.post('/settings/happ-control', requireAuth, (req, res) => {
     setSetting('subscription_device_limit_enforced', req.body.subscription_device_limit_enforced === '1' ? '1' : '0');
     setSetting('subscription_device_require_hwid', req.body.subscription_device_require_hwid === '1' ? '1' : '0');
     setSetting('subscription_device_refresh_mode', devicePolicy.mode);
+    setSetting('awg_device_peers_enabled',deviceAwg?'1':'0');
+    if(deviceAwg)setSetting('subscription_device_refresh_mode','manual');
+    setImmediate(scheduleAwgDeviceReconcile);
     setSetting('subscription_device_stale_hours', String(devicePolicy.staleHours));
     setSetting('subscription_expired_notice_enabled', req.body.subscription_expired_notice_enabled === '1' ? '1' : '0');
     setSetting('subscription_expired_notice_title', sanitizeSubscriptionDeviceText(req.body.subscription_expired_notice_title, 80) || '⛔ Продлите подписку');
@@ -15796,7 +15941,7 @@ app.post('/settings/telegram-test', requireAuth, async (req, res) => {
 });
 
 function exportBackupPayload(req = null) {
-const tables = ['client_support_identities', 'client_support_grants', 'client_support_sync', 'app_users', 'app_settings', 'nodes', 'auto_select_profiles', 'client_groups', 'client_tags', 'clients', 'subscription_devices', 'client_tag_assignments', 'client_nodes', 'node_inbound_cache', 'sni_profiles', 'telegram_users', 'telegram_orders', 'telegram_tickets', 'telegram_ticket_messages', 'telegram_announcements', 'vpn_hosts', 'vpn_services', 'vpn_clients', 'vpn_jobs'];
+const tables = ['client_support_identities', 'client_support_grants', 'client_support_sync', 'app_users', 'app_settings', 'nodes', 'auto_select_profiles', 'client_groups', 'client_tags', 'clients', 'subscription_devices', 'client_tag_assignments', 'client_nodes', 'node_inbound_cache', 'sni_profiles', 'telegram_users', 'telegram_orders', 'telegram_tickets', 'telegram_ticket_messages', 'telegram_announcements', 'vpn_hosts', 'vpn_services', 'vpn_clients', 'vpn_jobs', 'awg_device_owners', 'awg_device_peers', 'awg_manual_links'];
   const data = {};
   for (const table of tables) data[table] = db.prepare(`SELECT * FROM ${table}`).all();
   return {
@@ -15822,8 +15967,8 @@ function ensureAdminUserExists() {
 
 function restoreBackupPayload(payload) {
   if (!payload || payload.app !== '3xui-aggregator' || !payload.data) throw new Error('Неверный файл резервной копии');
-  const deleteTables = ['client_support_identities', 'client_support_grants', 'client_support_sync', 'vpn_jobs', 'vpn_clients', 'vpn_services', 'vpn_hosts', 'telegram_ticket_messages', 'telegram_tickets', 'telegram_orders', 'telegram_announcements', 'telegram_users', 'sni_profiles', 'node_inbound_cache', 'client_nodes', 'client_tag_assignments', 'subscription_devices', 'clients', 'client_tags', 'client_groups', 'auto_select_profiles', 'nodes', 'app_settings', 'app_users'];
-  const restoreTables = ['client_support_grants', 'client_support_sync', 'app_users', 'app_settings', 'nodes', 'auto_select_profiles', 'client_groups', 'client_tags', 'clients', 'client_support_identities', 'subscription_devices', 'client_tag_assignments', 'client_nodes', 'node_inbound_cache', 'sni_profiles', 'telegram_users', 'telegram_orders', 'telegram_tickets', 'telegram_ticket_messages', 'telegram_announcements', 'vpn_hosts', 'vpn_services', 'vpn_clients', 'vpn_jobs'];
+  const deleteTables = ['client_support_identities', 'client_support_grants', 'client_support_sync', 'vpn_jobs', 'vpn_clients', 'vpn_services', 'vpn_hosts', 'telegram_ticket_messages', 'telegram_tickets', 'telegram_orders', 'telegram_announcements', 'telegram_users', 'sni_profiles', 'node_inbound_cache', 'client_nodes', 'client_tag_assignments', 'subscription_devices', 'clients', 'client_tags', 'client_groups', 'auto_select_profiles', 'nodes', 'app_settings', 'app_users', 'awg_device_owners', 'awg_device_peers', 'awg_manual_links'];
+  const restoreTables = ['client_support_grants', 'client_support_sync', 'app_users', 'app_settings', 'nodes', 'auto_select_profiles', 'client_groups', 'client_tags', 'clients', 'client_support_identities', 'subscription_devices', 'client_tag_assignments', 'client_nodes', 'node_inbound_cache', 'sni_profiles', 'telegram_users', 'telegram_orders', 'telegram_tickets', 'telegram_ticket_messages', 'telegram_announcements', 'vpn_hosts', 'vpn_services', 'vpn_clients', 'vpn_jobs', 'awg_device_owners', 'awg_device_peers', 'awg_manual_links'];
   const columnCache = new Map();
   const tx = db.transaction(() => {
     for (const table of deleteTables) db.prepare(`DELETE FROM ${table}`).run();
@@ -16316,7 +16461,7 @@ app.post('/nodes', requireAuth, async (req, res) => {
 
     if (createExistingClients) {
       const result = await createExistingClientsOnNode(node);
-      message += '. Добавление отсутствующих клиентов в новый узел: всего ' + result.totalClients + ', создано ' + result.remoteCreated + ', уже существовало ' + result.skippedExisting + ', связей ' + result.mappingsCreated + ', конфликтов ' + result.conflicts + ', ошибок ' + result.failed;
+      message += '. Добавление отсутствующих клиентов в новый узел: всего ' + result.totalClients + ', создано ' + result.remoteCreated + ', уже существовало ' + result.skippedExisting + ', обновлено ' + result.remoteUpdated + ', связей ' + result.mappingsCreated + ', конфликтов ' + result.conflicts + ', ошибок ' + result.failed;
       if (result.errors && result.errors.length) errorText = [errorText, ...result.errors].filter(Boolean).join(' | ');
     }
 
@@ -16406,7 +16551,7 @@ app.post('/nodes/:id/create-missing-clients', requireAuth, async (req, res) => {
     const nodeName = getNodePublicName(node);
     await finishLongPost(req, res, '/nodes',
       operation => createExistingClientsOnNode(node, operation),
-      result => `Добавление отсутствующих клиентов на узел ${nodeName} завершено. Всего в агрегаторе: ${result.totalClients}, проверено: ${result.completed || 0}, создано: ${result.remoteCreated}, уже существовало и пропущено: ${result.skippedExisting}, новых связей: ${result.mappingsCreated}, конфликтов UUID: ${result.conflicts}, не запускалось после потери связи: ${result.skippedAfterFailure || 0}, ошибок: ${result.failed}`,
+      result => `Добавление отсутствующих клиентов на узел ${nodeName} завершено. Всего в агрегаторе: ${result.totalClients}, проверено: ${result.completed || 0}, создано: ${result.remoteCreated}, уже существовало: ${result.skippedExisting}, обновлено: ${result.remoteUpdated}, новых связей: ${result.mappingsCreated}, конфликтов UUID: ${result.conflicts}, не запускалось после потери связи: ${result.skippedAfterFailure || 0}, ошибок: ${result.failed}`,
       { label: `Добавление отсутствующих клиентов: ${nodeName}` }
     );
   } catch (err) {
@@ -16988,6 +17133,19 @@ app.get('/clients', requireAuth, async (req, res) => {
   for (const client of clients) {
     client.tags = tagsByClient.get(Number(client.id)) || [];
     client.devices = devicesByClient.get(Number(client.id)) || [];
+    client.awg_devices_enabled=clientHasDeviceAwg(client.id);
+    for(const device of client.devices) {
+      const link=db.prepare('SELECT token_enc FROM awg_manual_links WHERE client_id=? AND device_id=?').get(client.id,device.id);
+      if(link) {
+        const token=decrypt(link.token_enc,APP_SECRET);
+        const withToken=value=>value+(value.includes('?')?'&':'?')+'device='+encodeURIComponent(token);
+        device.personal_json=withToken(buildPublicJsonUrl(client.sub_slug));
+        device.personal_sub=withToken(buildPublicSubUrl(client.sub_slug));
+        device.personal_awg=db.prepare('SELECT n.* FROM nodes n JOIN client_nodes cn ON cn.node_id=n.id WHERE cn.client_id=? AND cn.enabled=1 AND n.enabled=1').all(client.id)
+          .filter(n=>require('./lib_amneziawg').isAmneziaWG(getCachedInbound(n)))
+          .map(n=>({name:getNodePublicName(n),url:withToken(buildPublicPlainSubUrl(client.sub_slug))+'&download=awg&node_id='+n.id}));
+      }
+    }
     client.device_count = client.devices.length;
     client.node_limits = nodeLimitsByClient.get(Number(client.id)) || [];
 
@@ -17295,7 +17453,7 @@ app.post('/clients/create-missing-on-node', requireAuth, async (req, res) => {
     const nodeName = getNodePublicName(node);
     await finishLongPost(req, res, `/clients?node_id=${encodeURIComponent(nodeId)}`,
       operation => createExistingClientsOnNode(node, operation),
-      result => `Добавление отсутствующих клиентов на ${nodeName} завершено. Всего: ${result.totalClients}, проверено: ${result.completed || 0}, создано: ${result.remoteCreated}, уже существовало и пропущено: ${result.skippedExisting}, новых связей: ${result.mappingsCreated}, конфликтов UUID: ${result.conflicts}, не запускалось после потери связи: ${result.skippedAfterFailure || 0}, ошибок: ${result.failed}`,
+      result => `Добавление отсутствующих клиентов на ${nodeName} завершено. Всего: ${result.totalClients}, проверено: ${result.completed || 0}, создано: ${result.remoteCreated}, уже существовало: ${result.skippedExisting}, обновлено: ${result.remoteUpdated}, новых связей: ${result.mappingsCreated}, конфликтов UUID: ${result.conflicts}, не запускалось после потери связи: ${result.skippedAfterFailure || 0}, ошибок: ${result.failed}`,
       { label: `Добавление отсутствующих клиентов: ${nodeName}` }
     );
   } catch (err) {
@@ -17708,7 +17866,23 @@ app.get('/clients/:id', requireAuth, async (req, res) => {
   }
 });
 
-app.post('/clients/:id/devices/:deviceId/delete', requireAuth, (req, res) => {
+
+app.post('/clients/:id/devices/create', requireAuth, (req,res)=>{
+  try {
+    const client=db.prepare('SELECT * FROM clients WHERE id=?').get(Number(req.params.id));
+    if(!client || !clientHasDeviceAwg(client.id))throw Error('Для клиента нужен включённый AWG-узел и режим AWG по устройствам.');
+    const token=randomBytes(20).toString('hex');
+    const hash=createHash('sha256').update(String(client.uuid)+':'+token).digest('hex');
+    db.transaction(()=>{
+      const device=registerSubscriptionDevice({query:{},get:name=>name==='x-hwid'?'m'+token:name==='user-agent'?'Manual device':''},client,{forceTracking:true,allowNew:true});
+      if(!device.allowed || !device.deviceId)throw Error('Достигнут лимит устройств клиента.');
+      db.prepare('INSERT INTO awg_manual_links(device_id,client_id,token_hash,token_enc) VALUES(?,?,?,?)').run(device.deviceId,client.id,hash,encrypt(token,APP_SECRET));
+    })();
+    res.redirect('/clients?q='+encodeURIComponent(client.login)+'&edit='+client.id+'&message='+encodeURIComponent('Персональная ссылка создана. Откройте «Устройства»; ссылка занимает один слот.'));
+  } catch(e) {res.redirect('/clients?error='+encodeURIComponent(String(e.message||e)));}
+});
+
+app.post('/clients/:id/devices/:deviceId/delete', requireAuth, async (req, res) => {
   try {
     const clientId = Number(req.params.id);
     const deviceId = Number(req.params.deviceId);
@@ -17716,21 +17890,23 @@ app.post('/clients/:id/devices/:deviceId/delete', requireAuth, (req, res) => {
     if (!client) throw new Error('Клиент не найден');
     const result = db.prepare('DELETE FROM subscription_devices WHERE id = ? AND client_id = ?').run(deviceId, clientId);
     if (!result.changes) throw new Error('Устройство не найдено');
+    const revokeErrors=await awgDevices.flush(clientId);
     const back = String(req.body.back || `/clients?q=${encodeURIComponent(client.login)}&edit=${clientId}`);
-    res.redirect(appendMessageToBackUrl(back, 'Устройство удалено. Слот освобождён.', '', '/clients'));
+    res.redirect(appendMessageToBackUrl(back, revokeErrors.length?'Устройство удалено локально. Отзыв AWG ещё не подтверждён; очередь повторится. Новая AWG-выдача на этом узле ожидает отзыва.':'Устройство удалено. AWG-доступ отозван, слот освобождён.', '', '/clients'));
   } catch (err) {
     res.redirect('/clients?error=' + encodeURIComponent(String(err.message || err)));
   }
 });
 
-app.post('/clients/:id/devices/reset', requireAuth, (req, res) => {
+app.post('/clients/:id/devices/reset', requireAuth, async (req, res) => {
   try {
     const clientId = Number(req.params.id);
     const client = db.prepare('SELECT id, login FROM clients WHERE id = ?').get(clientId);
     if (!client) throw new Error('Клиент не найден');
     const result = db.prepare('DELETE FROM subscription_devices WHERE client_id = ?').run(clientId);
+    const revokeErrors=await awgDevices.flush(clientId);
     const back = String(req.body.back || `/clients?q=${encodeURIComponent(client.login)}&edit=${clientId}`);
-    res.redirect(appendMessageToBackUrl(back, `Устройства сброшены: ${result.changes}.`, '', '/clients'));
+    res.redirect(appendMessageToBackUrl(back, 'Устройства сброшены: '+result.changes+'. '+(revokeErrors.length?'Отзыв AWG в очереди; API пока не подтвердил отключение.':'AWG-ключи отозваны.'), '', '/clients'));
   } catch (err) {
     res.redirect('/clients?error=' + encodeURIComponent(String(err.message || err)));
   }
@@ -17773,7 +17949,10 @@ app.post('/clients/:id/traffic/reset', requireAuth, async (req, res) => {
           h1cloud: isH1CloudNode(node) || isH1Cloud3xuiNode(node),
           modern3xui: is3xuiV3Mode(node)
         });
-        if (request.kind === 'remnawave') {
+        if(awgDevicesEnabled() && require('./lib_amneziawg').isAmneziaWG(getCachedInbound(node))) {
+          await awgDevices.sweep();awgDevices.reset(clientId,map.node_id);
+          zeroClientNodeTraffic(map.id,clientId,map.node_id,zeroedMaps);setImmediate(scheduleAwgDeviceReconcile);
+        } else if (request.kind === 'remnawave') {
           const user = await getRemnawaveUserByUuid(node, map.remote_uuid);
           if (!user) throw new Error('Пользователь не найден в Remnawave.');
           await nodeTraffic.resetMapping(node,user,map);
@@ -18108,6 +18287,19 @@ app.get('/sub-plain/:slug', async (req, res) => {
   if (maybeRedirectToCurrentSubscriptionRevision(req, res)) return;
 
   const { entries, subscriptionExpiryOverride } = await buildSubscriptionEntriesForRequest(req, res, client);
+  if(req.query.download==='awg') {
+    res.setHeader('Cache-Control','no-store');
+    if(res.statusCode>=400)return res.send('Device access denied');
+    const nodeId=Number(req.query.node_id);
+    if(!Number.isInteger(nodeId)||nodeId<1)return res.status(400).send('Select AWG node');
+    const entry=entries.find(e=>Number(e.nodeId)===nodeId && /^(amneziawg|awg):\/\//.test(e.line||''));
+    if(!entry)return res.status(404).send('AWG device configuration not available');
+    const match=entry.line.match(/^[^:]+:\/\/([A-Za-z0-9_-]+)/);
+    if(!match)return res.status(503).send('AWG configuration invalid');
+    res.setHeader('Content-Type','text/plain; charset=utf-8');
+    res.setHeader('Content-Disposition','attachment; filename="awg-client-'+client.id+'-node-'+nodeId+'.conf"');
+    return res.send(Buffer.from(match[1],'base64url').toString('utf8'));
+  }
   const lines = entries
     .map(entry => String(entry?.line || '').trim())
     .filter(line => /^(?:vless|vmess|trojan|ss|socks|hysteria2?|hy2|tuic|wireguard|amneziawg|awg):\/\//i.test(line));
@@ -21231,6 +21423,8 @@ const nexusServer = app.listen(PORT, WORKSPACE_ID === 'main' ? '0.0.0.0' : '127.
   console.log(`3xui-aggregator started on :${PORT}`);
   startTelegramManagerBot();
   setTimeout(scheduleSupportReconcile, 2000).unref();
+  setTimeout(scheduleAwgDeviceReconcile,2500).unref();
+  setInterval(scheduleAwgDeviceReconcile,30000).unref();
   // Accounting and quota enforcement must continue with no browser open.
   setTimeout(() => refreshAllClientUsageFromNodes().catch(err => console.error('Node usage:',err.message)),10000).unref();
   setInterval(() => refreshAllClientUsageFromNodes().catch(err => console.error('Node usage:',err.message)),60000).unref();

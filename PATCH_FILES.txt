@@ -99,3 +99,14 @@ lib_node_api_transport.js
 public/js/node-api-ip.js
 tests/node-api-transport.test.js
 docs/UPDATE_2.7.26.md
+lib_awg_devices.js
+tests/awg-devices.test.js
+tests/awg-devices-http.test.js
+tests/client-activation.test.js
+tests/expired-support.test.js
+docs/UPDATE_2.7.27.md
+apply-awg-devices-update.sh
+
+tests/vision-lifecycle-http.test.js
+docs/UPDATE_2.7.28.md
+apply-vision-update.sh

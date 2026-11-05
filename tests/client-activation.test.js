@@ -45,6 +45,7 @@ function harness(t) {
       if (!db.prepare(`PRAGMA table_info(${table})`).all().some(r => r.name === name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
     },
     isSubscriptionDeviceTrackingEnabled: () => false,
+    clientHasDeviceAwg: () => false,
     isSubscriptionDeviceLimitEnforced: () => true,
     isSubscriptionDeviceHwidRequired: () => false,
     getClientDeviceLimit: c => c.device_limit,
