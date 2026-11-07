@@ -277,6 +277,21 @@ for (const kind of ['3xui-modern', '3xui-legacy', 'remna-3.3', 'remna-3.4']) {
         await page.route('**/*', route => new URL(route.request().url()).hostname === '127.0.0.1' ? route.continue() : route.abort());
         await page.goto(base + '/login'); await page.locator('[name=username]').fill('owner'); await page.locator('[name=password]').fill('test-owner-password');
         await Promise.all([page.waitForURL('**/dashboard'), page.locator('button[type=submit]').click()]);
+        for(const width of [1440,390]){
+          await page.setViewportSize({width,height:920});await page.goto(base+'/clients');
+          const bulk=page.locator('form.bulk-scope-panel');await bulk.scrollIntoViewIfNeeded();
+          assert.equal(await bulk.locator('[name=bulk_scope]').inputValue(),'all');
+          assert.equal(await bulk.locator('form').count(),0,'bulk scope is not nested in the selection form');
+          if(width===1440){
+            await bulk.locator('[name=bulk_scope]').selectOption('group');
+            page.on('dialog',dialog=>dialog.accept());
+            await Promise.all([page.waitForURL(url=>url.searchParams.has('error')),bulk.getByRole('button',{name:'Применить к выбранной области',exact:true}).click()]);
+            assert.match(new URL(page.url()).searchParams.get('error'),/Выберите группу/,'new form passes CSRF and reaches scope validation');
+            page.removeAllListeners('dialog');await page.goto(base+'/clients');
+          }
+          assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1),false);
+          if(process.env.NEXUS_UI_SCREENSHOT_DIR)await page.screenshot({path:path.join(process.env.NEXUS_UI_SCREENSHOT_DIR,'bulk-scope-'+width+'.png')});
+        }
         for (const [width, targetId] of [[1440, 4], [390, 5]]) {
           await page.setViewportSize({ width, height: 920 }); await page.goto(base + '/clients?q=beta&edit=2');
           const form = page.locator('#clientEditor-2 form[action="/clients/2/edit"]'); await form.waitFor({ state: 'visible' });
@@ -372,6 +387,10 @@ for (const kind of ['3xui-modern', '3xui-legacy', 'remna-3.3', 'remna-3.4']) {
         await page.locator('[data-select-node="4"]').click();
         const deleteButton=page.locator('[data-detail-node-id="4"] form[action="/nodes/4/delete"] button');
         assert.equal(await deleteButton.isVisible(),true);
+        const detail=page.locator('[data-detail-node-id="4"] .node-detail-actions-top');
+        const deleteRect=await deleteButton.boundingBox(),checkRect=await detail.getByRole('button',{name:'Проверить',exact:true}).boundingBox();
+        assert.ok(Math.abs(deleteRect.x-checkRect.x)<=1,'Delete aligns with the first action column');
+        assert.equal(await detail.getByRole('button',{name:'Удалить всех клиентов из узла',exact:true}).isVisible(),true);
         if(process.env.NEXUS_UI_SCREENSHOT_DIR)await page.screenshot({path:path.join(process.env.NEXUS_UI_SCREENSHOT_DIR,'node-delete-desktop.png')});
         page.once('dialog',dialog=>dialog.dismiss());await deleteButton.click();
         assert.ok(db.prepare('SELECT id FROM nodes WHERE id=4').get(),'cancel keeps the node');
@@ -379,6 +398,7 @@ for (const kind of ['3xui-modern', '3xui-legacy', 'remna-3.3', 'remna-3.4']) {
         await page.locator('[data-select-node="4"]').click();
         const mobileDelete=page.locator('[data-node-id="4"] .node-mobile-quick-actions form[action="/nodes/4/delete"] button');
         assert.equal(await mobileDelete.isVisible(),true);
+        assert.equal(await page.locator('[data-node-id="4"] .node-mobile-quick-actions .node-remove-clients-form button').isVisible(),true);
         await mobileDelete.scrollIntoViewIfNeeded();
         if(process.env.NEXUS_UI_SCREENSHOT_DIR)await page.screenshot({path:path.join(process.env.NEXUS_UI_SCREENSHOT_DIR,'node-delete-mobile.png')});
         page.once('dialog',dialog=>dialog.accept());

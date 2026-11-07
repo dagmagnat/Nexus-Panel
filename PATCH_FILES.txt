@@ -110,3 +110,9 @@ apply-awg-devices-update.sh
 tests/vision-lifecycle-http.test.js
 docs/UPDATE_2.7.28.md
 apply-vision-update.sh
+lib_bulk_scope.js
+lib_quota_cycles.js
+tests/bulk-scope-quota.test.js
+docs/UPDATE_2.7.29.md
+apply-autoselect-update.sh
+tests/spectrum-clear.test.js

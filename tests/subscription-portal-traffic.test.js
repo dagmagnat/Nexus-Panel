@@ -447,7 +447,7 @@ test('per-node quota never includes traffic spent on another node', { timeout: 6
     tag: 'auto-1-balancer',
     selector: ['auto-1-node-1', 'auto-1-node-2'],
     strategy: { type: 'leastPing' },
-    fallbackTag: 'auto-1-unavailable'
+    fallbackTag: 'auto-1-node-1'
   }]);
   const candidateTags = jsonConfigs[0].outbounds
     .filter(outbound => String(outbound.tag || '').startsWith('auto-1-node-'))
@@ -735,7 +735,7 @@ test('multiple auto-connections create, edit, toggle and delete independently vi
   assert.match(html,/data-create-auto-select/);
   const csrf=readCsrf(html);
   const forms=[
-    {name:'Европа',nodes:[node1,node2],seconds:10},
+    {name:'Европа',nodes:[node1,node2],seconds:5},
     {name:'CDN',nodes:[node1,node3],seconds:60},
     {name:'Резерв',nodes:[node2,node3],seconds:120}
   ];
@@ -757,6 +757,7 @@ test('multiple auto-connections create, edit, toggle and delete independently vi
   for(let i=0;i<autos.length;i++){
     const cfg=autos[i],p=profiles[i],spec=forms[i];
     assert.deepEqual(cfg.autoSelect.normalNodeIds,spec.nodes);assert.equal(cfg.observatory.probeInterval,`${spec.seconds}s`);
+    assert.equal(cfg.autoSelect.fastStart,true);assert.equal(cfg.autoSelect.noHealthyNode,'try-first-main');
     assert.deepEqual(cfg.observatory.subjectSelector,[`auto-${p.id}-node-`]);
     const tags=new Set(cfg.outbounds.map(o=>o.tag));
     for(const balancer of cfg.routing.balancers){assert.ok(balancer.selector.every(tag=>tags.has(tag)));assert.ok(tags.has(balancer.fallbackTag));}
@@ -767,7 +768,10 @@ test('multiple auto-connections create, edit, toggle and delete independently vi
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM auto_select_profiles').get().n,3);
   assert.equal((await post('/nodes',new URLSearchParams({node_type:'auto_select'}))).status,403);
   const edited={name:'Европа 2',nodes:[node2,node3],seconds:30};
-  await post(`/auto-select-profiles/${profiles[0].id}/edit`,form(edited));
+  const strict=form(edited);strict.set('auto_select_fast_controls','1');
+  await post(`/auto-select-profiles/${profiles[0].id}/edit`,strict);
+  const strictConfig=(await configs()).find(c=>c.autoSelect?.normalNodeIds?.includes(node3)&&c.title==='⚡ Европа 2');
+  assert.equal(strictConfig.autoSelect.fastStart,false);assert.equal(strictConfig.routing.balancers[0].fallbackTag,`auto-${profiles[0].id}-unavailable`);
   assert.deepEqual(db.prepare('SELECT * FROM auto_select_profiles WHERE id=?').get(profiles[1].id),profiles[1]);
   assert.deepEqual(db.prepare('SELECT * FROM auto_select_profiles WHERE id=?').get(profiles[2].id),profiles[2]);
   assert.deepEqual((await configs()).filter(x=>x.autoSelect).map(x=>x.title),['⚡ Европа 2','⚡ CDN','⚡ Резерв']);
@@ -837,4 +841,41 @@ test('multiple auto-connections create, edit, toggle and delete independently vi
       assert.equal(db.prepare('SELECT COUNT(*) AS n FROM auto_select_profiles').get().n,4);
     }finally{await browser.close();}
   }
+});
+
+test('auto recovery migration is one-time and preserves later explicit intervals', {timeout:45000}, async t=>{
+ const dir=fs.mkdtempSync(path.join(projectRoot,'.tmp-auto-migration-'));let app,db;
+ t.after(async()=>{await stopApp(app);db?.close();fs.rmSync(dir,{recursive:true,force:true});});
+ app=await startApp(dir);await stopApp(app);
+ db=new Database(path.join(dir,'app.db'));
+ db.prepare("DELETE FROM app_settings WHERE key='auto_select_fast_recovery_v1'").run();
+ db.exec("INSERT INTO auto_select_profiles(name,node_ids,probe_interval_seconds) VALUES('old','[1,2]',30),('custom','[1,2]',60)");
+ app=await startApp(dir);
+ assert.deepEqual(db.prepare('SELECT probe_interval_seconds AS v FROM auto_select_profiles ORDER BY id').all().map(r=>r.v),[5,60]);
+ await stopApp(app);db.prepare('UPDATE auto_select_profiles SET probe_interval_seconds=30 WHERE name=?').run('old');
+ app=await startApp(dir);
+ assert.equal(db.prepare('SELECT probe_interval_seconds AS v FROM auto_select_profiles WHERE name=?').get('old').v,30);
+});
+
+test('30-day renewal setting validates, saves, restarts its period and persists', {timeout:45000}, async t=>{
+ const dir=fs.mkdtempSync(path.join(projectRoot,'.tmp-quota-settings-'));let app,db;
+ t.after(async()=>{await stopApp(app);db?.close();fs.rmSync(dir,{recursive:true,force:true});});
+ app=await startApp(dir);db=new Database(path.join(dir,'app.db'));
+ let cookies=new Map(),csrf='';
+ const request=async(route,body)=>{
+  const r=await fetch(`http://127.0.0.1:${app.port}${route}`,{method:body?'POST':'GET',redirect:'manual',headers:{Cookie:[...cookies].map(([k,v])=>k+'='+v).join('; '),...(body?{'Content-Type':'application/x-www-form-urlencoded'}:{})},body:body?new URLSearchParams({_csrf:csrf,_workspace:'main',...body}):undefined});
+  for(const value of r.headers.getSetCookie()){const pair=value.split(';')[0],i=pair.indexOf('=');cookies.set(pair.slice(0,i),pair.slice(i+1));}
+  const text=await r.text();csrf=text.match(/name="csrf-token" content="([^"]+)"/)?.[1]||csrf;return {status:r.status,text,location:r.headers.get('location')};
+ };
+ const login=async()=>{cookies.clear();csrf='';await request('/login');assert.equal((await request('/login',{username:'admin',password:'test-password-strong'})).status,302);await request('/settings');};
+ await login();assert.match((await request('/settings')).text,/name="traffic_renewal_days"/);
+ const setting=()=>db.prepare("SELECT value FROM app_settings WHERE key='traffic_renewal_days'").get()?.value||'30';
+ assert.equal(setting(),'30');
+ assert.ok((await request('/settings/happ-control',{traffic_renewal_controls:'1',traffic_renewal_days:'31'})).location.includes('error='));assert.equal(setting(),'30');
+ assert.ok((await request('/settings/happ-control',{traffic_renewal_controls:'1',traffic_renewal_days:'0',subscription_device_refresh_mode:'reset-on-refresh'})).location.includes('error='));assert.equal(setting(),'30','later form validation does not partially save the renewal setting');
+ assert.ok(!(await request('/settings/happ-control',{traffic_renewal_controls:'1',traffic_renewal_days:'0'})).location.includes('error='));assert.equal(setting(),'0');
+ await stopApp(app);app=await startApp(dir);await login();assert.equal(setting(),'0');
+ db.prepare("INSERT INTO quota_reset_cycles(scope,next_at) VALUES('setting-test',1)").run();
+ const before=Date.now();assert.ok(!(await request('/settings/happ-control',{traffic_renewal_controls:'1',traffic_renewal_days:'30'})).location.includes('error='));
+ assert.equal(setting(),'30');assert.ok(db.prepare('SELECT next_at FROM quota_reset_cycles').get().next_at>=before+30*86400000);
 });

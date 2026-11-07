@@ -3496,3 +3496,14 @@ body.client-modal-open { overflow: hidden; overscroll-behavior: none; }
   .page-clients .clients-modern-table .modern-term,
   .page-clients .clients-modern-table .client-usage-readable { font-size: 12px; }
 }
+
+/* Node list actions must not inherit the spaced delete form from the editor. */
+.node-detail-actions-top .node-delete-form { margin:0; padding:0; border:0; min-width:0; width:100%; }
+.node-detail-actions-top .node-delete-form button { min-width:0; width:100%; }
+.node-detail-actions-top .node-remove-clients-form { grid-column:1 / -1; }
+.node-mobile-quick-actions .node-remove-clients-form { grid-column:1 / -1; width:100%; }
+.node-mobile-quick-actions .node-remove-clients-form button { width:100%; }
+.node-edit-layout .node-remove-clients-form { margin-top:16px; display:grid; gap:8px; }
+.bulk-scope-panel { margin:12px 0; padding:14px; border:1px solid var(--line); border-radius:16px; }
+.bulk-scope-panel .form-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:10px; }
+.bulk-scope-panel select,.bulk-scope-panel input { width:100%; }

@@ -21,6 +21,7 @@ for(const modern of [false,true])test('Vision lifecycle: '+(modern?'global clien
   if(p==='/login'){res.setHeader('set-cookie','session=test; Path=/');return ok({});}
   if(p==='/panel/api/server/status')return ok({version:modern?'3.11.0':'2.5.8'});
   if(p==='/panel/api/setting/all')return ok({});
+  if(req.method==='POST'&&(p.includes('/resetClientTraffic/')||p.includes('/clients/resetTraffic/'))){writes.push({p,body});return ok({});}
   if(p==='/panel/api/clients/bulkDetach'){
    if(!modern)return res.writeHead(404).end('Cannot POST /panel/api/clients/bulkDetach');
    for(const email of body.emails)for(const id of body.inboundIds)links.get(email)?.delete(id);
@@ -92,10 +93,42 @@ for(const modern of [false,true])test('Vision lifecycle: '+(modern?'global clien
  const removed=await request('/clients/bulk-remove-node',{client_ids:'2',bulk_node_id:'1',bulk_filter_node_id:'1',bulk_confirmation:'CONFIRMED'});
  assert.equal(removed.status,200,removed.location+log);
  assert.equal(links.get('bob').has(1),false);assert.equal(links.get('bob').get(3),vision,'other remote inbound remains');
+ // Whole-directory and group/tag operations do not depend on checkbox pagination.
+ db.exec("INSERT INTO client_groups(id,name) VALUES(7,'Group');INSERT INTO client_tags(id,name) VALUES(9,'Tag');UPDATE clients SET group_id=7 WHERE id=2;INSERT INTO client_tag_assignments(client_id,tag_id) VALUES(1,9)");
+ const beforeInvalid=writes.length;
+ assert.ok((await request('/clients/apply-to-node',{bulk_scope:'all',node_id:'2',traffic_gb:'NaN'})).location.includes('error='));
+ assert.ok((await request('/clients/apply-to-node',{bulk_scope:'all',node_id:'2',limit_ip:'-1'})).location.includes('error='));
+ assert.equal(writes.length,beforeInvalid,'invalid bulk limits do not change remote clients');
+ const all=await request('/clients/apply-to-node',{bulk_scope:'all',node_id:'2',traffic_gb:'12'});assert.equal(all.status,200);
+ assert.equal(db.prepare('SELECT COUNT(*) n FROM client_nodes WHERE node_id=2 AND traffic_gb=12').get().n,3);
+ await request('/clients/apply-to-node',{bulk_scope:'group',scope_group_id:'7',node_id:'2',traffic_gb:'7'});
+ assert.equal(db.prepare('SELECT traffic_gb FROM client_nodes WHERE client_id=2 AND node_id=2').get().traffic_gb,7);
+ assert.equal(db.prepare('SELECT traffic_gb FROM client_nodes WHERE client_id=1 AND node_id=2').get().traffic_gb,12);
+ await request('/clients/bulk-remove-node',{bulk_scope:'tag',scope_tag_id:'9',bulk_node_id:'2',bulk_confirmation:'CONFIRMED'});
+ assert.equal(db.prepare('SELECT id FROM client_nodes WHERE client_id=1 AND node_id=2').get(),undefined);
+ assert.ok(db.prepare('SELECT id FROM client_nodes WHERE client_id=2 AND node_id=2').get());
+ await request('/clients/bulk-remove-node',{bulk_scope:'node',bulk_node_id:'2',bulk_confirmation:'CONFIRMED'});
+ assert.equal(db.prepare('SELECT COUNT(*) n FROM client_nodes WHERE node_id=2').get().n,0);
+ assert.equal(db.prepare('SELECT COUNT(*) n FROM clients').get().n,3);
  const writesBefore=writes.length;
  assert.equal((await request('/nodes/1/create-missing-clients',{_csrf:'invalid'})).status,403);assert.equal(writes.length,writesBefore);
  const charlie=users.get('charlie');charlie.id=uuid(99);links.get('charlie').set(1,'');
  const conflict=await request('/nodes/1/create-missing-clients',{});
  assert.match(message(conflict),/конфликтов UUID:\s*1/);assert.equal(links.get('charlie').get(1),'','conflicting identity is not repaired or overwritten');
+ // The real background scheduler resets a due allowance and restores access.
+ const map=db.prepare('SELECT * FROM client_nodes WHERE client_id=1 AND node_id=1').get();
+ const node=db.prepare('SELECT * FROM nodes WHERE id=1').get();
+ const scope=modern?JSON.stringify(['3xui-account',1,node.panel_url,node.panel_path,node.api_connect_ip,map.remote_uuid]):'mapping:'+map.id;
+ db.prepare('INSERT OR REPLACE INTO quota_reset_cycles(scope,next_at) VALUES(?,1)').run(scope);
+ db.prepare('UPDATE client_nodes SET used_bytes=2000 WHERE id=?').run(map.id);
+ const deadline=Date.now()+20000;
+ while(!db.prepare('SELECT last_at FROM quota_reset_cycles WHERE scope=?').get(scope)?.last_at&&Date.now()<deadline)await new Promise(r=>setTimeout(r,100));
+ const cycle=db.prepare('SELECT * FROM quota_reset_cycles WHERE scope=?').get(scope);
+ assert.ok(cycle.last_at>0,JSON.stringify(cycle)+log);
+ while(db.prepare('SELECT pending_sync FROM quota_reset_cycles WHERE scope=?').get(scope).pending_sync&&Date.now()<deadline)await new Promise(r=>setTimeout(r,100));
+ assert.equal(db.prepare('SELECT error FROM quota_reset_cycles WHERE scope=?').get(scope).error,'',log);
+ assert.equal(db.prepare('SELECT used_bytes FROM client_nodes WHERE id=?').get(map.id).used_bytes,0);
+ assert.ok(writes.some(w=>w.p===(modern?'/panel/api/clients/resetTraffic/alice':'/panel/api/inbounds/1/resetClientTraffic/alice')));
+ assert.equal(users.get('alice').enable,true);assert.equal(users.get('alice').expiryTime,0,'renewal does not extend expiry');
 });
 

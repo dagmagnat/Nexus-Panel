@@ -1,8 +1,8 @@
 # Nexus Panel — журнал продолжения разработки
 
-Последнее обновление: **2026-11-05 — 2.7.28**
+Последнее обновление: **2026-11-07 — 2.7.29**
 
-Рабочая папка этого релиза: C:/Users/user/Documents/Codex/2026-09-04/new-chat/work/vision-sync-2.7.28/Nexus-Panel-main. Основа — рабочая 2.7.27, архив изменений собирается относительно immutable outputs/Nexus-Panel-2.7.26-source.zip. Предыдущие ZIP не менялись. Не продолжать разработку из старой одноимённой папки в корне new-chat: там оставлена 2.7.22 с Docker hotfix.
+Рабочая папка этого релиза: C:/Users/user/Documents/Codex/2026-09-04/new-chat/work/autoselect-2.7.29/Nexus-Panel-main. Основа — рабочая 2.7.28, архив изменений собирается относительно immutable outputs/Nexus-Panel-2.7.26-source.zip. Предыдущие ZIP не менялись. Не продолжать разработку из старой одноимённой папки в корне new-chat: там оставлена 2.7.22 с Docker hotfix.
 
 Этот файл нужно читать первым при продолжении работы из другой учётной записи или нового чата. После каждой доработки обновляйте разделы «Последнее изменение», «Изменённые файлы» и «Проверки».
 
@@ -22,6 +22,21 @@
 - Выполнено в 2.7.17 после запроса «доработай и исправь ошибки»: padding=0 и desktop flex/100dvh растягивали пустой список; добавлены empty-state/компактная высота, действия перенесены в заголовок. Локальные HTTP+Edge 1440/390, переход к форме и отсутствие overflow проверены, screenshots просмотрены. Исходный пункт выше сохранён как история запроса.
 
 ## Последнее изменение
+
+2026-11-07 — Nexus 2.7.29: автовыбор, массовые области и 30-дневные квоты.
+
+- Авторизация: пользователь просил исправить долгое подключение автовыбора и добавил очистку назначенных клиентов узла, действия по всей базе/группе/метке, восстановление квот через 30 дней и выравнивание Delete. Рабочая панель/VPS не обновлялась; удалённых клиентов не удаляли. Архив только изменений от immutable26, поддерживает26/27/28. Предыдущие ZIP сохранены.
+- Прочитан реальный JSON подписки с разрешения пользователя, без сохранения токена в релизе. WiFi/LTE: параллельный observatory, interval30, plain leastPing без tiers, strict blackhole fallback; это не sequential-probe проблема. Исходник официального Xray26.10.21 подтверждает публикацию результата каждой проверки и 5s HTTP timeout, затем паузу интервала. Обычный observatory не требует именно204. burstObservatory не принят как faststart.
+- Новый fast_start default1 только для plainпула: fallback на первый normalTag до положительных результатов, включая всеfailed; выключаемая опция честно описывает ослабление строгого health-gate. Preferred/emergency граф не меняется. Интервалdefault5/min5, одноразовая миграция30→5 по marker auto_select_fast_recovery_v1; custom и позже выбранные30 сохраняются. Старые отдельные WiFi/LTE сами друг в друга не переключаются. Для новыхсоединений возврат с резервного; existingstreams не переносятся.
+- Read-only runtime benchmark вне релиза work/benchmark-autoselect-live.py: officialXray26.10.21, действительные выходы, временный конфиг удаляется; заменены inbounds и убраны app geodata rules, поэтому не идентичный Happ runtime. Строгий WiFi: первый curl35 затем204~1.38s; fast204~0.78s. LTE: первыйcurl35 затем204~1.61s; fast204~1.97s. Это не измерение iPhone и не доказательство причины всех 20/200s зависаний. Не обещать мгновенные соединения.
+- lib_bulk_scope.js: selected/all/group/tag/node серверный отбор, пагинация/поиск не ограничивают область. Подключён к apply-to-node, traffic/reset-selected, bulk-remove-node. Валидация чисел массовых лимитов до удалённых записей. Новая форма отдельно от bulk-delete-form, подтверждение через JS и прежние CSRF/workspace/RBAC. Удаление назначения не означает удаление Nexus-клиента или посторонних remoteaccounts.
+- views/nodes.ejs +node_edit.ejs: очистка всех назначений selectednode на ПК/телефоне и в редакторе, существующий scoped bulk-remove с логомошибок. spectrum-clear.css: scoped reset отступа/разделителя node-delete-form в detailgrid. Скриншоты проверены work/ui-qa/2.7.29.
+- lib_quota_cycles.js: persistent quota_reset_cycles(scope,next_at,last_at,error,pending_sync), 30days/off, singleflight, первыйperiodпослеобновления, одинcatchupпослепростоя, retryoffline. После ack commit сохраняет pending_sync; repair повторяет только восстановление доступа, не обнуление. Удалённые старыеscopeошибки не выводятся. restart настройки начинаетновыйпериод; ручнойсброс/изменениеквоты не переноситпериод. Отключённые/истёкшие/activationpending исключены, ручноеmapdisableнеотменяется.
+- app.js: scheduler15safterstart/60s; собирает ограниченные maps (включая nullнаследованныйglobal), новые3x-ui nativeglobalaccountсгруппирован, legacypermap. Remna resetMapping теперь имеет необязательный onResetCommitted callback послеSQLitebaselinecommit передreconcile; общийremoteрасходнеобнуляется. AWG сверяетответsweepдляузла, обнуляетownertotal и восстанавливаетpeerbudgets; ошибки не считаютсяуспехом. Другиеprovidersиспользуютexistingresetrequest. Настройкаtraffic_renewal_days default30, ошибкавнастройках, записьпослеостальнойвалидацииформы.
+- Проверки: work/auto-target-release.log; work/auto-full-2.7.29.log; work/auto-ui-release.log (4/4 c Edge1440/390), work/auto-settings-release2.log. Полный прогон до добавления последнего settings-теста289:260pass/10oldfail/19skip, имена10 полностьюсовпали с28. Целевой ранний46/46; Финальный target57/57 (auto-target-release.log), финальный full290:261pass/10oldfail/19skip (auto-full-final.log), имена fail полностью совпали с28. static2500-symbol metadata check обновлён на выделение route вместо смещения по числу символов; реальный all/group/tag HTTP тест подтверждает metadata. Последняя оптимизация entries: 3 каталожных чтения вместо двух SQL на каждую привязку; инициализация всех таймеров в одной транзакции. После изменений финальный full повторён. Исторические10fail: Pythontransfer3, apiGetfixture, exactinbound999fixture, CSScount, grace syntax, deviceexpiry, oldauto syntax, RBAC. Они не объявлены исправленными.
+- Архив outputs/Nexus-Panel-2.7.29-autoselect-bulk-quota-patch.zip, docs/UPDATE_2.7.29.md, helper apply-autoselect-update.sh. Для новойработы читать эту папку, а не oldroot22. Никакие реальные лимиты/клиенты массово не сбрасывали. Метаданные29, cumulative delta от26; DELTA_FILES.txt — фактический список new/changed, PATCH_FILES.txt — накопительный исторический.
+
+## Предыдущее изменение (2.7.28)
 
 2026-11-05 — Nexus 2.7.28: Flow Vision, создание/attach/исправление существующих клиентов.
 

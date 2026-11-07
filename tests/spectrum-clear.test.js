@@ -144,7 +144,9 @@ test('2.5.1 client bulk metadata and helper restart controls remain wired end to
   assert.match(clients, /Группа \/ метки/);
   assert.match(clients, /class="modern-term/);
   assert.doesNotMatch(clients, /secondaryText[\s\S]{0,180}client\.sub_slug/);
-  assert.match(app, /app\.post\('\/clients\/apply-to-node'[\s\S]{0,2500}client_tag_assignments/);
+  const bulkRoute=app.slice(app.indexOf("app.post('/clients/apply-to-node'"),app.indexOf("app.post('/clients/refresh-subscriptions'"));
+  assert.match(bulkRoute,/client_tag_assignments/);
+  assert.match(bulkRoute,/resolveBulkClientIds/);
   assert.match(app, /app\.post\('\/redirects\/helper\/restart\.json'/);
   assert.match(redirects, /id="redirectRestartHelper"/);
   assert.match(forwarder, /redirect_helper_restart\.request/);

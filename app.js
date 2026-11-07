@@ -1317,7 +1317,7 @@ function initDb() {
       preferred_node_id INTEGER DEFAULT NULL,
       emergency_node_id INTEGER DEFAULT NULL,
       probe_url TEXT NOT NULL DEFAULT 'https://cp.cloudflare.com/generate_204',
-      probe_interval_seconds INTEGER NOT NULL DEFAULT 30,
+      probe_interval_seconds INTEGER NOT NULL DEFAULT 5,
       enabled INTEGER NOT NULL DEFAULT 1,
       sort_order INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -1582,11 +1582,22 @@ addColumnIfMissing('nodes', 'api_connect_ip', "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing('auto_select_profiles', 'preferred_node_id', 'INTEGER DEFAULT NULL');
   addColumnIfMissing('auto_select_profiles', 'emergency_node_id', 'INTEGER DEFAULT NULL');
   addColumnIfMissing('auto_select_profiles', 'probe_url', "TEXT NOT NULL DEFAULT 'https://cp.cloudflare.com/generate_204'");
-  addColumnIfMissing('auto_select_profiles', 'probe_interval_seconds', 'INTEGER NOT NULL DEFAULT 30');
+  addColumnIfMissing('auto_select_profiles', 'probe_interval_seconds', 'INTEGER NOT NULL DEFAULT 5');
   addColumnIfMissing('auto_select_profiles', 'enabled', 'INTEGER NOT NULL DEFAULT 1');
   addColumnIfMissing('auto_select_profiles', 'sort_order', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing('auto_select_profiles', 'created_at', "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing('auto_select_profiles', 'updated_at', "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing('auto_select_profiles', 'fast_start', 'INTEGER NOT NULL DEFAULT 1');
+
+  // One-time upgrade of the previous stock interval; custom values stay intact.
+  db.transaction(() => {
+    const done = db.prepare("SELECT value FROM app_settings WHERE key='auto_select_fast_recovery_v1'").get();
+    if (!done) {
+      db.prepare('UPDATE auto_select_profiles SET probe_interval_seconds=5 WHERE probe_interval_seconds=30').run();
+      db.prepare("INSERT INTO app_settings(key,value) VALUES('auto_select_fast_recovery_v1','1')").run();
+    }
+  })();
+
 
   addColumnIfMissing('nodes', 'sni_mode', "TEXT NOT NULL DEFAULT 'inbound'");
   addColumnIfMissing('nodes', 'sni_profile_id', 'INTEGER DEFAULT NULL');
@@ -1850,9 +1861,8 @@ app.get('/node-traffic/data.json', requireAuth, async (req,res) => {
 
 app.post('/clients/traffic/reset-selected',requireAuth,async(req,res) => {
   try {
-    let ids = req.body.client_ids || []; if (!Array.isArray(ids)) ids=[ids];
-    ids=[...new Set(ids.map(Number))];
-    if (!ids.length || ids.length>2000 || ids.some(id=>!Number.isInteger(id)||id<=0)) throw new Error('Выберите от 1 до 2000 пользователей.');
+    const ids = require('./lib_bulk_scope').resolveBulkClientIds(db,req.body);
+    if (!ids.length || ids.length>30000 || ids.some(id=>!Number.isInteger(id)||id<=0)) throw new Error('Выберите от 1 до 30000 пользователей.');
     const allNodes = req.body.reset_node_id==='all';
     const nodeId=Number(req.body.reset_node_id);
     if (!allNodes && (!Number.isInteger(nodeId)||nodeId<=0 || !db.prepare('SELECT id FROM nodes WHERE id=?').get(nodeId))) throw new Error('Выберите узел или все узлы.');
@@ -3056,7 +3066,7 @@ function normalizeAutoSelectProbeUrl(value) {
 function normalizeAutoSelectProbeInterval(value) {
   const seconds = Number.parseInt(String(value ?? AUTO_SELECT_DEFAULT_PROBE_INTERVAL_SECONDS), 10);
   if (!Number.isFinite(seconds)) return AUTO_SELECT_DEFAULT_PROBE_INTERVAL_SECONDS;
-  return Math.min(300, Math.max(10, seconds));
+  return Math.min(300, Math.max(5, seconds));
 }
 
 function normalizeAutoSelectPolicy(body = {}) {
@@ -3109,6 +3119,7 @@ function enrichAutoSelectProfile(row) {
     nodes: nodeIds.map(id => nodeMap.get(id)).filter(Boolean),
     title: `${icon} ${normalizeAutoSelectProfileName(row.name)}`.trim(),
     probeIntervalSeconds: normalizeAutoSelectProbeInterval(row.probe_interval_seconds),
+    fastStart: row.fast_start == null || Number(row.fast_start) === 1,
     probeUrl
   };
 }
@@ -3126,9 +3137,9 @@ function createAutoSelectProfileFromBody(body = {}) {
   const interval = normalizeAutoSelectProbeInterval(body.auto_select_probe_interval_seconds);
   const sortOrder = Number(db.prepare('SELECT COALESCE(MAX(sort_order), 0) + 1 AS n FROM auto_select_profiles').get()?.n || 1);
   const info = db.prepare(`
-    INSERT INTO auto_select_profiles (name, icon, node_ids, normal_node_ids, preferred_node_id, emergency_node_id, probe_url, probe_interval_seconds, enabled, sort_order)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
-  `).run(name, icon, JSON.stringify(policy.nodeIds), JSON.stringify(policy.normalNodeIds), policy.preferredNodeId || null, policy.emergencyNodeId || null, probeUrl, interval, sortOrder);
+    INSERT INTO auto_select_profiles (name, icon, node_ids, normal_node_ids, preferred_node_id, emergency_node_id, probe_url, probe_interval_seconds, enabled, sort_order, fast_start)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+  `).run(name, icon, JSON.stringify(policy.nodeIds), JSON.stringify(policy.normalNodeIds), policy.preferredNodeId || null, policy.emergencyNodeId || null, probeUrl, interval, sortOrder, body.auto_select_fast_controls === '1' ? (body.auto_select_fast_start === '1' ? 1 : 0) : 1);
   return enrichAutoSelectProfile(db.prepare('SELECT * FROM auto_select_profiles WHERE id = ?').get(info.lastInsertRowid));
 }
 
@@ -3142,9 +3153,9 @@ function updateAutoSelectProfileFromBody(id, body = {}) {
   const interval = normalizeAutoSelectProbeInterval(body.auto_select_probe_interval_seconds);
   db.prepare(`
     UPDATE auto_select_profiles
-    SET name = ?, icon = ?, node_ids = ?, normal_node_ids = ?, preferred_node_id = ?, emergency_node_id = ?, probe_url = ?, probe_interval_seconds = ?, updated_at = CURRENT_TIMESTAMP
+    SET name = ?, icon = ?, node_ids = ?, normal_node_ids = ?, preferred_node_id = ?, emergency_node_id = ?, probe_url = ?, probe_interval_seconds = ?, fast_start = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
-  `).run(name, icon, JSON.stringify(policy.nodeIds), JSON.stringify(policy.normalNodeIds), policy.preferredNodeId || null, policy.emergencyNodeId || null, probeUrl, interval, current.id);
+  `).run(name, icon, JSON.stringify(policy.nodeIds), JSON.stringify(policy.normalNodeIds), policy.preferredNodeId || null, policy.emergencyNodeId || null, probeUrl, interval, body.auto_select_fast_controls === '1' ? (body.auto_select_fast_start === '1' ? 1 : 0) : (current.fast_start ?? 1), current.id);
   return enrichAutoSelectProfile(db.prepare('SELECT * FROM auto_select_profiles WHERE id = ?').get(current.id));
 }
 
@@ -3966,7 +3977,7 @@ const NODE_TYPE_H1CLOUD = 'h1cloud';
 const NODE_TYPE_REMNAWAVE = 'remnawave';
 const NODE_TYPE_AUTO_SELECT = 'auto_select';
 const AUTO_SELECT_DEFAULT_PROBE_URL = 'https://cp.cloudflare.com/generate_204';
-const AUTO_SELECT_DEFAULT_PROBE_INTERVAL_SECONDS = 30;
+const AUTO_SELECT_DEFAULT_PROBE_INTERVAL_SECONDS = 5;
 
 const H1CLOUD_LINK_MODE_VLESS_REALITY = 'vless_reality';
 const H1CLOUD_LINK_MODE_VLESS_ALL = 'vless_all';
@@ -15302,6 +15313,8 @@ app.get('/settings', requireAuth, async (req, res) => {
     subscriptionDeviceLimitNoticeTitle: getSubscriptionNoticeTitle('device-limit'),
     subscriptionDeviceRefreshMode: deviceRefreshPolicy(getSetting('subscription_device_refresh_mode','manual')).mode,
     awgDevicePeersEnabled: awgDevicesEnabled(),
+    trafficRenewalDays: Number(getSetting('traffic_renewal_days','30')),
+    trafficRenewalError: getSetting('traffic_renewal_error',''),
     awgDeviceSyncError: getSetting('awg_device_sync_error',''),
     subscriptionDeviceStaleHours: deviceRefreshPolicy('',getSetting('subscription_device_stale_hours','72')).staleHours,
     subscriptionExpiredGraceDays: getSubscriptionExpiredGraceDays(),
@@ -15494,6 +15507,8 @@ app.post('/settings/subscription-revision/bump', requireAuth, (req, res) => {
 
 app.post('/settings/happ-control', requireAuth, (req, res) => {
   try {
+    const renewalDays=req.body.traffic_renewal_controls==='1'?String(req.body.traffic_renewal_days||'0'):getSetting('traffic_renewal_days','30');
+    if(!['0','30'].includes(renewalDays))throw Error('Период обновления трафика: выключено или 30 дней.');
     const deviceAwg=req.body.awg_device_controls==='1'?req.body.awg_device_peers_enabled==='1':awgDevicesEnabled();
     const devicePolicy = deviceRefreshPolicy(String(req.body.subscription_device_refresh_mode || getSetting('subscription_device_refresh_mode','manual')), req.body.subscription_device_stale_hours ?? getSetting('subscription_device_stale_hours','72'));
     if (!deviceAwg && devicePolicy.mode === 'reset-on-refresh' && req.body.subscription_device_refresh_mode === 'reset-on-refresh' && req.body.subscription_device_reset_ack !== '1') throw new Error('Подтверди ослабление лимита устройств для полного сброса при обновлении.');
@@ -15642,6 +15657,7 @@ app.post('/settings/happ-control', requireAuth, (req, res) => {
       jsonSniffingNodeIds: getSetting('json_sniffing_node_ids', '[]'),
       routing: getSetting('routing_config', '')
     });
+    if(renewalDays!==getSetting('traffic_renewal_days','30')){setSetting('traffic_renewal_days',renewalDays);quotaCycles.restart();}
     if (beforeSnapshot !== afterSnapshot) bumpSubscriptionRevision();
 
     res.redirect('/settings?message=' + encodeURIComponent('Настройки подписок и приложений сохранены. Изменения применятся при следующем обновлении подписки.'));
@@ -17463,10 +17479,10 @@ app.post('/clients/create-missing-on-node', requireAuth, async (req, res) => {
 
 app.post('/clients/apply-to-node', requireAuth, async (req, res) => {
   try {
-    let ids = req.body.client_ids || [];
-    if (!Array.isArray(ids)) ids = [ids];
-    ids = uniqueList(ids.map(Number).filter(id => Number.isInteger(id) && id > 0));
+    const ids = require('./lib_bulk_scope').resolveBulkClientIds(db,req.body);
     if (!ids.length) throw new Error('Сначала выберите хотя бы одного клиента. Массовое применение ко всем без явного выбора отключено.');
+    validateClientQuotaForm(req.body);
+    if(String(req.body.limit_ip??'').trim()!=='' && (!Number.isSafeInteger(Number(req.body.limit_ip))||Number(req.body.limit_ip)<0))throw Error('Лимит IP должен быть целым неотрицательным числом.');
     if (String(req.body.support_mode || '')) {
       const supportIds = req.body.support_node_id ? [Number(req.body.support_node_id)] : getSubscriptionExpiredGraceNodeIds();
       const count = assignSupportDays(ids, supportIds, String(req.body.support_mode), req.body.support_days);
@@ -17582,9 +17598,7 @@ app.post('/clients/delete-all', requireAuth, async (req, res) => {
 
 app.post('/clients/bulk-remove-node', requireAuth, async (req, res) => {
   try {
-    let ids = req.body.client_ids || [];
-    if (!Array.isArray(ids)) ids = [ids];
-    ids = uniqueList(ids.map(Number).filter(id => Number.isInteger(id) && id > 0));
+    const ids = require('./lib_bulk_scope').resolveBulkClientIds(db,req.body);
     if (!ids.length) throw new Error('Сначала выберите хотя бы одного клиента');
 
     if (String(req.body.bulk_confirmation || '').trim().toUpperCase() !== 'CONFIRMED') {
@@ -17976,6 +17990,56 @@ app.post('/clients/:id/traffic/reset', requireAuth, async (req, res) => {
     res.redirect(appendMessageToBackUrl(back, '', String(err.message || err), '/clients'));
   }
 });
+
+
+const quotaCycles = require('./lib_quota_cycles').createQuotaCycles({
+ db,days:()=>Number(getSetting('traffic_renewal_days','30')),
+ entries:()=>{
+  // Read the directory once per cycle instead of two queries per attachment.
+  const clients=new Map(db.prepare('SELECT * FROM clients WHERE enabled=1').all().map(c=>[c.id,c]));
+  const nodes=new Map(db.prepare('SELECT * FROM nodes WHERE enabled=1').all().map(n=>[n.id,n]));
+  const sharedNodes=new Map([...nodes.values()].map(n=>[n.id,getNodeType(n)===NODE_TYPE_3XUI && is3xuiV3Mode(n) && !require('./lib_amneziawg').isAmneziaWG(getCachedInbound(n))]));
+  return db.prepare('SELECT * FROM client_nodes WHERE traffic_gb>0 OR traffic_gb IS NULL').all().flatMap(map=>{
+   const client=clients.get(map.client_id),node=nodes.get(map.node_id);
+   if(!client||!node||getClientNodeEffectiveTrafficGb(map,client)<=0||isClientExpired(client)||isClientActivationPending(client))return [];
+   const scope=sharedNodes.get(node.id)?JSON.stringify(['3xui-account',client.id,node.panel_url,node.panel_path,node.api_connect_ip,map.remote_uuid]):'mapping:'+map.id;
+   return [{scope,map,node,client,label:client.login+' / '+getNodePublicName(node)}];
+  });
+ },
+ reset:async (group,commit)=>{
+  const {node,client,map}=group[0];
+  if(awgDevicesEnabled() && require('./lib_amneziawg').isAmneziaWG(getCachedInbound(node))){
+   const errors=await awgDevices.sweep();const failed=errors.find(e=>Number(e.nodeId)===Number(node.id));if(failed)throw Error(failed.error);
+   awgDevices.reset(client.id,node.id);zeroClientNodeTraffic(map.id,client.id,node.id);commit();
+  }else if(isRemnawaveNode(node)){
+   const user=await getRemnawaveUserByUuid(node,map.remote_uuid);if(!user)throw Error('Пользователь не найден в Remnawave.');
+   await nodeTraffic.resetMapping(node,user,map,{onResetCommitted:commit});
+  }else{
+   const request=buildClientTrafficResetRequest({node,map,client,h1cloud:isH1CloudNode(node)||isH1Cloud3xuiNode(node),modern3xui:is3xuiV3Mode(node)});
+   const result=await apiPost(node,request.path,{},false);if(result?.success===false)throw Error('Панель отклонила сброс.');
+   commit();
+   for(const item of group)zeroClientNodeTraffic(item.map.id,item.client.id,item.node.id);
+  }
+  recordTrafficSnapshot(true,'period-reset');
+ },
+ repair:async group=>{
+  const node=db.prepare('SELECT * FROM nodes WHERE id=?').get(group[0].node.id);
+  const client=db.prepare('SELECT * FROM clients WHERE id=?').get(group[0].client.id);
+  const map=db.prepare('SELECT * FROM client_nodes WHERE id=?').get(group[0].map.id);
+  if(!map||!node||!client||!node.enabled)return;
+  if(awgDevicesEnabled() && require('./lib_amneziawg').isAmneziaWG(getCachedInbound(node))){
+   const errors=await awgDevices.sweep();const failed=errors.find(e=>Number(e.nodeId)===Number(node.id));if(failed)throw Error(failed.error);
+  }
+  else if(isRemnawaveNode(node)){
+   const user=await getRemnawaveUserByUuid(node,map.remote_uuid);if(!user)throw Error('Пользователь не найден в Remnawave.');
+   await nodeTraffic.syncMapping(node,user,map,{force:true});
+  }else await updateClientOnNode(node,map,client,{traffic_gb:map.traffic_gb,node_enabled:map.enabled!==0});
+ }
+});
+async function scheduleQuotaRenewal(){
+ try{const errors=await quotaCycles.tick();setSetting('traffic_renewal_error',(errors||[]).slice(0,5).join(' | '));}
+ catch(e){setSetting('traffic_renewal_error',String(e.message||e).slice(0,500));}
+}
 
 function zeroClientNodeTraffic(mapId, clientId, nodeId, seen = new Set()) {
   if (!mapId || seen.has(Number(mapId))) return;
@@ -19450,6 +19514,11 @@ function buildAutoSelectJsonConfig(profile, client, entries, subscriptionName) {
     probeInterval: `${profile.probeIntervalSeconds}s`,
     enableConcurrency: true
   };
+  // The first app request can precede the first observation. A blackhole here
+  // makes clients back off although a usable node is already being probed.
+  // Keep priority/emergency fallbacks intact; plain profiles may opt out.
+  const fastStart = profile.fastStart === true && !tieredPolicy;
+  if (fastStart) balancers[0].fallbackTag = normalTags[0] || unavailableTag;
 
   config.remarks = profile.title;
   config.name = profile.title;
@@ -19467,6 +19536,8 @@ function buildAutoSelectJsonConfig(profile, client, entries, subscriptionName) {
     intervalSeconds: profile.probeIntervalSeconds,
     candidates: candidateOutbounds.length
   };
+  config.autoSelect.noHealthyNode = fastStart ? 'try-first-main' : (emergencyTags.length ? 'emergency' : 'block-until-healthy');
+  config.autoSelect.fastStart = fastStart;
   config.meta = {
     ...(config.meta || {}),
     autoSelect: config.autoSelect,
@@ -21425,6 +21496,8 @@ const nexusServer = app.listen(PORT, WORKSPACE_ID === 'main' ? '0.0.0.0' : '127.
   setTimeout(scheduleSupportReconcile, 2000).unref();
   setTimeout(scheduleAwgDeviceReconcile,2500).unref();
   setInterval(scheduleAwgDeviceReconcile,30000).unref();
+  setTimeout(scheduleQuotaRenewal,15000).unref();
+  setInterval(scheduleQuotaRenewal,60000).unref();
   // Accounting and quota enforcement must continue with no browser open.
   setTimeout(() => refreshAllClientUsageFromNodes().catch(err => console.error('Node usage:',err.message)),10000).unref();
   setInterval(() => refreshAllClientUsageFromNodes().catch(err => console.error('Node usage:',err.message)),60000).unref();

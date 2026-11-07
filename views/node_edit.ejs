@@ -405,6 +405,11 @@
         <button type="submit" class="danger">Удалить узел</button>
       </form>
     </div>
+    <form method="post" action="/clients/bulk-remove-node" class="node-remove-clients-form" onsubmit="return confirm('Удалить всех назначенных этому узлу клиентов Nexus из выбранного подключения? Остальные узлы и пользователи Nexus сохранятся.');">
+      <input type="hidden" name="bulk_scope" value="node" /><input type="hidden" name="bulk_node_id" value="<%= node.id %>" /><input type="hidden" name="bulk_confirmation" value="CONFIRMED" />
+      <button type="submit" class="danger">Удалить всех клиентов из узла</button>
+      <small>Удаляются назначенные этому узлу клиенты Nexus из выбранного inbound / Squad. Пользователи Nexus и доступ к другим узлам сохраняются. Посторонние аккаунты удалённой панели не затрагиваются.</small>
+    </form>
   </section>
 
   <aside class="card node-edit-help-card">

@@ -68,7 +68,7 @@ test('tiered autoselect prefers its primary node, then leastPing pool, and reser
   const ctx = vm.createContext({ AUTO_SELECT_DEFAULT_PROBE_URL: 'https://example.invalid/generate_204', getRoutingConfig: () => ({ enabled: true }),
     buildHappJsonConfig: () => ({ outbounds: [{ tag: 'proxy', protocol: 'vless' }, { tag: 'proxy-2', protocol: 'vless' }, { tag: 'proxy-3', protocol: 'vless' }, { tag: 'direct', protocol: 'freedom' }], routing: { rules: [{ outboundTag: 'proxy', network: 'tcp,udp' }] }, inbounds: [] }) });
   vm.runInContext(extract('autoSelectRuleForBalancer') + '\n' + extract('buildAutoSelectJsonConfig'), ctx);
-  const profile = { id: 7, title: 'Priority Auto', nodeIds: [1, 2, 3], normalNodeIds: [2], preferredNodeId: 1, emergencyNodeId: 3, probeUrl: 'https://example.invalid/generate_204', probeIntervalSeconds: 30 };
+  const profile = { id: 7, fastStart: true, title: 'Priority Auto', nodeIds: [1, 2, 3], normalNodeIds: [2], preferredNodeId: 1, emergencyNodeId: 3, probeUrl: 'https://example.invalid/generate_204', probeIntervalSeconds: 5 };
   const entries = [{ nodeId: 1, line: 'vless://primary' }, { nodeId: 2, line: 'vless://normal' }, { nodeId: 3, line: 'vless://emergency' }];
   const c = ctx.buildAutoSelectJsonConfig(profile, {}, entries, 'Sub');
   const [main, preferred] = c.routing.balancers;
@@ -81,6 +81,7 @@ test('tiered autoselect prefers its primary node, then leastPing pool, and reser
   assert.equal(c.routing.rules[0].balancerTag, main.tag);
   assert.equal(c.routing.rules[1].balancerTag, preferred.tag);
   assert.equal(c.autoSelect.strategy, 'preferred-then-leastPing-then-emergency');
+  assert.equal(c.autoSelect.fastStart,false,'fast start must not replace the emergency fallback');
   assert.deepEqual(Array.from(c.observatory.subjectSelector), ['auto-7-node-']);
 });
 test('usage refresh is single flight across clients and dashboard requests', async () => {

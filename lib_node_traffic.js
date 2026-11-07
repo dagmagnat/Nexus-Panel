@@ -229,7 +229,7 @@ function createNodeTraffic({ db, get, patch, baseUrl, getUser, getIdentity, titl
       }
     });
   }
-  async function resetMapping(node,user,map,{resetNative}={}) {
+  async function resetMapping(node,user,map,{resetNative,onResetCommitted}={}) {
     node = {...node,id:map.node_id};
     return locked(`${baseUrl(node.panel_url)}|${getIdentity(user)}`, async () => {
       user = await syncAccount(node,user,map);
@@ -239,6 +239,7 @@ function createNodeTraffic({ db, get, patch, baseUrl, getUser, getIdentity, titl
         db.prepare('UPDATE node_usage_state SET reset_base=? WHERE client_id=? AND node_id=?').run(total(map.client_id,map.node_id),map.client_id,map.node_id);
         db.prepare('UPDATE client_nodes SET upload_bytes=0,download_bytes=0,used_bytes=0 WHERE id=?').run(map.id);
       })();
+      if(onResetCommitted)onResetCommitted();
       try {
         await reconcile(node,user,{...map,used_bytes:0});
       } catch(e) {
