@@ -16,6 +16,18 @@ const appSecret = 'test-app-secret-0123456789abcdef0123456789abcdef';
 const sessionSecret = 'test-session-secret-0123456789abcdef0123456789abcdef';
 const gib = 1024 * 1024 * 1024;
 
+async function fetchAccount(url) {
+  const entry = await fetch(url, { redirect: 'manual' });
+  assert.equal(entry.status, 303);
+  assert.equal(entry.headers.get('location'), '/account');
+  const cookie = entry.headers.getSetCookie().map(value => value.split(';')[0]).join('; ');
+  return fetch(new URL('/account', url), { headers: { cookie }, redirect: 'manual' });
+}
+
+function stripPortalToken(text) {
+  return text.replace(/\/cabinet\/[A-Za-z0-9_-]+/g, '/cabinet/session-token');
+}
+
 async function reservePort() {
   const server = net.createServer();
   server.listen(0, '127.0.0.1');
@@ -257,14 +269,14 @@ test('subscription sums unlimited-node traffic once and exposes a branded browse
     headers: { Accept: 'text/html,application/xhtml+xml' }
   });
   assert.equal(response.status, 302);
-  assert.equal(response.headers.get('location'), `http://127.0.0.1:${app.port}/open/portal-user`);
+  assert.ok(new URL(response.headers.get('location')).pathname.startsWith('/cabinet/'));
 
   response = await fetch(`http://127.0.0.1:${app.port}/hiddify/portal-user`);
   assert.equal(response.status, 200);
   assert.ok((await response.text()).includes('vless://'));
   assert.equal(parseUserInfo(response.headers.get('subscription-userinfo')).total, 5 * gib);
 
-  response = await fetch(`http://127.0.0.1:${app.port}/open/portal-user`);
+  response = await fetchAccount(`http://127.0.0.1:${app.port}/open/portal-user`);
   assert.equal(response.status, 200);
   const html = await response.text();
   assert.match(html, /Sulak Test/);
@@ -279,7 +291,7 @@ test('subscription sums unlimited-node traffic once and exposes a branded browse
     headers: { Accept: 'text/html,application/xhtml+xml' }
   });
   assert.equal(response.status, 302);
-  assert.equal(response.headers.get('location'), `http://127.0.0.1:${app.port}/open/portal-user`);
+  assert.ok(new URL(response.headers.get('location')).pathname.startsWith('/cabinet/'));
 
   response = await fetch(`http://127.0.0.1:${app.port}/json/portal-user`, {
     headers: { Accept: 'application/json' }
@@ -444,17 +456,17 @@ test('per-node quota never includes traffic spent on another node', { timeout: 6
     enableConcurrency: true
   });
   assert.deepEqual(jsonConfigs[0].routing.balancers, [{
-    tag: 'auto-1-balancer',
+    tag: 'auto-1-main-balancer',
     selector: ['auto-1-node-1', 'auto-1-node-2'],
     strategy: { type: 'leastPing' },
-    fallbackTag: 'auto-1-node-1'
+    fallbackTag: 'auto-1-unavailable'
   }]);
   const candidateTags = jsonConfigs[0].outbounds
     .filter(outbound => String(outbound.tag || '').startsWith('auto-1-node-'))
     .map(outbound => outbound.tag);
   assert.deepEqual(candidateTags, ['auto-1-node-1', 'auto-1-node-2']);
   const finalRule = jsonConfigs[0].routing.rules.at(-1);
-  assert.equal(finalRule.balancerTag, 'auto-1-balancer');
+  assert.equal(finalRule.balancerTag, 'auto-1-main-balancer');
   assert.equal(finalRule.outboundTag, undefined);
   assert.equal(jsonConfigs.length, 3, 'auto-select profile must be prepended without hiding physical regions');
 
@@ -486,11 +498,11 @@ test('clean JSON and SUB routes return the existing subscription without redirec
   assert.deepEqual((await modern.json()).map(c=>c.outbounds),(await legacy.json()).map(c=>c.outbounds));
   const plain = await get('/' + slug + '?format=sub&raw=1');
   assert.equal(plain.status,200); assert.match(plain.headers.get('content-type'),/text\/plain/);
-  assert.equal(await plain.text(),await (await get('/sub/'+slug+'?raw=1')).text());
+  assert.equal(stripPortalToken(await plain.text()),stripPortalToken(await (await get('/sub/'+slug+'?raw=1')).text()));
   const single = await (await get('/'+slug+'?format=single')).json(); assert.ok(single.outbounds);
   const head = await get('/'+slug,{method:'HEAD'}); assert.equal(head.status,200); assert.equal(await head.text(),'');
   const browser = await get('/'+slug,{headers:{Accept:'text/html'}});
-  assert.equal(browser.status,302); assert.ok(browser.headers.get('location').includes('/open/'+slug));
+  assert.equal(browser.status,302); assert.ok(new URL(browser.headers.get('location')).pathname.startsWith('/cabinet/'));
   assert.equal((await get('/'+slug+'?format=bad')).status,400);
   assert.equal((await get('/'+slug+'?format=sub&format=json')).status,400);
   assert.equal((await get('/unknown-client-12345678')).status,404);
@@ -506,7 +518,7 @@ test('clean JSON and SUB routes return the existing subscription without redirec
   const blocked = await (await hwidRequest('device-B-12345678')).text(); assert.ok(!blocked.includes('edge-a.example.test'),'clean URL must not bypass HWID limit');
   const status = await (await get('/open/'+slug+'/status')).json();
   assert.ok(status.subscription);
-  const portal = await (await get('/open/'+slug)).text();
+  const portal = await (await fetchAccount(`http://127.0.0.1:${app.port}/open/${slug}`)).text();
   assert.ok(portal.includes('/'+slug), 'public account links remain usable');
   assert.ok(!portal.includes('/json/'+slug), 'newly displayed JSON link has no format path');
   db.prepare('UPDATE clients SET enabled=0').run(); assert.equal((await get('/'+slug)).status,404);
@@ -549,9 +561,10 @@ test('clean URL setting saves on/off, controls all client links, preserves route
     const summary=JSON.parse((await request(`/clients/${id}/summary.json`)).text);
     assert.equal(summary.client.links.json,`http://127.0.0.1:${app.port}${json}`);
     assert.equal(summary.client.links.sub,`http://127.0.0.1:${app.port}${sub}`);
-    const portal=await request('/open/'+slug);assert.equal(portal.status,200);
-    assert.ok(portal.text.includes(`http://127.0.0.1:${app.port}${json}`));
-    assert.ok(portal.text.includes(`http://127.0.0.1:${app.port}${sub}`));
+    const portal=await fetchAccount(`http://127.0.0.1:${app.port}/open/${slug}`);assert.equal(portal.status,200);
+    const portalHtml = await portal.text();
+    assert.ok(portalHtml.includes(`http://127.0.0.1:${app.port}${json}`));
+    assert.ok(portalHtml.includes(`http://127.0.0.1:${app.port}${sub}`));
     const settings=await request('/settings');assert.equal(settings.status,200);
     const control=settings.text.match(/<input[^>]+name="subscription_clean_urls"[^>]*>/)?.[0];assert.ok(control);
     assert.equal(control.includes('checked'),clean);
@@ -604,7 +617,7 @@ test('clean URL setting saves on/off, controls all client links, preserves route
   await request('/settings',{...form(),subscription_link_controls:'1'});
   await stopApp(app);app=await startApp(dataDir,'production');
   assert.equal(setting('subscription_clean_urls'),'0','disabled preference survives restart');
-  const portal=await(await fetch(`http://127.0.0.1:${app.port}/open/${slug}`)).text();assert.ok(portal.includes('/json/'+slug));
+  const portal=await(await fetchAccount(`http://127.0.0.1:${app.port}/open/${slug}`)).text();assert.ok(portal.includes('/json/'+slug));
   assert.equal((await fetch(`http://127.0.0.1:${app.port}/${slug}`)).status,200,'clean URL still works after disabling and restarting');
 });
 
@@ -757,7 +770,7 @@ test('multiple auto-connections create, edit, toggle and delete independently vi
   for(let i=0;i<autos.length;i++){
     const cfg=autos[i],p=profiles[i],spec=forms[i];
     assert.deepEqual(cfg.autoSelect.normalNodeIds,spec.nodes);assert.equal(cfg.observatory.probeInterval,`${spec.seconds}s`);
-    assert.equal(cfg.autoSelect.fastStart,true);assert.equal(cfg.autoSelect.noHealthyNode,'try-first-main');
+    assert.equal(cfg.autoSelect.fastStart,false);assert.equal(cfg.autoSelect.noHealthyNode,'block-until-healthy');
     assert.deepEqual(cfg.observatory.subjectSelector,[`auto-${p.id}-node-`]);
     const tags=new Set(cfg.outbounds.map(o=>o.tag));
     for(const balancer of cfg.routing.balancers){assert.ok(balancer.selector.every(tag=>tags.has(tag)));assert.ok(tags.has(balancer.fallbackTag));}

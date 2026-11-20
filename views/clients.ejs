@@ -1,5 +1,6 @@
 <%- include('partials_header', { pageTitle: 'Пользователи', pageSubtitle: 'Xray / Reality, подписки, лимиты и управление доступом', activePage: 'clients' }) %>
 <link rel="stylesheet" href="/css/client-pagination.css" />
+<div class="client-account-hub"><a href="/subscription-migration" class="link-btn account-hub-link">Личные кабинеты · перенос Happ / INCY</a></div>
 <%
   function flagEmojiFromCode(code) {
     const cc = String(code || '').trim().toUpperCase();
@@ -1373,13 +1374,17 @@
       <div class="device-details-head">
         <div>
           <h2>Устройства клиента</h2>
+          <p class="muted">Это регистрации приложений после обновления подписки, а не список одновременных подключений. Один телефон в разных приложениях может занимать несколько мест.</p>
+          <form method="post" action="/clients/<%= client.id %>/rotate-access" onsubmit="return confirm('Полностью перевыпустить доступ только этому клиенту? Все старые ссылки, VLESS и AWG-ключи перестанут работать. Потребуется добавить новую подписку. При ошибке отзыва доступ останется отключённым до повторного запуска.')">
+            <button type="submit" class="btn-danger">Перевыпустить ссылку и все ключи</button>
+          </form>
           <% if (client.awg_devices_enabled) { %><form method="post" action="/clients/<%= client.id %>/devices/create"><button type="submit" class="secondary">Создать ссылку устройства без HWID</button></form><% } %>
           <p class="muted"><%= client.login %> · <strong><%= clientDeviceUsage(client) %></strong></p>
         </div>
         <% if ((client.devices || []).length) { %>
           <form method="post" action="/clients/<%= client.id %>/devices/reset" onsubmit="return confirm('Сбросить все зарегистрированные устройства этого клиента?')">
             <input type="hidden" name="back" value="/clients?q=<%= encodeURIComponent(client.login || '') %>&edit=<%= client.id %>" />
-            <button type="submit" class="btn-danger">Сбросить все</button>
+            <button type="submit" class="btn-danger">Очистить список устройств</button>
           </form>
         <% } %>
       </div>

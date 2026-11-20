@@ -37,6 +37,44 @@
 <style>
   /* Critical layout is kept inline as well as in Spectrum CSS. This prevents an
      old proxy/browser stylesheet from squeezing the form into 12 narrow tracks. */
+  .routing-rule-modes { display:flex; flex-wrap:wrap; gap:8px 18px; margin:0; padding:8px 0; border:0; }
+  .routing-rule-modes label { display:flex; align-items:center; gap:6px; cursor:pointer; }
+  #routing-rule-list > .routing-mode-assignment > .routing-rule-heading {
+    display:grid; grid-template-columns:minmax(max-content, 1fr) auto; align-items:center;
+    gap:8px 12px; margin:0 14px 8px; padding:8px 0;
+    border-bottom:1px solid var(--line);
+  }
+  #routing-rule-list [data-routing-rule-title] {
+    justify-self:start; white-space:nowrap; font-size:14px;
+    padding:4px 8px; border-radius:7px; background:var(--surface-strong);
+  }
+  #routing-rule-list > .routing-mode-assignment > .routing-rule-heading > button {
+    width:auto; min-width:0; min-height:36px; padding:4px 12px; white-space:nowrap; justify-self:end;
+  }
+  #routing-rule-list .routing-rule-modes {
+    gap:8px 16px; padding:6px 0 8px;
+  }
+  #routing-rule-list .routing-rule-modes legend {
+    padding:0; color:var(--text); font-weight:650;
+  }
+  #routing-rule-list .routing-rule-modes input {
+    flex:none; margin:0;
+  }
+  #routing-rule-list [data-routing-mode-help] {
+    margin:0 0 12px; padding:9px 11px;
+    border-inline-start:3px solid var(--blue); border-radius:6px;
+    background:var(--info-soft);
+    color:var(--text); font-size:12px; line-height:1.5;
+  }
+  #routing-rule-list .routing-rule-dns-toggle { margin-top:12px; }
+  #routing-rule-list [data-rule-dns-fields] {
+    margin-block-start:12px !important; gap:12px 18px !important;
+  }
+  #routing-rule-list [data-rule-dns-fields] > label { display:grid; align-content:start; gap:6px; }
+  @media (max-width:640px) {
+    #routing-rule-list > .routing-mode-assignment > .routing-rule-heading > button { min-height:44px; }
+  }
+  [data-rule-dns-fields][hidden] { display:none !important; }
   .routing-page-grid { display:grid !important; grid-template-columns:minmax(0,3fr) minmax(360px,2fr) !important; align-items:start; }
   .routing-page-grid > .routing-editor-card,
   .routing-page-grid > .routing-summary-card { grid-column:auto !important; min-width:0; }
@@ -145,69 +183,66 @@
         <span><strong>Использовать маршрутизацию</strong><small>Если выключить, Nexus не добавляет свои правила; маршрут определяется конфигурацией и режимом приложения.</small></span>
       </label>
 
-      <h3>Режимы и узлы</h3>
-      <p class="hint">Можно включить несколько режимов. Каждый узел назначается только одному режиму; панель автоматически блокирует его в остальных списках.</p>
-      <div class="routing-mode-assignments">
-        <% [
-          ['proxy-except', 'Выбранный через proxy кроме...', 'На отмеченных узлах введённые ниже исключения идут напрямую мимо VPN, весь остальной TCP/UDP-трафик — через proxy.'],
-          ['node-selective', 'Выбранное через proxy, остальное напрямую', 'На отмеченных узлах выбранные GeoSite/GeoIP идут через этот узел, остальной трафик — напрямую.']
-        ].forEach(([mode, title, description]) => { const assigned = (routingModeAssignments[mode] || []).map(Number); %>
-          <section class="routing-mode-assignment <%= assigned.length ? 'is-enabled' : '' %>" data-routing-mode-card="<%= mode %>">
-            <label class="switch-row compact">
-              <input type="checkbox" name="routing_modes" value="<%= mode %>" <%= assigned.length ? 'checked' : '' %> data-routing-mode-toggle />
-              <span><strong><%= title %></strong><small><%= description %></small></span>
-            </label>
-            <div class="routing-mode-node-picker" data-routing-mode-picker <%= assigned.length ? '' : 'hidden' %>>
-              <div class="routing-node-picker-head"><strong>Узлы этого режима</strong><span><button type="button" data-routing-select-all>Все доступные</button><button type="button" data-routing-clear>Снять</button></span></div>
-              <div class="routing-node-checkboxes">
-                <% nodes.forEach(n => { %>
-                  <label data-routing-node-option data-node-id="<%= n.id %>" data-routing-unsupported="<%= n.inbound_protocol === 'amneziawg' ? '1' : '0' %>">
-                    <input type="checkbox" name="routing_mode_nodes_<%= mode.replace(/-/g, '_') %>" value="<%= n.id %>" <%= n.inbound_protocol === 'amneziawg' ? 'disabled' : (assigned.includes(Number(n.id)) ? 'checked' : '') %> />
-                    <span><%- flagHtml(n.country_code, n.country_flag, n.country_name_ru || n.name) %><strong><%= n.country_name_ru || n.name %></strong><small><%= n.transport_label || 'параметры не загружены' %><%= n.inbound_protocol === 'amneziawg' ? ' · без правил Xray' : '' %></small></span>
-                  </label>
-                <% }) %>
-              </div>
-              <% if (mode === 'proxy-except') { %>
-                <div class="routing-mode-rules routing-mode-rules-direct">
-                  <div class="routing-mode-rules-head"><strong>Исключения этого режима → напрямую</strong><small>Обходят VPN только в JSON отмеченных выше узлов.</small></div>
-                  <div class="form-grid">
-                    <div class="field half"><label>Domain / GeoSite → direct</label><textarea name="except_domains" rows="6" placeholder="geosite:category-ru&#10;domain:bank.ru"><%= exceptDomainsText %></textarea><small class="hint"><code>geosite:category-ru</code>: российские сайты увидят прямой IP, иностранные — IP выбранного узла. Для надёжной проверки автоматически добавляются 2ip.ru, 2ip.io и 2ip.me.</small></div>
-                    <div class="field half"><label>IP / GeoIP → direct</label><textarea name="except_ips" rows="6" placeholder="geoip:ru&#10;10.0.0.0/8"><%= exceptIpsText %></textarea><small class="hint">Для российских IP укажи <code>geoip:ru</code>.</small></div>
-                  </div>
-                  <label class="switch-row">
-                    <input type="checkbox" name="direct_dns_enabled" value="1" <%= directDnsEnabled ? 'checked' : '' %> />
-                    <span><strong>Отдельный DNS для исключений → напрямую</strong><small>Повторяет список Domain / GeoSite выше: например, category-ru и domain:qip.ru. Запросы к этому DNS обходят VPN. Только в JSON узлов этого режима; по умолчанию выключено.</small></span>
-                  </label>
-                  <div class="form-grid">
-                    <div class="field half">
-                      <label>DNS для direct</label>
-                      <select name="direct_dns_preset">
-                        <% [['doh_yandex','Яндекс DoH · HTTPS напрямую'], ['yandex','Яндекс · UDP/53 напрямую'], ['cloudflare','Cloudflare · UDP/53 напрямую'], ['google','Google · UDP/53 напрямую'], ['manual','Только вручную']].forEach(([value,label]) => { %>
-                          <option value="<%= value %>" <%= directDnsPreset === value ? 'selected' : '' %>><%= label %></option>
-                        <% }) %>
-                      </select>
-                    </div>
-                    <div class="field half">
-                      <label>Ручные DNS для direct · дополнительно к набору</label>
-                      <textarea name="direct_dns_custom" rows="3" placeholder="77.88.8.8&#10;https://common.dot.dns.yandex.net/dns-query"><%= directDnsCustomText || '' %></textarea>
-                      <small class="hint">IPv4/IPv6 без порта либо HTTPS DoH URL, по одному в строке. DoH отправляется локально, имя DNS-сервера определяет система устройства.</small>
-                    </div>
-                  </div>
-                  <p class="hint">DNS выбирается по домену до получения IP, поэтому <code>geoip:ru</code> само по себе не выбирает отдельный DNS. Приоритетные proxy-домены сначала используют основной DNS. При ошибке резолвера возможен обычный DNS fallback. Не применяется к режиму «выбранное через proxy, остальное напрямую».</p>
-                </div>
-              <% } else { %>
-                <div class="routing-mode-rules routing-mode-rules-proxy">
-                  <div class="routing-mode-rules-head"><strong>Выбранное этого режима → через узел</strong><small>Использует общий список «Всегда через VPN» ниже. Всё остальное идёт напрямую.</small></div>
-                </div>
-              <% } %>
-            </div>
-          </section>
-        <% }) %>
+      <div class="section-title-row">
+        <h3>Правила по списку</h3>
+        <button type="button" class="btn-secondary" id="routing-add-rule">+ Добавить правило</button>
       </div>
+      <p class="hint">У каждого правила свои узлы, список и DNS. Узел можно выбрать в одном правиле. Автовыбор с узлами из разных правил использует общую схему маршрутизации.</p>
+      <input type="hidden" name="routing_groups" id="routing-groups-payload" />
+      <% const emptyRule = { mode: 'node-selective', nodeIds: [], domains: [], ips: [], directDnsEnabled: false, directDnsPreset: 'doh_yandex', directDnsCustom: '' }; %>
+      <div class="routing-mode-assignments" id="routing-rule-list">
+      <% [...routingGroups, emptyRule].forEach((rule, index) => {
+        const template = index === routingGroups.length;
+        if (template) { %></div><template id="routing-rule-template"><% } %>
+        <section class="routing-mode-assignment is-enabled" data-routing-mode-card>
+          <div class="routing-node-picker-head routing-rule-heading">
+            <strong data-routing-rule-title>Правило <%= index + 1 %></strong>
+            <button type="button" class="btn-secondary" data-routing-remove-rule aria-label="Убрать правило <%= index + 1 %>">Убрать</button>
+          </div>
+          <div class="routing-mode-node-picker">
+            <fieldset class="routing-rule-modes">
+              <legend>Что направлять через VPN</legend>
+              <label><input type="radio" name="rule-mode-<%= index %>" value="node-selective" <%= rule.mode === 'node-selective' ? 'checked' : '' %> /> Только по списку</label>
+              <label><input type="radio" name="rule-mode-<%= index %>" value="proxy-except" <%= rule.mode === 'proxy-except' ? 'checked' : '' %> /> Всё, кроме списка</label>
+            </fieldset>
+            <p class="hint" data-routing-mode-help></p>
+            <div class="routing-node-picker-head"><strong>Узлы правила</strong><span><button type="button" data-routing-select-all>Все доступные</button><button type="button" data-routing-clear>Снять</button></span></div>
+            <div class="routing-node-checkboxes">
+              <% nodes.forEach(n => { const unavailable = n.inbound_protocol === 'amneziawg'; %>
+                <label data-routing-node-option data-routing-unsupported="<%= unavailable ? '1' : '0' %>">
+                  <input type="checkbox" value="<%= n.id %>" <%= unavailable ? 'disabled' : (rule.nodeIds.includes(Number(n.id)) ? 'checked' : '') %> />
+                  <span><%- flagHtml(n.country_code, n.country_flag, n.country_name_ru || n.name) %><strong><%= n.name %><%= n.label_suffix && !String(n.name).includes(n.label_suffix) ? ' · ' + n.label_suffix : '' %></strong><small><%= unavailable ? 'AmneziaWG' : n.transport_label || '' %><%= Number(n.enabled) === 0 ? ' · отключён' : '' %></small></span>
+                </label>
+              <% }) %>
+            </div>
+            <div class="routing-mode-rules">
+              <div class="form-grid">
+                <label class="field half"><span>Домены / GeoSite</span><textarea data-rule-domains rows="5" placeholder="domain:example.ru&#10;geosite:category-ru"><%= rule.domains.join(String.fromCharCode(10)) %></textarea></label>
+                <label class="field half"><span>IP / CIDR / GeoIP</span><textarea data-rule-ips rows="5" placeholder="geoip:ru&#10;192.0.2.0/24"><%= rule.ips.join(String.fromCharCode(10)) %></textarea></label>
+              </div>
+              <label class="switch-row routing-rule-dns-toggle">
+                <input type="checkbox" data-rule-dns-enabled <%= rule.directDnsEnabled ? 'checked' : '' %> />
+                <span><strong>Отдельный DNS для доменов списка</strong><small>У доменов и GeoSite из этого списка приоритет над основным DNS. Записи IP и GeoIP влияют на маршрут.</small></span>
+              </label>
+              <div class="form-grid" data-rule-dns-fields <%= rule.directDnsEnabled ? '' : 'hidden' %>>
+                <label class="field half"><span>Набор DNS</span>
+                  <select data-rule-dns-preset>
+                    <% [['doh_yandex','Яндекс DoH'], ['yandex','Яндекс · UDP/53'], ['cloudflare','Cloudflare · UDP/53'], ['google','Google · UDP/53'], ['manual','Только вручную']].forEach(([value,label]) => { %>
+                      <option value="<%= value %>" <%= rule.directDnsPreset === value ? 'selected' : '' %>><%= label %></option>
+                    <% }) %>
+                  </select>
+                </label>
+                <label class="field half"><span>Ручные DNS</span><textarea data-rule-dns-custom rows="3" placeholder="77.88.8.8&#10;https://common.dot.dns.yandex.net/dns-query"><%= rule.directDnsCustom %></textarea></label>
+              </div>
+            </div>
+          </div>
+        </section>
+        <% if (template) { %></template><% }
+      }) %>
 
       <section class="routing-mode-rules routing-mode-rules-proxy" id="routing-force-proxy">
-        <h3>Всегда через VPN — приоритет над direct</h3>
-        <p class="hint">Укажите российский сайт или IP, который должен идти через VPN даже при direct-исключениях <code>geosite:category-ru</code> и <code>geoip:ru</code>. В режиме «Выбранный через proxy кроме…» эти правила проверяются раньше direct. В режиме «Выбранное через proxy» этот же список определяет выбранный трафик. Только JSON назначенных выше узлов; блокировки имеют более высокий приоритет.</p>
+        <h3>Всегда через VPN · общий список</h3>
+        <p class="hint">Общий список для всех узлов с правилами. Эти домены и IP идут через VPN даже при совпадении с исключением. Блокировки проверяются первыми. Чтобы список действовал только на части узлов, внесите его в конкретное правило выше.</p>
         <div class="form-grid">
           <div class="field half"><label for="force-proxy-domains">Домены / GeoSite → всегда через VPN</label><textarea id="force-proxy-domains" name="custom_domains" rows="6" placeholder="domain:example.ru&#10;full:service.example.ru"><%= customDomainsText %></textarea><small class="hint">По одному в строке. <code>domain:example.ru</code> включает поддомены, <code>full:</code> — точное имя. Также поддерживаются <code>geosite:</code>, <code>regexp:</code> и <code>keyword:</code>.</small></div>
           <div class="field half"><label for="force-proxy-ips">IP / CIDR / GeoIP → всегда через VPN</label><textarea id="force-proxy-ips" name="custom_ips" rows="6" placeholder="203.0.113.10/32&#10;203.0.113.0/24&#10;2001:db8::/32"><%= customIpsText %></textarea><small class="hint">IPv4/IPv6, подсеть CIDR или <code>geoip:</code>, по одному в строке. IP-правило не определяет DNS по имени; если известен домен, добавьте и его. Сохраните и обновите JSON-подписку в приложении.</small></div>
@@ -279,8 +314,7 @@
       <p class="hint">Применяется к включённому sniffing только в JSON выбранных для маршрутизации узлов, в том числе обычных и каскадных. Не меняет серверный inbound, URI/SUB и отдельный Happ routing-профиль.</p>
 
       <h3>Основной DNS для JSON-подписки</h3>
-      <p class="hint">Эти DNS попадут в генерируемый JSON-конфиг. DoH/DoT можно использовать, если клиентская сборка Xray/Happ их поддерживает.</p>
-      <p class="hint">Отдельный direct DNS настраивается рядом с direct-исключениями выше. Это настройки встроенного DNS Xray, а не принудительная смена DNS всех приложений: перехват DNS и TUN зависят от клиента.</p>
+      <p class="hint">Используется для доменов без отдельного DNS в правиле. Включённый DNS списка имеет приоритет для совпавших доменов. Эти настройки применяются к DNS-запросам, которые обрабатывает клиент.</p>
       <div class="form-grid">
         <div class="field half">
           <label>Готовый набор DNS</label>
@@ -309,16 +343,19 @@
 
   <section class="card span-6 routing-summary-card">
     <h2>Текущий итог</h2>
-    <div class="alert"><strong>DNS direct:</strong> <%= directDnsEnabled ? ('Включён для Domain / GeoSite исключений · ' + directDnsPreset) : 'Выключен · прежний основной DNS' %><br /><strong>routeOnly:</strong> <%= sniffingRouteOnly ? 'Включён · адрес не подменяется' : 'Выключен · прежнее поведение sniffing' %></div>
+    <div class="alert"><strong>routeOnly:</strong> <%= sniffingRouteOnly ? 'Включён · адрес не подменяется' : 'Выключен · прежнее поведение sniffing' %></div>
     <div class="kv-list">
       <div class="kv-item">
         <strong>JSON-ссылка</strong>
         <div class="muted"><code><%= jsonUrlExample %></code></div>
       </div>
       <div class="kv-item">
-        <strong>Назначение режимов</strong>
-        <% [['proxy-except', 'Выбранный через proxy кроме...'], ['node-selective', 'Выбранное через proxy, остальное напрямую']].forEach(([mode, title]) => { const ids = (routingModeAssignments[mode] || []).map(Number); if (!ids.length) return; %>
-          <div class="muted"><b><%= title %>:</b> <%= nodes.filter(node => ids.includes(Number(node.id))).map(node => node.country_name_ru || node.name).join(', ') %></div>
+        <strong>Правила и узлы</strong>
+        <% routingGroups.forEach((rule, index) => { %>
+          <div class="muted"><b><%= index + 1 %>. <%= rule.mode === 'proxy-except' ? 'Всё, кроме списка' : 'Только по списку' %></b>
+            <div><%= nodes.filter(node => rule.nodeIds.includes(Number(node.id))).map(node => node.name).join(', ') || 'Нет доступных узлов' %></div>
+            <div>Позиций в списке: <%= rule.domains.length + rule.ips.length %> · DNS: <%= rule.directDnsEnabled ? 'отдельный' : 'основной' %></div>
+          </div>
         <% }) %>
       </div>
       <div class="kv-item">
@@ -344,29 +381,18 @@
           <div class="muted">Нет приоритетных правил VPN.</div>
         <% } %>
       </div>
-      <% if ((routingModeAssignments['proxy-except'] || []).length) { %>
-        <div class="kv-item">
-          <strong>2. Потом напрямую / direct</strong>
-          <% if (directDomains.length || directIps.length) { %>
-            <% if (directDomains.length) { %><pre class="routing-preview"><%= directDomains.join('\n') %></pre><% } %>
-            <% if (directIps.length) { %><pre class="routing-preview"><%= directIps.join('\n') %></pre><% } %>
-          <% } else { %>
-            <div class="muted">Нет direct-исключений.</div>
-          <% } %>
-        </div>
-      <% } %>
-
       <div class="kv-item">
         <strong>Всё остальное</strong>
-        <div class="muted">Зависит от режима конкретного узла: для «всё, кроме» — через proxy, для остальных — напрямую.</div>
+        <div class="muted">За пределами списка трафик идёт напрямую в режиме «Только по списку» и через VPN в режиме «Всё, кроме списка».</div>
       </div>
     </div>
   </section>
 
   <section class="card span-12 geodata-catalog-card">
     <h2>Справочник GeoSite / GeoIP</h2>
-    <p class="muted">Компактный список тегов из источников Happ / Loyalsoldier. Найди нужную категорию, скопируй её или сразу добавь в VPN/direct поле.</p>
+    <p class="muted">Компактный список тегов из источников Happ / Loyalsoldier. Найдите категорию и добавьте её в правило, в общий список VPN или в блокировку.</p>
     <div class="geodata-toolbar">
+      <label>Куда добавить запись <select id="routing-catalog-target"><option value="">Всегда через VPN</option></select></label>
       <input id="geodata-search" type="search" placeholder="Поиск: mail, meta, viber, ru, telegram..." oninput="renderGeodataCatalog()" />
       <button type="button" class="btn-secondary" onclick="loadGeodataCatalog(true)">Обновить список</button>
     </div>
@@ -394,54 +420,93 @@ const LOYAL_GEOIP_URL = 'https://github.com/Loyalsoldier/v2ray-rules-dat/release
 const RUSSIA_GEOSITE_URL = 'https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/geosite.dat';
 const RUSSIA_GEOIP_URL = 'https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/geoip.dat';
 
+function routingRuleCards() {
+  return [...document.querySelectorAll('#routing-rule-list [data-routing-mode-card]')];
+}
 function syncRoutingModeAssignments() {
-  const cards = [...document.querySelectorAll('[data-routing-mode-card]')];
+  const cards = routingRuleCards();
   const owners = new Map();
-  cards.forEach(card => {
-    const toggle = card.querySelector('[data-routing-mode-toggle]');
-    const picker = card.querySelector('[data-routing-mode-picker]');
-    card.classList.toggle('is-enabled', !!toggle?.checked);
-    if (picker) picker.hidden = !toggle?.checked;
-    card.querySelectorAll('[data-routing-node-option] input:checked').forEach(input => {
-      if (toggle?.checked) owners.set(String(input.value), card.dataset.routingModeCard);
-    });
+  const catalog = document.getElementById('routing-catalog-target');
+  const selected = catalog?.value || '';
+  catalog?.replaceChildren(new Option('Всегда через VPN', ''));
+
+  cards.forEach((card, index) => {
+    const title = `Правило ${index + 1}`;
+    card.querySelector('[data-routing-rule-title]').textContent = title;
+    card.querySelector('[data-routing-remove-rule]').setAttribute('aria-label', `Убрать правило ${index + 1}`);
+    catalog?.add(new Option(title, String(index + 1)));
+    const except = card.querySelector('input[type="radio"]:checked')?.value === 'proxy-except';
+    const customDns = card.querySelector('[data-rule-dns-enabled]').checked;
+    const routeHelp = except ? 'Список идёт напрямую, остальной трафик — через VPN.' : 'Список идёт через VPN, остальной трафик — напрямую.';
+    const dnsHelp = customDns ? (except ? 'DNS списка тоже идёт напрямую.' : 'DNS списка тоже идёт через VPN.') : 'Используется основной DNS.';
+    card.querySelector('[data-routing-mode-help]').textContent = `${routeHelp} ${dnsHelp}`;
+    card.querySelector('[data-rule-dns-fields]').hidden = !customDns;
+    card.querySelectorAll('[data-routing-node-option] input:checked').forEach(input => owners.set(input.value, card));
   });
+  if (catalog && Number(selected) <= cards.length) catalog.value = selected;
   cards.forEach(card => {
     card.querySelectorAll('[data-routing-node-option]').forEach(option => {
       const input = option.querySelector('input');
-      const owner = owners.get(String(input?.value || ''));
+      const owner = owners.get(input.value);
       const unsupported = option.dataset.routingUnsupported === '1';
-      const unavailable = unsupported || (!!owner && owner !== card.dataset.routingModeCard);
-      if (input) input.disabled = unavailable;
-      option.classList.toggle('is-unavailable', unavailable);
-      option.title = unsupported ? 'Правила Xray не встраиваются в нативный AmneziaWG-конфиг' : (unavailable ? 'Узел уже выбран в другом режиме' : '');
+      input.disabled = unsupported || (!!owner && owner !== card);
+      option.classList.toggle('is-unavailable', input.disabled);
+      option.title = unsupported ? 'Маршрутизация Xray недоступна для AmneziaWG' : (input.disabled ? 'Узел выбран в другом правиле' : '');
     });
   });
+  const add = document.getElementById('routing-add-rule');
+  if (add) add.disabled = cards.length >= 30;
 }
 
 function initRoutingModeAssignments() {
   const form = document.querySelector('.routing-form');
-  const cards = [...document.querySelectorAll('[data-routing-mode-card]')];
-  cards.forEach(card => {
-    card.addEventListener('change', syncRoutingModeAssignments);
-    card.querySelector('[data-routing-select-all]')?.addEventListener('click', () => {
+  const list = document.getElementById('routing-rule-list');
+  if (!form || !list) return;
+  let sequence = routingRuleCards().length;
+  const addRule = () => {
+    if (routingRuleCards().length >= 30) return;
+    const fragment = document.getElementById('routing-rule-template').content.cloneNode(true);
+    fragment.querySelectorAll('input[type="radio"]').forEach(input => { input.name = `rule-mode-${sequence}`; });
+    sequence++;
+    const card = fragment.firstElementChild;
+    list.append(fragment);
+    syncRoutingModeAssignments();
+    card.querySelector('input[type="radio"]:checked')?.focus();
+  };
+  document.getElementById('routing-add-rule').addEventListener('click', addRule);
+  list.addEventListener('change', syncRoutingModeAssignments);
+  list.addEventListener('click', event => {
+    const card = event.target.closest('[data-routing-mode-card]');
+    if (!card) return;
+    if (event.target.closest('[data-routing-remove-rule]')) {
+      card.remove();
+      document.getElementById('routing-catalog-target').value = '';
+    } else if (event.target.closest('[data-routing-select-all]')) {
       card.querySelectorAll('[data-routing-node-option] input:not(:disabled)').forEach(input => { input.checked = true; });
-      syncRoutingModeAssignments();
-    });
-    card.querySelector('[data-routing-clear]')?.addEventListener('click', () => {
+    } else if (event.target.closest('[data-routing-clear]')) {
       card.querySelectorAll('[data-routing-node-option] input').forEach(input => { input.checked = false; });
-      syncRoutingModeAssignments();
-    });
+    } else return;
+    syncRoutingModeAssignments();
   });
-  form?.addEventListener('submit', event => {
-    if (!form.querySelector('input[name="routing_enabled"]')?.checked) return;
-    const activeCards = cards.filter(card => card.querySelector('[data-routing-mode-toggle]')?.checked);
-    const invalid = activeCards.find(card => !card.querySelector('[data-routing-node-option] input:checked'));
-    if (!activeCards.length || invalid) {
+  form.addEventListener('submit', event => {
+    const cards = routingRuleCards();
+    const rules = cards.map(card => ({
+      mode: card.querySelector('input[type="radio"]:checked')?.value,
+      nodeIds: [...card.querySelectorAll('[data-routing-node-option] input:checked:not(:disabled)')].map(input => Number(input.value)),
+      domains: card.querySelector('[data-rule-domains]').value,
+      ips: card.querySelector('[data-rule-ips]').value,
+      directDnsEnabled: card.querySelector('[data-rule-dns-enabled]').checked,
+      directDnsPreset: card.querySelector('[data-rule-dns-preset]').value,
+      directDnsCustom: card.querySelector('[data-rule-dns-custom]').value
+    }));
+    const invalid = rules.findIndex(rule => !rule.nodeIds.length);
+    if (invalid !== -1 || (!rules.length && form.querySelector('[name="routing_enabled"]').checked)) {
       event.preventDefault();
-      alert(!activeCards.length ? 'Включи хотя бы один режим маршрутизации.' : 'Для каждого включённого режима выбери хотя бы один узел.');
-      invalid?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      alert(invalid !== -1 ? 'Выберите узлы для каждого правила или уберите пустое правило.' : 'Добавьте хотя бы одно правило.');
+      cards[invalid]?.scrollIntoView({ block:'center' });
+      return;
     }
+    document.getElementById('routing-groups-payload').value = JSON.stringify(rules);
   });
   syncRoutingModeAssignments();
 }
@@ -491,7 +556,7 @@ function setGeoPreset(kind) {
 }
 
 function appendRoutingLine(textareaName, value) {
-  const area = document.querySelector(`textarea[name="${textareaName}"]`);
+  const area = typeof textareaName === 'string' ? document.querySelector(`textarea[name="${textareaName}"]`) : textareaName;
   if (!area || !value) return;
   const lines = area.value.split(/\n+/).map(v => v.trim()).filter(Boolean);
   if (!lines.includes(value)) lines.push(value);
@@ -545,8 +610,13 @@ function makeGeoRow(item, kind) {
   const direct = document.createElement('button');
   direct.type = 'button';
   direct.className = 'geodata-mini';
-  direct.textContent = 'DIRECT';
-  direct.onclick = () => appendRoutingLine(kind === 'geosite' ? 'except_domains' : 'except_ips', value);
+  direct.textContent = 'В правило';
+  direct.onclick = () => {
+    const index = Number(document.getElementById('routing-catalog-target').value) - 1;
+    const card = routingRuleCards()[index];
+    if (!card) { alert('Выберите правило в списке над справочником.'); return; }
+    appendRoutingLine(card.querySelector(kind === 'geosite' ? '[data-rule-domains]' : '[data-rule-ips]'), value);
+  };
   row.appendChild(direct);
 
   const block = document.createElement('button');

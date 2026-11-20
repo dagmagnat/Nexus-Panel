@@ -1,0 +1,5 @@
+Official @incy/link-encoder 1.3.0, package/dist/index.js unchanged.
+Source: https://github.com/INCY-DEV/incy-link-encoder
+Package: https://registry.npmjs.org/@incy/link-encoder/-/link-encoder-1.3.0.tgz
+MIT license included. Node entry uses node:crypto; browser/sync entries are not bundled here.
+crypt1 is URL obfuscation, not protection against extraction by the device owner.

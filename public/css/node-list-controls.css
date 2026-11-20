@@ -1,0 +1,30 @@
+/* Keep ordering available in every mobile theme, including collapsed rows. */
+@media (max-width: 900px) {
+  body.page-nodes .nodes-modern-list .node-list-row { scroll-margin: 70px 0 100px; }
+  body.page-nodes .nodes-modern-list .drag-handle { touch-action: none; }
+  body.page-nodes .nodes-modern-list .node-list-row .node-order-buttons {
+    display: flex !important;
+    position: static !important;
+    grid-column: 1 / -1 !important;
+    justify-content: flex-end !important;
+    gap: 8px !important;
+    padding: 0 10px 8px !important;
+    transform: none !important;
+  }
+  body.page-nodes .nodes-modern-list .node-order-buttons .mobile-order-btn {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: 44px !important;
+    height: 40px !important;
+    min-width: 44px !important;
+    min-height: 40px !important;
+    padding: 0 !important;
+    font-size: 20px !important;
+    touch-action: manipulation;
+  }
+  body.page-nodes .nodes-modern-list .node-order-buttons button:disabled {
+    opacity: .35 !important;
+    cursor: not-allowed;
+  }
+}

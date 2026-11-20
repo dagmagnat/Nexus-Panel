@@ -32,28 +32,27 @@ test('per-node routing assignments keep direct exceptions and use the selected c
   assert.match(app, /assignmentExplicit: true/);
   assert.match(app, /const allowedModes = \['proxy-except', 'node-selective'\]/);
   assert.match(app, /mode === 'node-selective'/);
-  assert.match(app, /rules: getEffectiveJsonRoutingRules\(selectiveOutboundTag, routingMode\)/);
+  assert.match(app, /rules: getEffectiveJsonRoutingRules\(selectiveOutboundTag, routingMode, routingCfg\)/);
   assert.match(app, /const outboundTag = 'proxy'/);
   assert.match(app, /if \(directDomains\.length\) rules\.push\(\{ type: 'field', domain: directDomains, outboundTag: 'direct' \}\)/);
   assert.match(app, /rules\.push\(\{ type: 'field', network: 'tcp,udp', outboundTag: 'proxy' \}\)/);
   assert.doesNotMatch(app, /routing-node-\$\{Number\(cfg\.proxyNodeId\)\}/);
   assert.match(app, /Один узел нельзя использовать одновременно в нескольких режимах/);
-  assert.match(app, /outboundTag \}\);\n    if \(ips\.length\)/);
 });
 
 test('routing form exposes two visual rule scopes without a redundant node selector', () => {
-  assert.match(view, /\['node-selective', 'Выбранное через proxy, остальное напрямую'/);
+  assert.match(view, /value="node-selective"/);
   assert.doesNotMatch(view, /\['proxy-selected'/);
-  assert.match(view, /name="routing_modes"/);
+  assert.match(view, /name="routing_groups"/);
   assert.match(view, /data-routing-node-option/);
   assert.match(view, /is-unavailable/);
   assert.doesNotMatch(view, /name="routing_proxy_node_id"/);
-  assert.match(view, /routing-mode-rules-direct/);
+  assert.match(view, /data-rule-dns-enabled/);
   assert.match(view, /routing-mode-rules-proxy/);
-  assert.match(view, /name="except_domains"/);
+  assert.match(view, /data-rule-domains/);
   assert.match(view, /name="custom_domains"/);
   assert.match(view, /Все доступные/);
-  assert.match(view, /Выбранный через proxy кроме\.\.\./);
+  assert.match(view, /Всё, кроме списка/);
   assert.doesNotMatch(view, /Happ routing-профиль включается автоматически/);
   assert.doesNotMatch(view, /name="happ_routing_profile_enabled"/);
   assert.match(settings, /name="happ_routing_profile_enabled"/);

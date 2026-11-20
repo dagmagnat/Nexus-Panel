@@ -18,6 +18,10 @@ const ROLES = { viewer: ['clients.read'], operator: ['clients.read', 'clients.wr
 const PUBLIC_PATH = /^\/(?:sub|sub-plain|json|happ|hiddify|happ-routing|happ-routing-json|open)\/[^/]+(?:\/status)?\/?$/;
 function permissionFor(method, url) {
   const read = ['GET', 'HEAD'].includes(method);
+  if (!read && /^\/clients\/\d+\/rotate-access$/.test(url)) return 'clients.write';
+  if (read && url === '/subscription-migration') return 'clients.read';
+  if (!read && url === '/subscription-migration/prepare-all') return 'clients.bulk';
+  if (!read && /^\/subscription-migration\/\d+\/(?:prepare|mode)$/.test(url)) return 'clients.write';
   if (read && /^\/node-traffic(?:\/data\.json)?$/.test(url)) return 'clients.read';
   if (!read && url === '/clients/traffic/reset-selected') return 'clients.bulk';
   if (read && ['/', '/dashboard', '/more'].includes(url)) return 'clients.read';
@@ -36,6 +40,7 @@ function permissionFor(method, url) {
   return null;
 }
 function createAccess({ rootDir, localDb, legacyUsername, workspaceId = 'main' }) {
+  workspaceId = 'main';
   fs.mkdirSync(rootDir, { recursive: true });
   const file = path.join(rootDir, 'control.db');
   const control = new Database(file);
@@ -79,14 +84,14 @@ function createAccess({ rootDir, localDb, legacyUsername, workspaceId = 'main' }
     })();
   }
   const user = id => control.prepare('SELECT * FROM users WHERE id=?').get(Number(id) || -1);
-  const workspaces = u => u?.is_owner ? control.prepare('SELECT id,name,status FROM workspaces ORDER BY id').all() : control.prepare('SELECT w.id,w.name,w.status FROM workspaces w JOIN memberships m ON m.workspace_id=w.id WHERE m.user_id=? ORDER BY w.id').all(u?.id || -1);
-  
+  const workspaces = u => u && !u.disabled && (u.is_owner || control.prepare("SELECT 1 FROM memberships WHERE user_id=? AND workspace_id='main'").get(u.id)) ? [{id:'main',name:'Nexus Panel',status:'ready'}] : [];
   // Prepared statements for performance
   const userStmt = control.prepare('SELECT * FROM users WHERE id=?');
   const membershipStmt = control.prepare('SELECT permissions FROM memberships WHERE user_id=? AND workspace_id=?');
   
   function can(u, wid, permission) {
     if (!u || u.disabled) return false;
+    if (wid!=='main') return false;
     if (u.is_owner) return true;
     const member = membershipStmt.get(u.id, wid);
     return Boolean(member && JSON.parse(member.permissions).includes(permission));
@@ -96,36 +101,12 @@ function createAccess({ rootDir, localDb, legacyUsername, workspaceId = 'main' }
     const u = userStmt.get(Number(req.session?.userId) || -1);
     if (!u || u.disabled || Number(req.session.authVersion) !== u.auth_version) return null;
     
-    // Cache permissions in session to avoid repeated DB queries
-    const cacheKey = `_accessCache_${u.id}_${u.auth_version}`;
-    if (!req.session[cacheKey]) {
-      const userWorkspaces = workspaces(u);
-      const permissionsMap = {};
-      
-      // Pre-load all permissions for this user's workspaces
-      if (!u.is_owner) {
-        for (const ws of userWorkspaces) {
-          const member = membershipStmt.get(u.id, ws.id);
-          if (member) {
-            permissionsMap[ws.id] = JSON.parse(member.permissions);
-          }
-        }
-      }
-      
-      req.session[cacheKey] = {
-        workspaces: userWorkspaces,
-        permissions: permissionsMap,
-        cachedAt: Date.now()
-      };
-    }
-    
     return u;
   }
   function authenticate(req, u) {
     req.session.userId = u.id;
     req.session.authVersion = u.auth_version;
-    const available = workspaces(u).filter(w => w.status === 'ready');
-    req.session.workspaceId = (available.find(w => w.id === 'main') || available[0])?.id || '';
+    req.session.workspaceId = 'main';
   }
   function landingPath(u, wid) {
     if (!wid) return '/access';
@@ -135,12 +116,7 @@ function createAccess({ rootDir, localDb, legacyUsername, workspaceId = 'main' }
   function allowsRoute(u, wid, method, url, req = null) {
     if (!u || u.disabled) return false;
     
-    // Use cached workspaces from session if available
-    const cacheKey = `_accessCache_${u.id}_${u.auth_version}`;
-    const cached = req?.session?.[cacheKey];
-    const userWorkspaces = cached ? cached.workspaces : workspaces(u);
-    
-    if (!userWorkspaces.some(w => w.id === wid && w.status === 'ready')) return false;
+    if(wid!=='main' || !workspaces(u).length)return false;
     const read = ['GET', 'HEAD'].includes(method);
     if (url === '/logout' || (read && ['/access', '/more'].includes(url)) || url === '/access/switch') return true;
     if (url.startsWith('/access/')) return Boolean(u.is_owner && wid === 'main');
@@ -156,7 +132,8 @@ function createAccess({ rootDir, localDb, legacyUsername, workspaceId = 'main' }
     if (!allowsRoute(u, workspaceId, req.method, req.path, req)) { denyAccess(req, res); return false; }
     return true;
   }
-  function createUser({ username, password, wid, permissions }) {
+  function createUser({ username, password, permissions }) {
+    const wid='main';
     username = String(username || '').trim();
     if (!/^[\p{L}\p{N}_.@-]{3,64}$/u.test(username)) throw new Error('Логин: 3–64 буквы/цифры, _, -, . или @');
     if (typeof password !== 'string' || password.length < 12 || Buffer.byteLength(password) > 72) throw new Error('Пароль: минимум 12 символов, максимум 72 байта');
@@ -168,7 +145,8 @@ function createAccess({ rootDir, localDb, legacyUsername, workspaceId = 'main' }
       return id;
     })();
   }
-  function updateUser(id, { disabled, password, wid, permissions }) {
+  function updateUser(id, { disabled, password, permissions }) {
+    const wid='main';
     const u = user(id);
     if (!u) throw new Error('Пользователь не найден');
     if (u.is_owner) throw new Error('Главный администратор защищён от изменения этой формой');
@@ -181,19 +159,8 @@ function createAccess({ rootDir, localDb, legacyUsername, workspaceId = 'main' }
       if (!selected.length) control.prepare('DELETE FROM memberships WHERE user_id=? AND workspace_id=?').run(id, wid);
     })();
   }
-  function claimRemote(url) {
-    const parsed = new URL(url);
-    let host = parsed.hostname.toLowerCase();
-    let port = parsed.port || (parsed.protocol === 'https:' ? '443' : '80');
-    const localHost = process.env.NEXUS_LOCAL_XUI_PUBLIC_HOST || process.env.NEXUS_SHARED_XUI_PUBLIC_HOST;
-    if (host === 'local-3xui' || (localHost && host === localHost && port === '2053')) { host = 'managed-local-3xui'; port = '2053'; }
-    const endpoint = `${host}:${port}`;
-    control.transaction(() => {
-      const owner = control.prepare('SELECT workspace FROM remote_owners WHERE endpoint=?').get(endpoint);
-      if (owner && owner.workspace !== workspaceId) throw new Error('Эта удалённая панель уже закреплена за другим пространством. Независимым базам нужна отдельная панель.');
-      control.prepare('INSERT OR IGNORE INTO remote_owners VALUES (?,?)').run(endpoint, workspaceId);
-    })();
-  }
+  function claimRemote() {} // Only one panel database owns all remote nodes.
+
   return { control, user, workspaces, can, audit, authenticate, landingPath, sessionUser, authorize, allowsRoute, createUser, updateUser, claimRemote, workspaceId, rootDir };
 }
 function validatePermissions(values) {

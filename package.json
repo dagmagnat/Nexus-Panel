@@ -1,6 +1,6 @@
 {
   "name": "nexus-panel",
-  "version": "2.7.29",
+  "version": "2.7.30",
   "description": "Nexus Panel — 3x-ui and Remnawave aggregation panel with exact inbound sync, subscriptions and traffic monitoring",
   "homepage": "https://github.com/dagmagnat/Nexus-Panel#readme",
   "bugs": {
@@ -42,8 +42,8 @@
     "test:bulk-quota": "node --test tests/bulk-scope-quota.test.js tests/vision-lifecycle-http.test.js tests/bulk-remove-node.test.js tests/node-traffic.test.js tests/node-traffic-http.test.js"
   },
   "dependencies": {
-    "better-sqlite3": "11.10.0",
     "bcryptjs": "^2.4.3",
+    "better-sqlite3": "11.10.0",
     "body-parser": "^1.20.3",
     "compression": "^1.7.4",
     "connect-sqlite3": "0.9.15",
@@ -51,13 +51,13 @@
     "ejs": "^3.1.10",
     "express": "^4.21.2",
     "express-session": "^1.18.1",
-    "node-fetch": "^2.7.0",
-    "uuid": "^11.1.0",
-    "qrcode": "^1.5.4",
-    "node-telegram-bot-api": "^0.66.0",
     "https-proxy-agent": "^7.0.5",
+    "node-fetch": "^2.7.0",
+    "node-telegram-bot-api": "^0.66.0",
+    "qrcode": "1.5.4",
     "socks-proxy-agent": "^8.0.5",
-    "ssh2": "^1.16.0"
+    "ssh2": "^1.16.0",
+    "uuid": "^11.1.0"
   },
   "devDependencies": {
     "browser-sync": "3.0.4",

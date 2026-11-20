@@ -31,6 +31,7 @@ const { deviceRefreshPolicy, applyDeviceRefreshPolicy } = require('./lib_device_
 const { createAsyncReadCache, cooperativeMap, yieldToRequests } = require('./lib_performance');
 const { supportAccess, supportReasonText, parseSupportDays, initSupportSchema } = require('./lib_expired_support');
 const { directDnsSettings, parseDirectDnsServers, applyJsonRoutingDns } = require('./lib_json_routing_dns');
+const { parseRoutingGroups, assignmentsFromGroups, policyForGroup } = require('./lib_routing_groups');
 const { udp443FormValue, nodeVisionFlow, applyNodeUdp443 } = require('./lib_node_udp443');
 const { mlkemFormValue, appendRealityHint } = require('./lib_reality_compat');
 const { connectionKey, createInboundRevalidator } = require('./lib_inbound_revalidation');
@@ -290,7 +291,11 @@ function getSortedCountriesRu() {
 
 function getNodesPageSize() {
   const n = Number(getSetting('nodes_page_size', '10'));
-  return [10, 12, 15].includes(n) ? n : 10;
+  return [0, 10, 12, 15, 25, 50, 100].includes(n) ? n : 10;
+}
+
+function getNodesListMode() {
+  return getSetting('nodes_list_mode', 'pages') === 'scroll' ? 'scroll' : 'pages';
 }
 
 function getAutoRefreshSeconds(key, fallback = 10) {
@@ -307,7 +312,7 @@ function getClientAutoRefreshSeconds() {
 }
 
 const DATA_DIR = path.resolve(__dirname, process.env.DATA_DIR || 'data');
-const WORKSPACE_ID = process.env.NEXUS_WORKSPACE_ID || 'main';
+const WORKSPACE_ID = 'main'; // One shared panel; accounts are separated by permissions only.
 const CONTROL_DIR = path.resolve(process.env.NEXUS_CONTROL_DIR || DATA_DIR);
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
@@ -324,13 +329,6 @@ app.use((req, res, next) => {
   });
   next();
 });
-if (WORKSPACE_ID !== 'main') {
-  if (!/^[a-f0-9]{24}$/.test(WORKSPACE_ID) || !process.env.NEXUS_WORKSPACE_TOKEN) throw new Error('Invalid workspace runtime');
-  app.use((req, res, next) => {
-    if (!safeTokenEquals(req.headers['x-nexus-internal'], process.env.NEXUS_WORKSPACE_TOKEN)) return res.sendStatus(403);
-    next();
-  });
-}
 const db = new Database(path.join(DATA_DIR, 'app.db'));
 
 
@@ -669,7 +667,7 @@ function setSafeBase64TextHeader(res, key, value) {
 
 function setEmptyHappMetaHeader(res, key) {
   const safeKey = String(key || '').replace(/[^A-Za-z0-9!#$%&'*+.^_`|~-]/g, '');
-  if (safeKey) res.setHeader(safeKey, '');
+  if (safeKey) res.setHeader(safeKey, safeKey === 'sub-info-text' ? '0' : '');
 }
 
 function setAttachmentDispositionHeader(res, unicodeFileName, fallbackBaseName = 'subscription') {
@@ -847,7 +845,16 @@ async function withClientTransferUpload(req, callback) {
   }
 }
 
+// Free subscription privacy hints. They are independent of paid provider
+// controls and are sent to every client; unsupported clients may ignore them.
+const SUBSCRIPTION_PRIVACY_HEADERS = Object.freeze({
+  'hide-settings': '1',
+  'hide-url': '1',
+  'subscription-always-hwid-enable': '1'
+});
+
 function setSubscriptionNoCacheHeaders(res, subscriptionName = 'VPN', ext = 'txt') {
+  for (const [key, value] of Object.entries(SUBSCRIPTION_PRIVACY_HEADERS)) res.setHeader(key, value);
   const safeName = String(subscriptionName || 'VPN').trim() || 'VPN';
   const displayTitle = getSubscriptionDisplayTitle(safeName);
   const base64Title = Buffer.from(displayTitle, 'utf8').toString('base64');
@@ -1136,6 +1143,8 @@ function isPublicSubscriptionPath(pathname) {
     || pathname.startsWith('/happ-routing/')
     || pathname.startsWith('/happ-routing-json/')
     || pathname.startsWith('/open/')
+    || pathname.startsWith('/cabinet/')
+    || pathname === '/account' || pathname.startsWith('/account/')
     || pathname === '/backup/telegram-download'
     || pathname === '/qr'
     || pathname === '/healthz';
@@ -1587,7 +1596,11 @@ addColumnIfMissing('nodes', 'api_connect_ip', "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing('auto_select_profiles', 'sort_order', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing('auto_select_profiles', 'created_at', "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing('auto_select_profiles', 'updated_at', "TEXT NOT NULL DEFAULT ''");
-  addColumnIfMissing('auto_select_profiles', 'fast_start', 'INTEGER NOT NULL DEFAULT 1');
+  addColumnIfMissing('auto_select_profiles', 'fast_start', 'INTEGER NOT NULL DEFAULT 0');
+  if(!db.prepare("SELECT 1 FROM app_settings WHERE key='auto_select_strict_health_v2'").get()) db.transaction(()=>{
+    db.prepare('UPDATE auto_select_profiles SET fast_start=0').run();
+    db.prepare("INSERT INTO app_settings(key,value) VALUES('auto_select_strict_health_v2','1')").run();
+  })();
 
   // One-time upgrade of the previous stock interval; custom values stay intact.
   db.transaction(() => {
@@ -1812,6 +1825,55 @@ function migrateSubscriptionDeviceLimitsOnce() {
 }
 
 initDb();
+const portalAccess = require('./lib_portal_access').createPortalAccess({db,secret:APP_SECRET,baseUrl:getPublicSubBaseUrl});
+const subscriptionMigration = require('./lib_subscription_migration').createSubscriptionMigration({
+  db, secret: APP_SECRET, baseUrl: getPublicSubBaseUrl,
+  name: () => getSetting('subscription_name', DEFAULT_SUBSCRIPTION_NAME),
+  portalUrl: client => portalAccess.url(client)
+});
+const clientAccessRotation = require('./lib_client_access_rotation').createClientAccessRotation({
+  db, secret: APP_SECRET, preparePrivate: client => subscriptionMigration.prepare(client, 'notify'),
+  adapters: {
+    snapshotNative: async (node, map) => {
+      const inbound = await getInbound(node);
+      const peer = safeParseJsonField(inbound.settings, {}).clients?.find(p => sameText(p.id || p.uuid, map.remote_uuid));
+      if (!peer) throw Error(`${getNodePublicName(node)}: исходный клиент не найден; перевыпуск отменён`);
+      return peer;
+    },
+    revokeRemna: async (node, map) => {
+      const id = getRemnawaveUserRemoteId(map.remote_uuid);
+      await ensureRemnawaveUserStatus(node, id, 'DISABLED');
+      await remnawaveApiPost(node, '/api/connections/drop', {
+        dropBy: { by: 'userIds', userIds: [Number(id)] }, targetNodes: { target: 'allNodes' }
+      });
+      const result = extractRemnawaveUser(await remnawaveApiPost(node, `/api/users/${encodeURIComponent(id)}/actions/revoke`, { revokeOnlyPasswords: false }));
+      if (!isUuidText(result?.vlessUuid)) throw Error('Remnawave не вернул новый UUID');
+      await ensureRemnawaveUserStatus(node, id, 'DISABLED');
+      await remnawaveApiPost(node, '/api/hwid/devices/delete-all', { userId: Number(id) });
+      return { uuid: result.vlessUuid, subscriptionUrl: result.subscriptionUrl || '' };
+    },
+    rotateNative: async (node, map, next, snapshot) => {
+      await deleteClient(node, map.remote_uuid, map.remote_email);
+      await getInbound(node);
+      db.prepare('UPDATE client_nodes SET remote_uuid=?,remote_sub_url=? WHERE id=?').run(next.uuid, '', map.id);
+      await ensureAggregatorClientOnNode(node, next, { uuid: next.uuid, email: map.remote_email || next.login,
+        subId: next.sub_slug, traffic_gb: map.traffic_gb, limit_ip: map.limit_ip, expiry_time: next.expiry_time,
+        enabled: false, node_enabled: map.enabled !== 0 });
+      const after = safeParseJsonField((await getInbound(node)).settings, {}).clients || [];
+      const peer = after.find(p => sameText(p.id || p.uuid, next.uuid));
+      if (!peer || after.some(p => sameText(p.id || p.uuid, map.remote_uuid))) throw Error('3x-ui не подтвердил отзыв старого UUID');
+      if (snapshot?.publicKey && peer.publicKey === snapshot.publicKey) throw Error('3x-ui сохранил прежний AWG-ключ; доступ остаётся отключённым');
+    },
+    restoreEnabled: async (node, next, enabled) => {
+      if (node.node_type === 'remnawave') {
+        await ensureRemnawaveUserStatus(node, getRemnawaveUserRemoteId(node.map.remote_uuid), enabled ? 'ACTIVE' : 'DISABLED');
+      } else {
+        const map = db.prepare('SELECT * FROM client_nodes WHERE client_id=? AND node_id=?').get(next.id, node.id);
+        await updateClientOnNode(node, map, next, { enabled, node_enabled: map.enabled !== 0 });
+      }
+    }
+  }
+});
 // Internal alias, not an HTTP redirect: preserve HWID headers, no-cache,
 // disabled/expired checks and the existing SUB/JSON response handlers.
 app.use((req, res, next) => {
@@ -1822,17 +1884,12 @@ app.use((req, res, next) => {
   req.url = target.url;
   next();
 });
+app.use((req, res, next) => { subscriptionMigration.rewrite(req); next(); });
+app.use(portalAccess.middleware);
 const access = require('./lib_access').createAccess({ rootDir: CONTROL_DIR, localDb: db, legacyUsername: ADMIN_USERNAME, workspaceId: WORKSPACE_ID });
-const workspaceRuntime = WORKSPACE_ID === 'main' ? require('./lib_workspace_runtime').createRuntime(access) : null;
-if (workspaceRuntime) app.use((req, res, next) => {
-  if (access.sessionUser(req) && !validateAdminSession(req, res)) return;
-  workspaceRuntime.middleware(req, res, next);
-});
-require('./lib_access_routes').attachAccessRoutes({ app, access, runtime: workspaceRuntime, render, db, dataDir: DATA_DIR, requireAuth });
-if (WORKSPACE_ID === 'main' && process.env.NEXUS_LOCAL_XUI_PUBLIC_HOST) access.claimRemote('http://local-3xui:2053');
-for (const existingNode of db.prepare('SELECT panel_url FROM nodes').all()) {
-  try { access.claimRemote(existingNode.panel_url); } catch (err) { console.error('Workspace node ownership:', err.message); }
-}
+// Normalize legacy sessions without looking up or launching separate databases.
+app.use((req,res,next)=>{if(req.session?.workspaceId && req.session.workspaceId!=='main')req.session.workspaceId='main';if(req.path.startsWith('/s/'))return res.sendStatus(404);next();});
+require('./lib_access_routes').attachAccessRoutes({ app, access, render, db, dataDir: DATA_DIR, requireAuth });
 initSupportSchema(db);
 initClientDirectory(db);
 const nodeTraffic = createNodeTraffic({db,
@@ -2164,7 +2221,7 @@ function render(res, view, params = {}) {
     currentAdminUsername,
     publicJsonUrl: slug => subscriptionUrl(linkBase, slug, 'json', cleanLinks),
     publicSubUrl: slug => subscriptionUrl(linkBase, slug, 'sub', cleanLinks),
-    workspaceName: access.control.prepare('SELECT name FROM workspaces WHERE id=?').get(res.locals.workspaceId || WORKSPACE_ID)?.name || 'Основное',
+    workspaceName: '',
     clientDefaults: Object.fromEntries(Object.entries(require('./lib_settings_profile').rules).filter(([key]) => key.startsWith('client_default_')).map(([key, rule]) => [key, getSetting(key, rule.fallback)])),
     currentPath: res.req.path,
     panelInterfaceTheme: getPanelInterfaceTheme(),
@@ -2621,7 +2678,7 @@ function clientTermForEdit(client, body, deviceCount, now = Date.now()) {
 }
 
 function getExpiredSubscriptionNotice() {
-  return '⛔ Срок доступа закончился.\n💳 Продлите доступ и обновите подписку 🔄';
+  return '⛔ Подписка истекла\n💳 Продление → в кабинете';
 }
 
 function getEffectiveSubscriptionSupportNote(clientRow) {
@@ -2949,6 +3006,7 @@ function isExpiredSubscriptionNoticeEnabled() {
 }
 
 function getSubscriptionNoticeTitle(kind) {
+  if(kind==='subscription-migration')return '🔐 Обновите подписку — откройте личный кабинет';
   if(kind==='awg-device-required')return '🔐 AWG: нужен HWID или персональная ссылка устройства';
   if(kind==='awg-device-error')return '⚠️ AWG: синхронизация не завершена, обновите позже';
   const fallback = kind === 'device-limit' ? '⚠️ Превышен лимит устройств' : '⛔ Продлите подписку';
@@ -3119,7 +3177,7 @@ function enrichAutoSelectProfile(row) {
     nodes: nodeIds.map(id => nodeMap.get(id)).filter(Boolean),
     title: `${icon} ${normalizeAutoSelectProfileName(row.name)}`.trim(),
     probeIntervalSeconds: normalizeAutoSelectProbeInterval(row.probe_interval_seconds),
-    fastStart: row.fast_start == null || Number(row.fast_start) === 1,
+    fastStart: false,
     probeUrl
   };
 }
@@ -3139,7 +3197,7 @@ function createAutoSelectProfileFromBody(body = {}) {
   const info = db.prepare(`
     INSERT INTO auto_select_profiles (name, icon, node_ids, normal_node_ids, preferred_node_id, emergency_node_id, probe_url, probe_interval_seconds, enabled, sort_order, fast_start)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-  `).run(name, icon, JSON.stringify(policy.nodeIds), JSON.stringify(policy.normalNodeIds), policy.preferredNodeId || null, policy.emergencyNodeId || null, probeUrl, interval, sortOrder, body.auto_select_fast_controls === '1' ? (body.auto_select_fast_start === '1' ? 1 : 0) : 1);
+  `).run(name, icon, JSON.stringify(policy.nodeIds), JSON.stringify(policy.normalNodeIds), policy.preferredNodeId || null, policy.emergencyNodeId || null, probeUrl, interval, sortOrder, 0);
   return enrichAutoSelectProfile(db.prepare('SELECT * FROM auto_select_profiles WHERE id = ?').get(info.lastInsertRowid));
 }
 
@@ -3155,7 +3213,7 @@ function updateAutoSelectProfileFromBody(id, body = {}) {
     UPDATE auto_select_profiles
     SET name = ?, icon = ?, node_ids = ?, normal_node_ids = ?, preferred_node_id = ?, emergency_node_id = ?, probe_url = ?, probe_interval_seconds = ?, fast_start = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
-  `).run(name, icon, JSON.stringify(policy.nodeIds), JSON.stringify(policy.normalNodeIds), policy.preferredNodeId || null, policy.emergencyNodeId || null, probeUrl, interval, body.auto_select_fast_controls === '1' ? (body.auto_select_fast_start === '1' ? 1 : 0) : (current.fast_start ?? 1), current.id);
+  `).run(name, icon, JSON.stringify(policy.nodeIds), JSON.stringify(policy.normalNodeIds), policy.preferredNodeId || null, policy.emergencyNodeId || null, probeUrl, interval, 0, current.id);
   return enrichAutoSelectProfile(db.prepare('SELECT * FROM auto_select_profiles WHERE id = ?').get(current.id));
 }
 
@@ -3462,10 +3520,22 @@ async function buildSubscriptionEntriesForRequest(req, res, clientRow, options =
   // it must not consume a fresh activation slot while access is suspended.
   const deviceState = registerSubscriptionDevice(req, clientRow, {
     allowNew: !expired && Number(clientRow.enabled) !== 0 && req.method === 'GET',
-    forceTracking: activationPending,
-    requireHwid: activationPending
+    forceTracking: activationPending || Boolean(req.nexusPrivateSubscription),
+    requireHwid: activationPending || Boolean(req.nexusPrivateSubscription)
   });
   if(deviceState.reason==='device-link-invalid') {res.status(403);return {entries:[],deviceState,accessState:'device-link-invalid'};}
+  const migrationHash = deviceState.hasHwid ? subscriptionDeviceHash(clientRow, deviceState.device.hwid) : '';
+  const migration = subscriptionMigration.state(req, clientRow, migrationHash);
+  if (migration) {
+    res.locals.subscriptionMigration = migration;
+    clientRow.__privatePortalUrl = migration.portal;
+    if (migration.notify) clientRow.__migrationNotice = `👤 Личный кабинет → 🔗\n📲 Подключение: Happ / INCY`;
+    if (migration.blocked && deviceState.allowed) {
+      applySubscriptionDeviceHeaders(res, deviceState);
+      res.setHeader('x-nexus-subscription-migration', 'required');
+      return { entries: [buildSubscriptionNoticeEntry('subscription-migration')], deviceState, accessState: 'subscription-migration', subscriptionExpiryOverride: 0 };
+    }
+  }
   options={...options,awgDeviceId:deviceState.allowed?deviceState.deviceId||0:0,awgDeviceErrors:[]};
   if(clientHasDeviceAwg(clientRow.id) && !options.awgDeviceId) res.setHeader('x-nexus-awg-device-required','1');
 
@@ -3575,6 +3645,9 @@ async function buildSubscriptionEntriesForRequest(req, res, clientRow, options =
   });
   if(options.awgDeviceErrors.length) {res.setHeader('x-nexus-awg-sync-error','1');entries.unshift(buildSubscriptionNoticeEntry('awg-device-error'));}
   else if(clientHasDeviceAwg(clientRow.id) && !options.awgDeviceId)entries.unshift(buildSubscriptionNoticeEntry('awg-device-required'));
+  if (!expired && deviceState.allowed && deviceState.registered && entries.some(entry => entry.nodeType !== 'notice')) {
+    subscriptionMigration.delivered(req, clientRow, migrationHash);
+  }
   return { entries, deviceState, accessState: 'active', subscriptionExpiryOverride: 0 };
 }
 
@@ -3598,6 +3671,7 @@ function renderTemplate(template, vars) {
 }
 
 function buildHappInfoText(clientRow, subscriptionUserInfo = '') {
+  if (clientRow?.__migrationNotice) return safeHappText(clientRow.__migrationNotice, 200);
   if (!isHappInfoBlockEnabled()) return '';
   const template = getHappInfoTemplate();
   if (!template) return '';
@@ -3619,7 +3693,7 @@ function buildHappInfoText(clientRow, subscriptionUserInfo = '') {
     support_note: getEffectiveSubscriptionSupportNote(clientRow)
   };
 
-  return safeHappText(renderTemplate(template, vars), 200);
+  return safeHappText(renderTemplate(template, vars).split('\n').map(line => line.trim()).join('\n'), 200);
 }
 
 function normalizeComparableHappText(value) {
@@ -3644,10 +3718,10 @@ function buildHappAnnounceText(support, happInfoText) {
   // Textarea values can arrive as CRLF, while happInfoText is normalized to LF.
   // Compare normalized values so {support_note} is not appended a second time
   // when the note contains line breaks or trailing spaces before a line break.
-  const note = safeHappText(support?.note || '', 200);
-  // Do not trim ordinary spaces here: the Happ info template may intentionally
-  // start a line with spaces for visual centering.
-  const info = String(happInfoText || '').replace(/^\n+|\n+$/g, '');
+  // Let each application align text itself; padding spaces break INCY layout.
+  const cleanLines = value => String(value || '').split('\n').map(line => line.trim()).join('\n').replace(/^\n+|\n+$/g, '');
+  const note = safeHappText(cleanLines(support?.note), 200);
+  const info = cleanLines(happInfoText);
 
   if (!isHappInfoAnnounceFallbackEnabled()) {
     return note;
@@ -3657,7 +3731,7 @@ function buildHappAnnounceText(support, happInfoText) {
   if (info) parts.push(info);
   if (note && !containsComparableHappText(info, note)) parts.push(note);
 
-  return safeHappText(parts.join('\n'), 350);
+  return safeHappText(parts.join('\n\n'), 200);
 }
 
 function buildHappServerDescriptionFromLine(line) {
@@ -4265,6 +4339,13 @@ function unwrapRemnawaveResponse(data) {
   return data?.response ?? data?.data ?? data?.result ?? data ?? null;
 }
 
+async function ensureRemnawaveUserStatus(node, id, expected) {
+  if ((await getRemnawaveUserByUuid(node, id))?.status === expected) return;
+  try { await remnawaveApiPost(node, `/api/users/${encodeURIComponent(id)}/actions/${expected === 'ACTIVE' ? 'enable' : 'disable'}`, {}); }
+  catch (error) { if ((await getRemnawaveUserByUuid(node, id))?.status !== expected) throw error; }
+  if ((await getRemnawaveUserByUuid(node, id))?.status !== expected) throw Error('Remnawave не подтвердил состояние пользователя');
+}
+
 function getRemnawaveUserRemoteId(userOrId) {
   if (userOrId && typeof userOrId === 'object') {
     const id = String(userOrId.id ?? '').trim();
@@ -4447,7 +4528,7 @@ async function getRemnawaveHostDescriptor(node, timeoutMs = Math.min(NODE_API_TI
 
 function parseRemnawaveShareCandidate(line) {
   const raw = String(line || '').trim();
-  if (!raw.toLowerCase().startsWith('vless://')) return null;
+  if (!/^(?:vless|hysteria2|hy2):\/\//i.test(raw)) return null;
   try {
     const url = new URL(raw);
     let remark = '';
@@ -5725,7 +5806,8 @@ function buildPublicHiddifyUrl(slug) {
 
 function buildPublicOpenUrl(slug) {
   if (!slug) return '';
-  return `${getPublicSubBaseUrl()}/open/${slug}`;
+  const client=db.prepare('SELECT id,uuid FROM clients WHERE sub_slug=?').get(String(slug));
+  return client?portalAccess.url(client):'';
 }
 
 function isSubscriptionBrowserNavigation(req) {
@@ -5742,6 +5824,7 @@ function getNexusBrandLogoUrl() {
 }
 
 function getNexusBrandWebPageUrl(clientRow = null) {
+  if (clientRow?.__privatePortalUrl) return clientRow.__privatePortalUrl;
   return buildPublicOpenUrl(clientRow?.sub_slug) || getPublicSubBaseUrl();
 }
 
@@ -6912,6 +6995,11 @@ function updateTransportFromForm(stream = {}, form = {}) {
 }
 
 function buildXhttpShareExtra(t = {}) {
+  let nested = t.extra;
+  if (typeof nested === 'string') {
+    try { nested = JSON.parse(nested); } catch (_) { nested = null; }
+  }
+  if (nested && typeof nested === 'object' && !Array.isArray(nested)) t = { ...nested, host: t.host, path: t.path, mode: t.mode };
   const extra = {};
   const putString = (key, value) => {
     if (typeof value === 'string' && value.length > 0) extra[key] = value;
@@ -6919,6 +7007,7 @@ function buildXhttpShareExtra(t = {}) {
 
   putString('mode', t.mode);
   putString('xPaddingBytes', t.xPaddingBytes);
+  if (Number.isInteger(t.xPaddingBytes) && t.xPaddingBytes >= 0) extra.xPaddingBytes = t.xPaddingBytes;
   if (t.xPaddingObfsMode === true) {
     extra.xPaddingObfsMode = true;
     for (const key of ['xPaddingKey', 'xPaddingHeader', 'xPaddingPlacement', 'xPaddingMethod']) putString(key, t[key]);
@@ -7762,6 +7851,7 @@ async function fetchSubscriptionLines(url, options = {}) {
       line.startsWith('trojan://') ||
       line.startsWith('ss://') ||
       line.startsWith('hysteria://') ||
+      line.startsWith('hysteria2://') ||
       line.startsWith('hy2://') ||
       line.startsWith('tuic://')
     ));
@@ -10142,6 +10232,7 @@ function getHappSubscriptionProfileHeaderMap(subscriptionName, subscriptionUpdat
   const clientAutoUpdate = getSetting('subscription_client_auto_update_enabled', '1') !== '0';
   const displayTitle = getSubscriptionDisplayTitle(subscriptionName);
   const base = {
+    ...SUBSCRIPTION_PRIVACY_HEADERS,
     'profile-title': `base64:${Buffer.from(String(displayTitle || ''), 'utf8').toString('base64')}`,
     'subscription-title': `base64:${Buffer.from(String(displayTitle || ''), 'utf8').toString('base64')}`,
     'subscription-revision': String(getSubscriptionRevision()),
@@ -10217,6 +10308,14 @@ function applyHappSubscriptionProfileHeaders(
   if (support.url) {
     setSafeAsciiHeader(res, 'support-url', support.url);
   }
+  if (res.locals?.subscriptionMigration) {
+    setSafeAsciiHeader(res, 'profile-web-page-url', res.locals.subscriptionMigration.portal);
+    if (res.locals.subscriptionMigration.notify) {
+      setSafeAsciiHeader(res, 'support-url', res.locals.subscriptionMigration.portal);
+      setSafeAsciiHeader(res, 'announce-url', res.locals.subscriptionMigration.portal);
+    }
+  }
+  subscriptionBilling.headers(res,clientRow);
 }
 
 function buildHappAppControlBodyLines() {
@@ -14711,7 +14810,10 @@ app.get('/routing', requireAuth, (req, res) => {
     try { parseDirectDnsServers(cfg.directDnsPreset, cfg.directDnsCustom); }
     catch (err) { directDnsError = String(err.message || err); }
   }
-  const routableNodes = db.prepare(`SELECT * FROM nodes WHERE enabled = 1 AND node_type != ? ORDER BY ${nodeOrderSql()}`).all(NODE_TYPE_H1CLOUD).filter(isClientManagedNode).map(enrichNodeWithCachedTransport);
+  const savedRuleNodes = new Set(cfg.assignmentExplicit ? Object.values(getRoutingModeAssignments(cfg)).flat() : []);
+  const routableNodes = db.prepare(`SELECT * FROM nodes WHERE node_type != ? ORDER BY ${nodeOrderSql()}`).all(NODE_TYPE_H1CLOUD)
+    .filter(node => (Number(node.enabled) === 1 || savedRuleNodes.has(Number(node.id))) && isClientManagedNode(node))
+    .map(enrichNodeWithCachedTransport);
   render(res, 'routing', {
     routingPresets: ROUTING_PRESETS,
     selectedPresets: cfg.presets,
@@ -14740,7 +14842,7 @@ app.get('/routing', requireAuth, (req, res) => {
     routingEnabled: cfg.enabled !== false,
     routingAllNodes: cfg.allNodes !== false,
     routingExcludedNodeIds: cfg.excludedNodeIds || [],
-    routingModeAssignments: getRoutingModeAssignments(cfg, routableNodes.map(node => Number(node.id))),
+    routingGroups: getRoutingGroupsForEditor(cfg, routableNodes.filter(n => n.inbound_protocol !== 'amneziawg').map(n => Number(n.id))),
     routingProxyNodeId: Number(cfg.proxyNodeId || 0),
     nodes: routableNodes,
     proxyDomains: getRoutingProxyDomains(),
@@ -14791,14 +14893,21 @@ app.post('/routing', requireAuth, (req, res) => {
       sniffingRouteOnly: req.body.sniffing_route_only === '1'
     } : directDnsSettings(previousRoutingCfg);
     if (directOptions.directDnsEnabled) parseDirectDnsServers(directOptions.directDnsPreset, directOptions.directDnsCustom);
-    const routableNodeIds = new Set(db.prepare('SELECT * FROM nodes WHERE enabled = 1 AND node_type != ?').all(NODE_TYPE_H1CLOUD)
-      .filter(isClientManagedNode).filter(node => !require('./lib_amneziawg').isAmneziaWG(getCachedInbound(node))).map(row => Number(row.id)));
+    const savedRuleNodes = new Set(previousRoutingCfg.assignmentExplicit ? Object.values(getRoutingModeAssignments(previousRoutingCfg)).flat() : []);
+    const routableNodeIds = new Set(db.prepare('SELECT * FROM nodes WHERE node_type != ?').all(NODE_TYPE_H1CLOUD)
+      .filter(node => (Number(node.enabled) === 1 || savedRuleNodes.has(Number(node.id))) && isClientManagedNode(node))
+      .filter(node => !require('./lib_amneziawg').isAmneziaWG(getCachedInbound(node))).map(row => Number(row.id)));
+    const groupsPosted = typeof req.body.routing_groups === 'string' && req.body.routing_groups !== '';
+    const ruleGroups = groupsPosted
+      ? parseRoutingGroups(req.body.routing_groups, routableNodeIds, parseRoutingLines)
+      : previousRoutingCfg.ruleGroups;
+    if (ruleGroups && !groupsPosted) throw new Error('Форма устарела. Обновите страницу маршрутизации перед сохранением.');
     const allowedModes = ['proxy-except', 'node-selective'];
     const requestedModesRaw = req.body.routing_modes;
     const requestedModes = uniqueList((Array.isArray(requestedModesRaw) ? requestedModesRaw : (requestedModesRaw ? [requestedModesRaw] : [])).map(String).filter(mode => allowedModes.includes(mode)));
-    const modeAssignments = {};
+    const modeAssignments = ruleGroups ? assignmentsFromGroups(ruleGroups) : {};
     const assignedNodeIds = new Set();
-    for (const mode of requestedModes) {
+    for (const mode of ruleGroups ? [] : requestedModes) {
       const field = req.body[`routing_mode_nodes_${mode.replace(/-/g, '_')}`];
       const ids = uniqueList((Array.isArray(field) ? field : (field ? [field] : [])).map(Number).filter(id => routableNodeIds.has(id)));
       if (!ids.length) throw new Error(`Для режима «${routingModeTitle(mode)}» выбери хотя бы один узел.`);
@@ -14809,8 +14918,10 @@ app.post('/routing', requireAuth, (req, res) => {
       modeAssignments[mode] = ids;
     }
     const routingEnabled = req.body.routing_enabled === '1';
-    if (routingEnabled && !requestedModes.length) throw new Error('Включи хотя бы один режим маршрутизации и выбери для него узлы.');
-    const routingMode = requestedModes[0] || 'proxy-except';
+    if (routingEnabled && !(ruleGroups ? ruleGroups.length : requestedModes.length)) {
+      throw new Error('Добавьте хотя бы одно правило и выберите для него узлы.');
+    }
+    const routingMode = ruleGroups ? previousRoutingCfg.mode : requestedModes[0] || 'proxy-except';
     const proxyNodeId = 0;
     const errors = [...parsedDomains.errors, ...parsedIps.errors, ...parsedExceptDomains.errors, ...parsedExceptIps.errors, ...parsedAdBlockDomains.errors, ...parsedAdBlockIps.errors];
     if (errors.length) throw new Error(errors.join(' | '));
@@ -14821,10 +14932,11 @@ app.post('/routing', requireAuth, (req, res) => {
       customIps: parsedIps.values,
       mode: routingMode,
       modeAssignments,
+      ...(ruleGroups ? { ruleGroups } : {}),
       assignmentExplicit: true,
       proxyNodeId,
-      exceptDomains: parsedExceptDomains.values,
-      exceptIps: parsedExceptIps.values,
+      exceptDomains: ruleGroups ? previousRoutingCfg.exceptDomains : parsedExceptDomains.values,
+      exceptIps: ruleGroups ? previousRoutingCfg.exceptIps : parsedExceptIps.values,
       adBlockEnabled: req.body.adblock_enabled === '1',
       adBlockDomains: parsedAdBlockDomains.values,
       adBlockIps: parsedAdBlockIps.values,
@@ -14834,7 +14946,7 @@ app.post('/routing', requireAuth, (req, res) => {
       geoipUrl: /^https?:\/\//i.test(effectiveGeoipUrl) ? effectiveGeoipUrl : '',
       dnsPreset,
       dnsCustom,
-      ...directOptions,
+      ...(ruleGroups ? { ...directDnsSettings(previousRoutingCfg), sniffingRouteOnly: directOptions.sniffingRouteOnly } : directOptions),
       allNodes: false,
       excludedNodeIds: [],
       // The Happ routing profile is a separate opt-in. Saving ordinary JSON
@@ -15362,6 +15474,7 @@ app.get('/settings', requireAuth, async (req, res) => {
     panelMobileUiScale: getPanelMobileUiScale(),
     panelMobileClientCompact: getPanelMobileClientCompact(),
     nodesPageSize: getNodesPageSize(),
+    nodesListMode: getNodesListMode(),
     nodeAutoRefreshSeconds: getNodeAutoRefreshSeconds(),
     clientAutoRefreshSeconds: getClientAutoRefreshSeconds(),
     sniProfiles: getSniProfiles(),
@@ -15425,8 +15538,9 @@ app.post('/settings/panel-ui', requireAuth, (req, res) => {
     setSetting('panel_mobile_nav_mode', panelMobileNavMode);
     setSetting('panel_mobile_ui_scale', panelMobileUiScale);
     setSetting('panel_mobile_client_compact', req.body.panel_mobile_client_compact === '1' ? '1' : '0');
-    const nodesPageSize = [10, 12, 15].includes(Number(req.body.nodes_page_size)) ? Number(req.body.nodes_page_size) : 10;
+    const nodesPageSize = [0, 10, 12, 15, 25, 50, 100].includes(Number(req.body.nodes_page_size)) ? Number(req.body.nodes_page_size) : 10;
     setSetting('nodes_page_size', String(nodesPageSize));
+    if (Object.hasOwn(req.body, 'nodes_list_mode')) setSetting('nodes_list_mode', req.body.nodes_list_mode === 'scroll' ? 'scroll' : 'pages');
     const nodeAutoRefreshSeconds = [0, 10, 30, 60].includes(Number(req.body.node_auto_refresh_seconds)) ? Number(req.body.node_auto_refresh_seconds) : 10;
     const clientAutoRefreshSeconds = [0, 10, 30, 60].includes(Number(req.body.client_auto_refresh_seconds)) ? Number(req.body.client_auto_refresh_seconds) : 10;
     setSetting('node_auto_refresh_seconds', String(nodeAutoRefreshSeconds));
@@ -15957,7 +16071,7 @@ app.post('/settings/telegram-test', requireAuth, async (req, res) => {
 });
 
 function exportBackupPayload(req = null) {
-const tables = ['client_support_identities', 'client_support_grants', 'client_support_sync', 'app_users', 'app_settings', 'nodes', 'auto_select_profiles', 'client_groups', 'client_tags', 'clients', 'subscription_devices', 'client_tag_assignments', 'client_nodes', 'node_inbound_cache', 'sni_profiles', 'telegram_users', 'telegram_orders', 'telegram_tickets', 'telegram_ticket_messages', 'telegram_announcements', 'vpn_hosts', 'vpn_services', 'vpn_clients', 'vpn_jobs', 'awg_device_owners', 'awg_device_peers', 'awg_manual_links'];
+const tables = ['redirect_rules', 'subscription_orders', 'client_access_rotations', 'subscription_migration_devices', 'subscription_migrations', 'client_support_identities', 'client_support_grants', 'client_support_sync', 'app_users', 'app_settings', 'nodes', 'auto_select_profiles', 'client_groups', 'client_tags', 'clients', 'subscription_devices', 'client_tag_assignments', 'client_nodes', 'node_inbound_cache', 'sni_profiles', 'telegram_users', 'telegram_orders', 'telegram_tickets', 'telegram_ticket_messages', 'telegram_announcements', 'vpn_hosts', 'vpn_services', 'vpn_clients', 'vpn_jobs', 'awg_device_owners', 'awg_device_peers', 'awg_manual_links'];
   const data = {};
   for (const table of tables) data[table] = db.prepare(`SELECT * FROM ${table}`).all();
   return {
@@ -15983,8 +16097,8 @@ function ensureAdminUserExists() {
 
 function restoreBackupPayload(payload) {
   if (!payload || payload.app !== '3xui-aggregator' || !payload.data) throw new Error('Неверный файл резервной копии');
-  const deleteTables = ['client_support_identities', 'client_support_grants', 'client_support_sync', 'vpn_jobs', 'vpn_clients', 'vpn_services', 'vpn_hosts', 'telegram_ticket_messages', 'telegram_tickets', 'telegram_orders', 'telegram_announcements', 'telegram_users', 'sni_profiles', 'node_inbound_cache', 'client_nodes', 'client_tag_assignments', 'subscription_devices', 'clients', 'client_tags', 'client_groups', 'auto_select_profiles', 'nodes', 'app_settings', 'app_users', 'awg_device_owners', 'awg_device_peers', 'awg_manual_links'];
-  const restoreTables = ['client_support_grants', 'client_support_sync', 'app_users', 'app_settings', 'nodes', 'auto_select_profiles', 'client_groups', 'client_tags', 'clients', 'client_support_identities', 'subscription_devices', 'client_tag_assignments', 'client_nodes', 'node_inbound_cache', 'sni_profiles', 'telegram_users', 'telegram_orders', 'telegram_tickets', 'telegram_ticket_messages', 'telegram_announcements', 'vpn_hosts', 'vpn_services', 'vpn_clients', 'vpn_jobs', 'awg_device_owners', 'awg_device_peers', 'awg_manual_links'];
+  const deleteTables = ['redirect_rules', 'subscription_orders', 'client_access_rotations', 'subscription_migration_devices', 'subscription_migrations', 'client_support_identities', 'client_support_grants', 'client_support_sync', 'vpn_jobs', 'vpn_clients', 'vpn_services', 'vpn_hosts', 'telegram_ticket_messages', 'telegram_tickets', 'telegram_orders', 'telegram_announcements', 'telegram_users', 'sni_profiles', 'node_inbound_cache', 'client_nodes', 'client_tag_assignments', 'subscription_devices', 'clients', 'client_tags', 'client_groups', 'auto_select_profiles', 'nodes', 'app_settings', 'app_users', 'awg_device_owners', 'awg_device_peers', 'awg_manual_links'];
+  const restoreTables = ['client_support_grants', 'client_support_sync', 'app_users', 'app_settings', 'nodes', 'redirect_rules', 'auto_select_profiles', 'client_groups', 'client_tags', 'clients', 'client_access_rotations', 'subscription_migrations', 'subscription_migration_devices', 'client_support_identities', 'subscription_devices', 'client_tag_assignments', 'client_nodes', 'node_inbound_cache', 'sni_profiles', 'telegram_users', 'telegram_orders', 'telegram_tickets', 'telegram_ticket_messages', 'telegram_announcements', 'vpn_hosts', 'vpn_services', 'vpn_clients', 'vpn_jobs', 'awg_device_owners', 'awg_device_peers', 'awg_manual_links', 'subscription_orders'];
   const columnCache = new Map();
   const tx = db.transaction(() => {
     for (const table of deleteTables) db.prepare(`DELETE FROM ${table}`).run();
@@ -16105,19 +16219,10 @@ app.post('/settings/transfer/import', requireAuth, parseSettingsTransferRequest,
 
 app.post('/nodes/reorder', requireAuth, bodyParser.json({ limit: '2mb' }), (req, res) => {
   try {
-    const order = Array.isArray(req.body.order) ? req.body.order.map(v => Number(v)).filter(Number.isFinite) : [];
-    if (!order.length) return res.status(400).json({ ok: false, error: 'Пустой порядок узлов' });
-    const known = new Set(db.prepare('SELECT id FROM nodes').all().map(r => Number(r.id)));
-    const unique = [...new Set(order)].filter(id => known.has(id));
-    if (unique.length !== order.length) return res.status(400).json({ ok: false, error: 'В списке есть неизвестные узлы' });
-    const tx = db.transaction((ids) => {
-      const update = db.prepare('UPDATE nodes SET sort_order = ? WHERE id = ?');
-      ids.forEach((id, index) => update.run(index + 1, id));
-    });
-    tx(unique);
+    require('./lib_node_display_order').saveDisplayOrder(db, req.body.order);
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ ok: false, error: String(err.message || err) });
+    res.status(err instanceof RangeError ? 400 : 500).json({ ok: false, error: String(err.message || err) });
   }
 });
 
@@ -16180,8 +16285,10 @@ app.get('/nodes', requireAuth, (req, res) => {
   render(res, 'nodes', {
     nodes,
     autoSelectProfiles: getAutoSelectProfiles(),
+    nodeDisplayOrder: require('./lib_node_display_order').getDisplayOrder(db),
     countries: getSortedCountriesRu(),
     nodePageSize: getNodesPageSize(),
+    nodeListMode: getNodesListMode(),
     nodeAutoRefreshSeconds: getNodeAutoRefreshSeconds(),
     sniProfiles: getSniProfiles(),
     nodeActiveTab: req.query.create === 'auto_select' ? 'add' : (['list', 'add', 'help'].includes(requestedTab) ? requestedTab : 'list'),
@@ -16672,6 +16779,7 @@ app.get('/nodes/:id/edit', requireAuth, async (req, res) => {
     }),
     countries: getSortedCountriesRu(),
     nodePageSize: getNodesPageSize(),
+    nodeListMode: getNodesListMode(),
     sniProfiles: getSniProfiles(),
     message: req.query.message || '',
     error: req.query.error || loadError || ''
@@ -17881,6 +17989,13 @@ app.get('/clients/:id', requireAuth, async (req, res) => {
 });
 
 
+app.post('/clients/:id/rotate-access', requireAuth, async (req, res) => {
+  try {
+    const result = await clientAccessRotation.rotate(Number(req.params.id));
+    res.redirect('/clients?q=' + encodeURIComponent(result.login) + '&edit=' + result.clientId + '&message=' + encodeURIComponent('Доступ полностью перевыпущен. Старые ссылки и ключи отозваны, устройства сброшены. Новые ссылки доступны в личном кабинете.'));
+  } catch (e) { res.redirect('/clients?error=' + encodeURIComponent('Перевыпуск не завершён: ' + String(e.message || e) + '. После начала отзыва клиент остаётся отключённым до успешного повторного запуска.')); }
+});
+
 app.post('/clients/:id/devices/create', requireAuth, (req,res)=>{
   try {
     const client=db.prepare('SELECT * FROM clients WHERE id=?').get(Number(req.params.id));
@@ -18569,6 +18684,9 @@ function applyHappOutboundControls(outbound, nodeId = 0, sourceFlow = '') {
 }
 
 function parseVlessLineToOutbound(line, index = 0, options = {}) {
+  if (/^(?:hysteria2|hy2):\/\//i.test(String(line))) {
+    return require('./lib_hysteria2').parseHysteria2LineToOutbound(line, index);
+  }
   const url = new URL(line);
   const q = url.searchParams;
   const tag = index === 0 ? 'proxy' : `proxy-${index + 1}`;
@@ -19159,6 +19277,7 @@ function getRoutingConfig() {
             ].map(Number).filter(id => Number.isInteger(id) && id > 0))
           }
         : fallback.modeAssignments,
+      ...(Array.isArray(parsed.ruleGroups) ? { ruleGroups: parsed.ruleGroups } : {}),
       assignmentExplicit: parsed.assignmentExplicit === true,
       // Version 6 coupled this option to ordinary JSON routing. Reset it once
       // during migration so a separate Happ profile is never enabled silently.
@@ -19180,12 +19299,13 @@ function getRoutingConfig() {
 
 function routingModeTitle(mode) {
   return {
-    'proxy-except': 'Выбранный через proxy кроме...',
-    'node-selective': 'Выбранное через proxy, остальное напрямую'
+    'proxy-except': 'Всё через VPN, кроме списка',
+    'node-selective': 'Только по списку через VPN'
   }[mode] || mode;
 }
 
 function getRoutingModeAssignments(cfg = getRoutingConfig(), availableNodeIds = null) {
+  if (cfg.ruleGroups) return assignmentsFromGroups(cfg.ruleGroups);
   const modes = ['proxy-except', 'node-selective'];
   if (cfg.assignmentExplicit === true) {
     const legacySelected = cfg.modeAssignments?.['proxy-selected'] || [];
@@ -19201,6 +19321,25 @@ function getRoutingModeAssignments(cfg = getRoutingConfig(), availableNodeIds = 
   const eligible = ids.filter(id => cfg.allNodes !== false || !excluded.has(id));
   const effectiveMode = cfg.mode === 'proxy-selected' ? 'node-selective' : cfg.mode;
   return Object.fromEntries(modes.map(mode => [mode, mode === effectiveMode ? eligible : []]));
+}
+
+// Legacy settings are shown as editable groups without rewriting saved policy.
+function getRoutingGroupsForEditor(cfg, availableIds) {
+  const ids = new Set(availableIds);
+  if (cfg.ruleGroups) return cfg.ruleGroups.map(rule => ({ ...rule, nodeIds: rule.nodeIds.filter(id => ids.has(id)) }));
+  const assignments = getRoutingModeAssignments(cfg, availableIds);
+  return ['node-selective', 'proxy-except'].flatMap(mode => {
+    const nodeIds = assignments[mode].filter(id => ids.has(id));
+    if (!nodeIds.length) return [];
+    const isException = mode === 'proxy-except';
+    return [{
+      mode, nodeIds,
+      domains: isException ? cfg.exceptDomains : [],
+      ips: isException ? cfg.exceptIps : [],
+      ...directDnsSettings(cfg),
+      directDnsEnabled: isException && cfg.directDnsEnabled
+    }];
+  });
 }
 
 function getRoutingModeForNode(nodeId, cfg = getRoutingConfig()) {
@@ -19256,8 +19395,7 @@ function parseRoutingLines(text, kind) {
   return { values: uniqueList(values), errors };
 }
 
-function getRoutingDirectDomains() {
-  const cfg = getRoutingConfig();
+function getRoutingDirectDomains(cfg = getRoutingConfig()) {
   if (cfg.enabled === false) return [];
   const domains = uniqueList(cfg.exceptDomains || []);
   // Some mobile clients ship a delayed or reduced geosite.dat. Keep the
@@ -19274,36 +19412,31 @@ function getRoutingDirectDomains() {
   return uniqueList(domains);
 }
 
-function getRoutingDirectIps() {
-  const cfg = getRoutingConfig();
+function getRoutingDirectIps(cfg = getRoutingConfig()) {
   if (cfg.enabled === false) return [];
   return uniqueList(cfg.exceptIps || []);
 }
 
-function getRoutingBlockDomains() {
-  const cfg = getRoutingConfig();
+function getRoutingBlockDomains(cfg = getRoutingConfig()) {
   if (cfg.enabled === false || cfg.adBlockEnabled === false) return [];
   return uniqueList(cfg.adBlockDomains || []);
 }
 
-function getRoutingBlockIps() {
-  const cfg = getRoutingConfig();
+function getRoutingBlockIps(cfg = getRoutingConfig()) {
   if (cfg.enabled === false || cfg.adBlockEnabled === false) return [];
   return uniqueList(cfg.adBlockIps || []);
 }
 
-function getRoutingProxyDomains() {
-  const cfg = getRoutingConfig();
+function getRoutingProxyDomains(cfg = getRoutingConfig()) {
   if (cfg.enabled === false) return [];
   const presetDomains = ROUTING_PRESETS.filter(p => cfg.presets.includes(p.key)).flatMap(p => p.domains);
-  return uniqueList([...presetDomains, ...cfg.customDomains]);
+  return uniqueList([...presetDomains, ...cfg.customDomains, ...(cfg.listProxyDomains || [])]);
 }
 
-function getRoutingProxyIps() {
-  const cfg = getRoutingConfig();
+function getRoutingProxyIps(cfg = getRoutingConfig()) {
   if (cfg.enabled === false) return [];
   const presetIps = ROUTING_PRESETS.filter(p => cfg.presets.includes(p.key)).flatMap(p => p.ips);
-  return uniqueList([...presetIps, ...cfg.customIps]);
+  return uniqueList([...presetIps, ...cfg.customIps, ...(cfg.listProxyIps || [])]);
 }
 
 const ROUTING_DIRECT_DOMAINS = uniqueList([
@@ -19400,12 +19533,14 @@ function autoSelectRuleForBalancer(rule, balancerTag) {
 }
 
 function buildAutoSelectJsonConfig(profile, client, entries, subscriptionName) {
-  const usableEntries = (entries || []).filter(entry => String(entry?.line || '').startsWith('vless://'));
+  const usableEntries = (entries || []).filter(entry => /^(?:vless|hysteria2|hy2):\/\//i.test(String(entry?.line || '')));
   if (!profile || !usableEntries.length) return null;
 
   const routingCfg = getRoutingConfig();
   const routingEnabled = routingCfg.enabled !== false;
-  const routingMode = routingEnabled ? String(routingCfg.mode || 'proxy-except') : '';
+  const firstGroup = routingCfg.ruleGroups?.find(group => group.nodeIds.includes(Number(usableEntries[0]?.nodeId)));
+  const sharedGroup = firstGroup && usableEntries.every(entry => firstGroup.nodeIds.includes(Number(entry.nodeId))) ? firstGroup : null;
+  const routingMode = routingEnabled ? String(sharedGroup?.mode || routingCfg.mode || 'proxy-except') : '';
   const config = buildHappJsonConfig(
     client,
     usableEntries.map(entry => entry.line),
@@ -19414,6 +19549,7 @@ function buildAutoSelectJsonConfig(profile, client, entries, subscriptionName) {
     {
       nodeId: Number(usableEntries[0]?.nodeId || 0),
       entryNodeIds: usableEntries.map(entry => Number(entry.nodeId || 0)),
+      routingGroup: sharedGroup,
       routingMode,
       preserveXhttpExtra: true
     }
@@ -19449,59 +19585,12 @@ function buildAutoSelectJsonConfig(profile, client, entries, subscriptionName) {
     emergencyTags = [];
   }
 
-  const balancers = [];
-  let routeBalancerTag = '';
-  let fallbackLoopbackTag = '';
-  let mainBalancerTag = '';
-  if (tieredPolicy && preferredTags.length && normalTags.length) {
-    mainBalancerTag = `auto-${Number(profile.id)}-main-balancer`;
-    const emergencyFallbackTag = emergencyTags[0] || unavailableTag;
-    balancers.push({
-      tag: mainBalancerTag,
-      selector: normalTags,
-      strategy: { type: 'leastPing' },
-      fallbackTag: emergencyFallbackTag
-    });
-    const reentryTag = `auto-${Number(profile.id)}-main-reentry`;
-    fallbackLoopbackTag = `auto-${Number(profile.id)}-main-loopback`;
-    config.outbounds.push({
-      tag: fallbackLoopbackTag,
-      protocol: 'loopback',
-      settings: { inboundTag: reentryTag }
-    });
-    routeBalancerTag = `auto-${Number(profile.id)}-preferred-balancer`;
-    balancers.push({
-      tag: routeBalancerTag,
-      selector: preferredTags,
-      strategy: { type: 'leastPing' },
-      fallbackTag: fallbackLoopbackTag
-    });
-  } else {
-    routeBalancerTag = `auto-${Number(profile.id)}-balancer`;
-    const selector = tieredPolicy ? [...normalTags, ...preferredTags] : normalTags;
-    const fallbackTag = emergencyTags[0] || unavailableTag;
-    balancers.push({
-      tag: routeBalancerTag,
-      selector,
-      strategy: { type: 'leastPing' },
-      fallbackTag
-    });
-  }
-
+  const {balancers,reentryRules,routeBalancerTag}=require('./lib_auto_select_health').healthPolicy(config,{id:Number(profile.id),preferredTags,normalTags,emergencyTags,unavailableTag});
   const baseRules = Array.isArray(config.routing?.rules) && config.routing.rules.length
     ? config.routing.rules
     : [{ type: 'field', network: 'tcp,udp', outboundTag: 'proxy' }];
   const rules = baseRules.map(rule => autoSelectRuleForBalancer(rule, routeBalancerTag));
-  if (mainBalancerTag) {
-    // The preferred node is used while its internet probe succeeds. If Xray
-    // marks it unavailable, Loopback re-enters routing and selects the best
-    // healthy member of the regular pool, then the emergency outbound.
-    rules.unshift({
-      type: 'field',
-      inboundTag: [`auto-${Number(profile.id)}-main-reentry`],
-      balancerTag: mainBalancerTag
-    });
-  }
+  rules.unshift(...reentryRules);
   config.routing = {
     domainStrategy: String(config.routing?.domainStrategy || 'IPOnDemand'),
     domainMatcher: String(config.routing?.domainMatcher || 'hybrid'),
@@ -19514,17 +19603,12 @@ function buildAutoSelectJsonConfig(profile, client, entries, subscriptionName) {
     probeInterval: `${profile.probeIntervalSeconds}s`,
     enableConcurrency: true
   };
-  // The first app request can precede the first observation. A blackhole here
-  // makes clients back off although a usable node is already being probed.
-  // Keep priority/emergency fallbacks intact; plain profiles may opt out.
-  const fastStart = profile.fastStart === true && !tieredPolicy;
-  if (fastStart) balancers[0].fallbackTag = normalTags[0] || unavailableTag;
-
   config.remarks = profile.title;
   config.name = profile.title;
   config.ps = profile.title;
   config.title = profile.title;
   config.autoSelect = {
+    profileId: Number(profile.id),
     enabled: true,
     strategy: tieredPolicy ? 'preferred-then-leastPing-then-emergency' : 'leastPing',
     preferredNodeId: profile.preferredNodeId || null,
@@ -19536,8 +19620,9 @@ function buildAutoSelectJsonConfig(profile, client, entries, subscriptionName) {
     intervalSeconds: profile.probeIntervalSeconds,
     candidates: candidateOutbounds.length
   };
-  config.autoSelect.noHealthyNode = fastStart ? 'try-first-main' : (emergencyTags.length ? 'emergency' : 'block-until-healthy');
-  config.autoSelect.fastStart = fastStart;
+  config.autoSelect.noHealthyNode = 'block-until-healthy';
+  config.autoSelect.fastStart = false;
+  config.autoSelect.probeType = 'https-through-vpn';
   config.meta = {
     ...(config.meta || {}),
     autoSelect: config.autoSelect,
@@ -19551,7 +19636,7 @@ function buildAutoSelectJsonConfigs(client, entries, subscriptionName) {
   const byNodeId = new Map();
   for (const entry of entries || []) {
     const nodeId = Number(entry?.nodeId || 0);
-    if (!nodeId || !String(entry?.line || '').startsWith('vless://')) continue;
+    if (!nodeId || !/^(?:vless|hysteria2|hy2):\/\//i.test(String(entry?.line || ''))) continue;
     if (!byNodeId.has(nodeId)) byNodeId.set(nodeId, []);
     byNodeId.get(nodeId).push(entry);
   }
@@ -19600,8 +19685,8 @@ function isIosSafeIpRule(value) {
   return /^[0-9a-f:]+(\/\d{1,3})?$/i.test(text) && text.includes(':');
 }
 
-function buildIosSafeRoutingRules(routingOutboundTag = '', routingMode = '') {
-  const base = buildRoutingRules(routingOutboundTag, routingMode);
+function buildIosSafeRoutingRules(routingOutboundTag = '', routingMode = '', cfg = getRoutingConfig()) {
+  const base = buildRoutingRules(routingOutboundTag, routingMode, cfg);
   const safeRules = [];
   for (const rule of base) {
     const next = { ...rule };
@@ -19621,15 +19706,15 @@ function buildIosSafeRoutingRules(routingOutboundTag = '', routingMode = '') {
   return safeRules.length ? safeRules : [{ type: 'field', network: 'tcp,udp', outboundTag: 'direct' }];
 }
 
-function getEffectiveJsonRoutingRules(routingOutboundTag = '', routingMode = '') {
-  return isIosSafeRoutingEnabled() ? buildIosSafeRoutingRules(routingOutboundTag, routingMode) : buildRoutingRules(routingOutboundTag, routingMode);
+function getEffectiveJsonRoutingRules(routingOutboundTag = '', routingMode = '', cfg = getRoutingConfig()) {
+  return isIosSafeRoutingEnabled() ? buildIosSafeRoutingRules(routingOutboundTag, routingMode, cfg) : buildRoutingRules(routingOutboundTag, routingMode, cfg);
 }
 
 function getSelectiveProxyOutboundTag() {
   return 'proxy';
 }
 
-function normalizeXrayJsonForIos(config, routingOutboundTag = '', routingMode = '') {
+function normalizeXrayJsonForIos(config, routingOutboundTag = '', routingMode = '', cfg = getRoutingConfig()) {
   if (!isIosSafeRoutingEnabled() || !config || typeof config !== 'object') return config;
 
   // RAW is a 3x-ui UI name. Xray/iOS JSON expects tcp.
@@ -19654,14 +19739,13 @@ function normalizeXrayJsonForIos(config, routingOutboundTag = '', routingMode = 
     // the original destination is a domain and geosite data is incomplete.
     config.routing.domainStrategy = 'IPOnDemand';
     config.routing.domainMatcher = 'hybrid';
-    config.routing.rules = getEffectiveJsonRoutingRules(routingOutboundTag, routingMode);
+    config.routing.rules = getEffectiveJsonRoutingRules(routingOutboundTag, routingMode, cfg);
   }
   config.iosSafe = true;
   return config;
 }
 
-function buildRoutingRules(routingOutboundTag = '', routingMode = '') {
-  const cfg = getRoutingConfig();
+function buildRoutingRules(routingOutboundTag = '', routingMode = '', cfg = getRoutingConfig()) {
   const mode = routingMode || cfg.mode;
   if (cfg.enabled === false) {
     return [{ type: 'field', network: 'tcp,udp', outboundTag: 'direct' }];
@@ -19672,12 +19756,12 @@ function buildRoutingRules(routingOutboundTag = '', routingMode = '') {
     // `proxy` is that node itself; no second outbound selector is required.
     const outboundTag = 'proxy';
     const rules = [];
-    const blockDomains = getRoutingBlockDomains();
-    const blockIps = getRoutingBlockIps();
+    const blockDomains = getRoutingBlockDomains(cfg);
+    const blockIps = getRoutingBlockIps(cfg);
     if (blockDomains.length) rules.push({ type: 'field', domain: blockDomains, outboundTag: 'block' });
     if (blockIps.length) rules.push({ type: 'field', ip: blockIps, outboundTag: 'block' });
-    const domains = getRoutingProxyDomains();
-    const ips = getRoutingProxyIps();
+    const domains = getRoutingProxyDomains(cfg);
+    const ips = getRoutingProxyIps(cfg);
     if (domains.length) rules.push({ type: 'field', domain: domains, outboundTag });
     if (ips.length) rules.push({ type: 'field', ip: ips, outboundTag });
     rules.push({ type: 'field', network: 'tcp,udp', outboundTag: 'direct' });
@@ -19686,18 +19770,18 @@ function buildRoutingRules(routingOutboundTag = '', routingMode = '') {
 
   if (mode === 'proxy-except') {
     const rules = [];
-    const blockDomains = getRoutingBlockDomains();
-    const blockIps = getRoutingBlockIps();
+    const blockDomains = getRoutingBlockDomains(cfg);
+    const blockIps = getRoutingBlockIps(cfg);
     if (blockDomains.length) rules.push({ type: 'field', domain: blockDomains, outboundTag: 'block' });
     if (blockIps.length) rules.push({ type: 'field', ip: blockIps, outboundTag: 'block' });
     // Priority matters. In the "everything via proxy except..." mode the selected
     // services/custom lists are forced to proxy BEFORE broad RU/direct rules.
     // This allows cases like Mail.ru/My.ru via VPN while geosite:category-ru/geoip:ru
     // still go direct.
-    const forceProxyDomains = getRoutingProxyDomains();
-    const forceProxyIps = getRoutingProxyIps();
-    const directDomains = getRoutingDirectDomains();
-    const directIps = getRoutingDirectIps();
+    const forceProxyDomains = getRoutingProxyDomains(cfg);
+    const forceProxyIps = getRoutingProxyIps(cfg);
+    const directDomains = getRoutingDirectDomains(cfg);
+    const directIps = getRoutingDirectIps(cfg);
     if (forceProxyDomains.length) rules.push({ type: 'field', domain: forceProxyDomains, outboundTag: 'proxy' });
     if (forceProxyIps.length) rules.push({ type: 'field', ip: forceProxyIps, outboundTag: 'proxy' });
     if (directDomains.length) rules.push({ type: 'field', domain: directDomains, outboundTag: 'direct' });
@@ -19707,12 +19791,12 @@ function buildRoutingRules(routingOutboundTag = '', routingMode = '') {
   }
 
   const rules = [];
-  const blockDomains = getRoutingBlockDomains();
-  const blockIps = getRoutingBlockIps();
+  const blockDomains = getRoutingBlockDomains(cfg);
+  const blockIps = getRoutingBlockIps(cfg);
   if (blockDomains.length) rules.push({ type: 'field', domain: blockDomains, outboundTag: 'block' });
   if (blockIps.length) rules.push({ type: 'field', ip: blockIps, outboundTag: 'block' });
-  const proxyDomains = getRoutingProxyDomains();
-  const proxyIps = getRoutingProxyIps();
+  const proxyDomains = getRoutingProxyDomains(cfg);
+  const proxyIps = getRoutingProxyIps(cfg);
   if (proxyDomains.length) rules.push({ type: 'field', domain: proxyDomains, outboundTag: 'proxy' });
   if (proxyIps.length) rules.push({ type: 'field', ip: proxyIps, outboundTag: 'proxy' });
   rules.push({ type: 'field', network: 'tcp,udp', outboundTag: 'direct' });
@@ -19773,7 +19857,7 @@ function buildHappJsonConfig(client, lines, subscriptionName, routingEnabledForT
   const nexusBrandWebPageUrl = getNexusBrandWebPageUrl(client);
 
   const proxyOutbounds = lines
-    .filter(line => String(line).startsWith('vless://'))
+    .filter(line => /^(?:vless|hysteria2|hy2):\/\//i.test(String(line)))
     .map((line, index) => parseVlessLineToOutbound(line, index, {
       ...options,
       nodeId: Number(options.entryNodeIds?.[index] || options.nodeId || 0)
@@ -19787,7 +19871,10 @@ function buildHappJsonConfig(client, lines, subscriptionName, routingEnabledForT
     });
   }
 
-  const routingCfg = getRoutingConfig();
+  const baseRoutingCfg = getRoutingConfig();
+  const group = options.routingGroup !== undefined ? options.routingGroup
+    : baseRoutingCfg.ruleGroups?.find(rule => rule.nodeIds.includes(Number(options.nodeId)));
+  const routingCfg = policyForGroup(baseRoutingCfg, group);
   const assignedRoutingMode = String(options.routingMode || getRoutingModeForNode(options.nodeId, routingCfg) || '');
   // Keep the node assignment as the source of truth. If the caller has already
   // confirmed that routing applies to this node, fall back to the saved mode
@@ -19900,14 +19987,14 @@ function buildHappJsonConfig(client, lines, subscriptionName, routingEnabledForT
       iconUrl: nexusBrandLogoUrl,
       webPageUrl: nexusBrandWebPageUrl,
       ...(jsonVisibleInfo ? { announce: jsonVisibleInfo, announcement: jsonVisibleInfo } : {}),
-      ...(jsonHappInfoText ? { subInfoText: jsonHappInfoText, infoText: jsonHappInfoText } : {}),
+      ...(jsonHappInfoText && shouldEmitHappSubInfoBlock() ? { subInfoText: jsonHappInfoText, infoText: jsonHappInfoText } : {}),
       ...(jsonSupport.url ? { supportUrl: jsonSupport.url } : {})
     },
     ...(routingActive ? {
       routing: {
         domainStrategy: 'IPOnDemand',
         domainMatcher: 'hybrid',
-        rules: getEffectiveJsonRoutingRules(selectiveOutboundTag, routingMode)
+        rules: getEffectiveJsonRoutingRules(selectiveOutboundTag, routingMode, routingCfg)
       }
     } : {}),
     stats: {},
@@ -19952,9 +20039,10 @@ function buildHappJsonConfig(client, lines, subscriptionName, routingEnabledForT
       }
     } : {})
   };
-  return applyJsonRoutingDns(normalizeXrayJsonForIos(config, selectiveOutboundTag, routingMode), routingCfg, {
+  return applyJsonRoutingDns(normalizeXrayJsonForIos(config, selectiveOutboundTag, routingMode, routingCfg), routingCfg, {
     active: routingActive, mode: routingMode,
-    directDomains: getRoutingDirectDomains(), proxyDomains: getRoutingProxyDomains()
+    directDomains: getRoutingDirectDomains(routingCfg), proxyDomains: getRoutingProxyDomains(routingCfg),
+    listProxyDomains: routingCfg.listProxyDomains || []
   });
 }
 
@@ -20012,7 +20100,7 @@ app.get('/json/:slug', async (req, res) => {
   const incyJson = String(req.query.format || '').toLowerCase() === 'incy'
     || /incy/i.test(String(req.headers['user-agent'] || ''));
   const awgConfigs = incyJson ? entries.map(entry => require('./lib_amneziawg').jsonContainer(entry)).filter(Boolean) : [];
-  const vlessLines = lines.filter(line => String(line).startsWith('vless://'));
+  const vlessLines = lines.filter(line => /^(?:vless|hysteria2|hy2):\/\//i.test(String(line)));
 
   if (vlessLines.length >= 1) {
     const requestedNodeRaw = String(req.query.node || '').trim();
@@ -20022,20 +20110,22 @@ app.get('/json/:slug', async (req, res) => {
     // several configs/regions, while a single object is imported as only one
     // visible server. This was the reason only the last/random region appeared.
     if (!singleMode) {
-      const vlessEntries = entries.filter(e => String(e.line).startsWith('vless://'));
+      const vlessEntries = entries.filter(e => /^(?:vless|hysteria2|hy2):\/\//i.test(String(e.line)));
       // Virtual auto-select profiles are intentionally JSON-only: a plain
       // vless:// link cannot carry an Xray balancer or an observatory. Put the
-      // independently configured profiles before the individual regions in Happ.
+      // independently configured profiles in the saved common node order.
       const resultConfigs = isClientExpired(client) ? [] : buildAutoSelectJsonConfigs(client, vlessEntries, subscriptionName);
+      const configNodeKeys = new Map();
+      const pushConfig = (config, nodeId) => { configNodeKeys.set(config, String(nodeId)); resultConfigs.push(config); };
       const nativeJsonCache = new Map();
       // Keep native AWG containers in the same node order as text subscriptions.
-      // Auto-select profiles intentionally remain before all physical nodes.
-      const orderedEntries = incyJson ? entries.filter(entry => /^(?:vless|amneziawg|awg):\/\//.test(String(entry.line))) : vlessEntries;
+      // The common display order is applied after all configs are collected.
+      const orderedEntries = incyJson ? entries.filter(entry => /^(?:vless|hysteria2|hy2|amneziawg|awg):\/\//i.test(String(entry.line))) : vlessEntries;
       for (let index = 0; index < orderedEntries.length; index += 1) {
         const entry = orderedEntries[index];
         const nativeAwg = incyJson && require('./lib_amneziawg').jsonContainer(entry);
         if (nativeAwg) {
-          resultConfigs.push(nativeAwg);
+          pushConfig(nativeAwg, entry.nodeId);
           continue;
         }
         const remark = getRemarkFromVlessLine(entry.line) || entry.nodeName || `Server ${index + 1}`;
@@ -20050,14 +20140,14 @@ app.get('/json/:slug', async (req, res) => {
             if (nativeConfigs.length) {
               // A provider JSON endpoint may return several configs for one
               // client. Merge them into the same Happ JSON array unchanged.
-              nativeConfigs.forEach((cfg, cfgIndex) => resultConfigs.push(relabelNativeJsonConfig(cfg, nativeConfigs.length > 1 ? `${remark} ${cfgIndex + 1}` : remark)));
+              nativeConfigs.forEach((cfg, cfgIndex) => pushConfig(relabelNativeJsonConfig(cfg, nativeConfigs.length > 1 ? `${remark} ${cfgIndex + 1}` : remark), entry.nodeId));
               continue;
             }
           } catch (err) {
             console.error(`H1Cloud native JSON unavailable (${entry.nodeId}):`, err.message || err);
           }
         }
-        resultConfigs.push(buildHappJsonConfigFromLine(
+        pushConfig(buildHappJsonConfigFromLine(
           client,
           entry.line,
           subscriptionName,
@@ -20072,9 +20162,9 @@ app.get('/json/:slug', async (req, res) => {
             nodeId: Number(entry.nodeId || 0),
             routingMode: getRoutingModeForNode(entry.nodeId)
           }
-        ));
+        ), entry.nodeId);
       }
-      return res.json(resultConfigs);
+      return res.json(require('./lib_node_display_order').orderConfigs(db, resultConfigs, cfg => configNodeKeys.get(cfg) || `auto-${cfg.autoSelect?.profileId}`));
     }
 
     // Compatibility endpoint for clients that require a single Xray object:
@@ -20083,7 +20173,7 @@ app.get('/json/:slug', async (req, res) => {
     const selectedIndex = Number.isFinite(requestedNode)
       ? Math.min(Math.max(requestedNode - 1, 0), vlessLines.length - 1)
       : 0;
-    const selectedEntry = entries.filter(e => String(e.line).startsWith('vless://'))[selectedIndex];
+    const selectedEntry = entries.filter(e => /^(?:vless|hysteria2|hy2):\/\//i.test(String(e.line)))[selectedIndex];
     return res.json(buildHappJsonConfigFromLine(client, selectedEntry.line, subscriptionName, selectedIndex, selectedEntry.nodeType === 'notice' ? false : isRoutingEnabledForNode(selectedEntry.nodeId), {
       preserveXhttpExtra: [NODE_TYPE_3XUI, NODE_TYPE_H1CLOUD_3XUI, NODE_TYPE_REMNAWAVE].includes(selectedEntry.nodeType),
       nodeId: Number(selectedEntry.nodeId || 0),
@@ -20136,6 +20226,25 @@ app.get('/open/:slug/status', async (req, res) => {
   } catch (err) {
     return res.status(502).json({ ok: false, error: humanizeOperationalError(err) });
   }
+});
+
+const subscriptionBilling = require('./lib_subscription_billing').createBilling({
+  app, db, getSetting, setSetting, requireAuth, render, migration: subscriptionMigration,
+  removeDevices: async (clientId,deviceId) => {
+    if(deviceId===null) db.prepare('DELETE FROM subscription_devices WHERE client_id=?').run(clientId);
+    else if(!db.prepare('DELETE FROM subscription_devices WHERE id=? AND client_id=?').run(deviceId,clientId).changes) throw Error('Устройство не найдено');
+    const errors=await awgDevices.flush(clientId);
+    return errors.length?'Привязка удалена. Отзыв AWG ожидает повторной синхронизации.':'Привязка удалена, отдельный AWG-доступ отозван.';
+  },
+  term:(client,days)=>{const pending=isClientActivationPending(client);const base=client.expiry_time>Date.now()?client.expiry_time:Date.now();return {expiry:pending?0:expiryAtMidnightAfterDays(days,base),duration:pending?Number(client.duration_days)+days:Math.max(0,Number(client.duration_days||days))};},
+  syncClient:async id=>{const client=db.prepare('SELECT * FROM clients WHERE id=?').get(id);const result=await updateClientEverywhere(client,{expiry_time:client.expiry_time,duration_days:client.duration_days,device_limit:client.device_limit});if(result.failed)throw Error('Срок сохранён; не удалось синхронизировать узлов: '+result.failed+'. Повторите синхронизацию заказа.');}
+});
+require('./lib_subscription_migration_routes').attachSubscriptionMigrationRoutes({
+  app, db, migration: subscriptionMigration, requireAuth, render,
+  subscriptionName: () => getSetting('subscription_name', DEFAULT_SUBSCRIPTION_NAME),
+  billing: subscriptionBilling,
+  supportUrl: () => getSubscriptionSupportMeta().url,
+  portalModel: async client => buildSubscriptionPortalModel(await buildSubscriptionEntries(client, true), client)
 });
 
 app.get('/open/:slug', async (req, res) => {
@@ -21486,11 +21595,8 @@ app.use((err, req, res, next) => {
   res.status(500).send(formatServerErrorPage('Внутренняя ошибка сервера', err));
 });
 
-const nexusServer = app.listen(PORT, WORKSPACE_ID === 'main' ? '0.0.0.0' : '127.0.0.1', () => {
+const nexusServer = app.listen(PORT, '0.0.0.0', () => {
   if (process.send) process.send({ type: 'ready', port: nexusServer.address().port });
-  if (workspaceRuntime) {
-    for (const workspace of access.control.prepare("SELECT id FROM workspaces WHERE id!='main' AND status='ready'").all()) workspaceRuntime.start(workspace.id).catch(err => console.error('Workspace startup:', err.message));
-  }
   console.log(`3xui-aggregator started on :${PORT}`);
   startTelegramManagerBot();
   setTimeout(scheduleSupportReconcile, 2000).unref();
@@ -21511,7 +21617,3 @@ const nexusServer = app.listen(PORT, WORKSPACE_ID === 'main' ? '0.0.0.0' : '127.
     for (const row of rows) syncActivatedClient(row).catch(err => console.error('Activation sync failed:', err.message));
   }, 30000).unref();
 });
-if (workspaceRuntime) {
-  process.on('exit', () => workspaceRuntime.stop());
-  for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => { workspaceRuntime.stop(); process.exit(0); });
-}

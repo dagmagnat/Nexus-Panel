@@ -5,6 +5,7 @@
 
 <form id="bumpSubRevisionForm" method="post" action="/settings/subscription-revision/bump"></form>
 
+<section class="card"><h2>Оплата и продление</h2><p class="muted">Тарифы, устройства, скидки, банковские реквизиты и заявки клиентов.</p><a class="link-btn" href="/subscription-billing">Открыть раздел «Оплата»</a></section>
 <div class="grid">
   <section class="card span-6 panel-settings-card" data-settings-key="panel">
     <h2><span class="section-icon" aria-hidden="true">🎛️</span>Настройка панели</h2>
@@ -48,13 +49,22 @@
       </div>
 
       <div class="field half">
+        <label for="nodesListMode">Список узлов</label>
+        <select id="nodesListMode" name="nodes_list_mode">
+          <option value="pages" <%= typeof nodesListMode === 'undefined' || nodesListMode !== 'scroll' ? 'selected' : '' %>>Страницы</option>
+          <option value="scroll" <%= typeof nodesListMode !== 'undefined' && nodesListMode === 'scroll' ? 'selected' : '' %>>Прокрутка — все узлы</option>
+        </select>
+        <small class="hint">В режиме прокрутки весь список доступен сразу. Узлы можно перемещать стрелками или перетаскивать.</small>
+      </div>
+
+      <div class="field half">
         <label>Узлов на странице</label>
         <select name="nodes_page_size">
-          <option value="10" <%= Number(nodesPageSize || 10) === 10 ? 'selected' : '' %>>10</option>
-          <option value="12" <%= Number(nodesPageSize || 10) === 12 ? 'selected' : '' %>>12</option>
-          <option value="15" <%= Number(nodesPageSize || 10) === 15 ? 'selected' : '' %>>15</option>
+          <% for (const size of [10, 12, 15, 25, 50, 100, 0]) { %>
+          <option value="<%= size %>" <%= Number(nodesPageSize ?? 10) === size ? 'selected' : '' %>><%= size || 'Все узлы' %></option>
+          <% } %>
         </select>
-        <small class="hint">Для страницы «Узлы»: лишние узлы уходят на страницу 2, 3 и далее.</small>
+        <small class="hint">Применяется в режиме «Страницы». При перемещении стрелками узел может переходить между страницами.</small>
       </div>
 
       <div class="field half">

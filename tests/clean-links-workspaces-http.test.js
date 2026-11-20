@@ -8,7 +8,7 @@ const { fork } = require('node:child_process');
 const Database = require('better-sqlite3');
 const root = path.resolve(__dirname,'..');
 
-test('clean public links isolate real workspace workers; empty node screen has compact actions', {timeout:90000}, async t => {
+test('clean public links remain scoped to the main database; empty node screen has compact actions', {timeout:90000}, async t => {
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'nexus-clean-workspaces-'));
   const child=fork(path.join(root,'app.js'),[],{cwd:root,stdio:['ignore','pipe','pipe','ipc'],env:{...process.env,
     DOTENV_CONFIG_PATH:path.join(dir,'missing.env'),NODE_ENV:'development',DATA_DIR:dir,NEXUS_CONTROL_DIR:dir,NEXUS_WORKSPACE_ID:'main',
@@ -51,27 +51,27 @@ test('clean public links isolate real workspace workers; empty node screen has c
       assert.deepEqual(errors,[]);
     }finally{await browser.close();}
   }
-  await request('/access');const created=await request('/access/workspaces',{name:'Clean link team'});
-  assert.equal(created.status,302);assert.ok(!created.location.includes('error='),created.location+'\n'+log);
-  const control=new Database(path.join(dir,'control.db'));const w=control.prepare("SELECT id FROM workspaces WHERE id!='main' AND status='ready'").get();control.close();assert.ok(w);
+  const archivedId='a'.repeat(24);
+  const control=new Database(path.join(dir,'control.db'));
+  control.prepare('INSERT INTO workspaces VALUES (?,?,?,?)').run(archivedId,'Archived','ready','');
+  control.close();
   const slug='same-clean-token-123456';
-  for(const [directory,label] of [[dir,'ROOT-CONFIG'],[path.join(dir,'workspaces',w.id),'TEAM-CONFIG']]){
-    const db=new Database(path.join(directory,'app.db'));
-    db.prepare('INSERT INTO clients(login,display_name,uuid,sub_slug,expiry_time,enabled) VALUES(?,?,?,?,0,1)').run(label,label,'11111111-2222-4333-8444-555555555555',slug);
-    db.prepare("UPDATE app_settings SET value=? WHERE key='subscription_name'").run(label);db.close();
+  const db=new Database(path.join(dir,'app.db'));
+  db.prepare('INSERT INTO clients(login,display_name,uuid,sub_slug,expiry_time,enabled) VALUES(?,?,?,?,0,1)')
+    .run('ROOT-CONFIG','ROOT-CONFIG','11111111-2222-4333-8444-555555555555',slug);
+  db.prepare("UPDATE app_settings SET value=? WHERE key='subscription_name'").run('ROOT-CONFIG');
+  db.close();
+  const portal=await request(`/open/${slug}`);
+  assert.equal(portal.status,303);
+  assert.equal(portal.location,'/account');
+  assert.equal((await request('/account')).status,200);
+  const direct=await fetch(base+'/'+slug,{redirect:'manual'});
+  assert.equal(direct.status,200);
+  assert.ok((await direct.text()).includes('ROOT-CONFIG'));
+  const sub=await fetch(base+'/'+slug+'?format=sub',{redirect:'manual'});
+  assert.equal(sub.status,200);
+  assert.match(sub.headers.get('content-type'),/text\/plain/);
+  for(const suffix of [`/${slug}`,'/clients','/auto-select-profiles','/node-traffic','/backup/download']) {
+    assert.equal((await fetch(`${base}/s/${archivedId}${suffix}`,{redirect:'manual'})).status,404);
   }
-  const switched=await request('/access/switch',{workspace_id:w.id});assert.equal(switched.status,302);
-  const teamDb=new Database(path.join(dir,'workspaces',w.id,'app.db'));
-  teamDb.prepare("UPDATE app_settings SET value='0' WHERE key='subscription_clean_urls'").run();teamDb.close();
-  const rootPortal=await request(`/open/${slug}`);assert.ok(!rootPortal.text.includes(`/json/${slug}`));
-  const teamPortal=await fetch(`${base}/s/${w.id}/open/${slug}`);assert.ok((await teamPortal.text()).includes(`/s/${w.id}/json/${slug}`),'URL preference is workspace-local, not taken from selected cookie');
-  for(const [url,wanted,other] of [[`/${slug}`,'ROOT-CONFIG','TEAM-CONFIG'],[`/s/${w.id}/${slug}`,'TEAM-CONFIG','ROOT-CONFIG']]){
-    const anonymous=await fetch(base+url,{redirect:'manual'});assert.equal(anonymous.status,200);const text=await anonymous.text();assert.ok(text.includes(wanted),text);assert.ok(!text.includes(other));
-    const logged=await request(url);assert.equal(logged.status,200);assert.ok(logged.text.includes(wanted),'selected workspace cookie must not alter public URL namespace');
-    const sub=await fetch(base+url+'?format=sub',{redirect:'manual'});assert.equal(sub.status,200);assert.match(sub.headers.get('content-type'),/text\/plain/);
-  }
-  for(const suffix of ['/clients','/auto-select-profiles','/node-traffic','/backup/download'])assert.equal((await fetch(`${base}/s/${w.id}${suffix}`,{redirect:'manual'})).status,404);
-  const db=new Database(path.join(dir,'workspaces',w.id,'app.db'));db.prepare('UPDATE clients SET enabled=0').run();db.close();
-  assert.equal((await fetch(`${base}/s/${w.id}/${slug}`,{redirect:'manual'})).status,404);
-  assert.equal((await fetch(`${base}/${slug}`,{redirect:'manual'})).status,200);
 });

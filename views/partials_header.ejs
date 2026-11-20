@@ -34,7 +34,7 @@
     } catch (_) {}
   })();
   </script>
-  <link rel="stylesheet" href="/css/spectrum-clear.css?v=276" />
+  <link rel="stylesheet" href="/css/spectrum-clear.css?v=276-20261112-billing" />
   <link rel="stylesheet" href="/css/management-layout.css?v=1" />
   <script src="/js/management-layout.js?v=1" defer></script>
   <script src="/js/security.js?v=3"></script>
@@ -60,7 +60,7 @@
     return '<svg class="nexus-icon' + (cls ? ' ' + cls : '') + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (NEXUS_ICONS[name] || '') + '</svg>';
   }
   const currentPath = typeof activePage !== 'undefined' ? activePage : '';
-  const moreNavActive = ['more', 'settings', 'access', 'preferences', 'redirects', 'diagnostics', 'telegram_bot', 'nexus_nodes'].includes(currentPath);
+  const moreNavActive = ['more', 'subscription-billing', 'settings', 'access', 'preferences', 'redirects', 'diagnostics', 'telegram_bot', 'nexus_nodes'].includes(currentPath);
   const sectionLabels = {
     dashboard: 'Обзор', nodes: 'Инфраструктура', clients: 'Доступ',
     routing: 'Сеть', redirects: 'Сеть', diagnostics: 'Система', telegram_bot: 'Интеграции',
@@ -70,7 +70,7 @@
 <body class="nexus-spectrum theme-classic page-<%= currentPath || 'app' %> clients-view-<%= typeof clientsViewMode !== 'undefined' ? clientsViewMode : 'modern' %> mobile-nav-<%= typeof panelMobileNavMode !== 'undefined' ? panelMobileNavMode : 'bottom' %> mobile-size-<%= typeof panelMobileUiScale !== 'undefined' ? panelMobileUiScale : 'compact' %>">
   <div class="spectrum-mobilebar">
     <button class="mobile-menu-toggle spectrum-icon-button" type="button" aria-label="Открыть меню" aria-controls="panelSidebar" aria-expanded="false"><%- nexusIcon('menu') %></button>
-    <a class="spectrum-mobile-brand" href="/access"><img src="/img/nexus-logo-192.png" alt=""><span style="display:flex;flex-direction:column;min-width:0">Nexus<small style="font-size:10px;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><%= typeof workspaceName !== 'undefined' ? workspaceName : 'Основное' %> ▾</small></span></a>
+    <a class="spectrum-mobile-brand" href="/dashboard"><img src="/img/nexus-logo-192.png" alt=""><span style="display:flex;flex-direction:column;min-width:0">Nexus</span></a>
     <div class="spectrum-mobile-title"><strong><%= typeof pageTitle !== 'undefined' ? pageTitle : 'Панель' %></strong></div>
     <button type="button" class="theme-toggle spectrum-icon-button" data-theme-toggle aria-label="Переключить тему"><span data-theme-icon><%- nexusIcon('moon', 'theme-moon') %><%- nexusIcon('sun', 'theme-sun') %></span></button>
   </div>
@@ -100,6 +100,7 @@
           <span class="spectrum-nav-label">Система</span>
           <a href="/diagnostics" class="<%= currentPath === 'diagnostics' ? 'active' : '' %>"><span class="nav-icon"><%- nexusIcon('diagnostics') %></span><span>Диагностика</span></a>
           <a href="/telegram-bot" class="<%= currentPath === 'telegram_bot' ? 'active' : '' %>"><span class="nav-icon"><%- nexusIcon('telegram') %></span><span>Telegram</span></a>
+          <a href="/subscription-billing" class="<%= currentPath === 'subscription-billing' ? 'active' : '' %>"><span class="nav-icon"><%- nexusIcon('settings') %></span><span>Оплата</span></a>
           <a href="/settings" class="<%= currentPath === 'settings' ? 'active' : '' %>"><span class="nav-icon"><%- nexusIcon('settings') %></span><span>Настройки</span></a>
           <a href="/access" class="<%= currentPath === 'access' ? 'active' : '' %>" <%- currentPath === 'access' ? 'aria-current="page"' : '' %>><span class="nav-icon"><%- nexusIcon('clients') %></span><span>Пользователи и доступ</span></a>
           <a href="/preferences" class="<%= currentPath === 'preferences' ? 'active' : '' %>" <%- currentPath === 'preferences' ? 'aria-current="page"' : '' %>><span class="nav-icon"><%- nexusIcon('settings') %></span><span>Профиль настроек</span></a>
@@ -110,7 +111,7 @@
         <button type="button" class="sidebar-order-button spectrum-order-button" data-open-order-modal>Настроить порядок</button>
         <div class="sidebar-user-card spectrum-user-card">
           <div class="sidebar-user-avatar"><%= String(typeof currentAdminUsername !== 'undefined' && currentAdminUsername ? currentAdminUsername : 'A').slice(0,1).toUpperCase() %></div>
-          <div class="sidebar-user-meta"><strong><%= typeof currentAdminUsername !== 'undefined' && currentAdminUsername ? currentAdminUsername : 'admin' %></strong><small><%= typeof workspaceName !== 'undefined' ? workspaceName : 'Основное' %></small></div>
+          <div class="sidebar-user-meta"><strong><%= typeof currentAdminUsername !== 'undefined' && currentAdminUsername ? currentAdminUsername : 'admin' %></strong><small>Панель управления</small></div>
           <form class="logout-form sidebar-logout" method="post" action="/logout"><button type="submit" class="spectrum-icon-button" title="Выйти"><%- nexusIcon('logout') %></button></form>
         </div>
       </div>
@@ -124,7 +125,6 @@
           <% if (typeof pageSubtitle !== 'undefined' && pageSubtitle) { %><p class="subtitle"><%= pageSubtitle %></p><% } %>
         </div>
         <div class="spectrum-page-actions">
-          <a href="/access" class="spectrum-theme-button" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="Переключить пространство"><%= typeof workspaceName !== 'undefined' ? workspaceName : 'Основное' %> ▾</a>
           <button type="button" class="theme-toggle spectrum-theme-button" data-theme-toggle aria-label="Переключить тему"><span data-theme-icon><%- nexusIcon('moon', 'theme-moon') %><%- nexusIcon('sun', 'theme-sun') %></span><span class="theme-label">Тема</span></button>
         </div>
       </header>

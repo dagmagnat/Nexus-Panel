@@ -19,11 +19,14 @@ const labels = {
   happ_subscription_auto_update_enabled: 'Автообновление Happ', happ_update_on_open_enabled: 'Обновлять при открытии Happ', happ_ping_on_open_enabled: 'Проверять соединение при открытии Happ',
   happ_subscriptions_collapse_enabled: 'Сворачивать подписки Happ', happ_expand_now_enabled: 'Разворачивать текущую подписку Happ', happ_check_url_via_proxy_enabled: 'Проверять URL через прокси в Happ',
   happ_sniffing_enabled: 'Sniffing Happ', happ_force_apply_on_update_enabled: 'Применять настройки при обновлении Happ',
-  panel_interface_theme: 'Режим интерфейса', clients_view_mode: 'Вид списка клиентов', panel_mobile_nav_mode: 'Мобильная навигация', panel_mobile_ui_scale: 'Размер мобильного интерфейса', panel_mobile_client_compact: 'Компактные карточки клиентов'
+  panel_interface_theme: 'Режим интерфейса', clients_view_mode: 'Вид списка клиентов', panel_mobile_nav_mode: 'Мобильная навигация', panel_mobile_ui_scale: 'Размер мобильного интерфейса', panel_mobile_client_compact: 'Компактные карточки клиентов',
+  nodes_page_size: 'Узлов на странице', nodes_list_mode: 'Режим списка узлов'
 };
 const rules = {};
 for (const key of `show_sub_links show_json_links show_happ_links subscription_show_limits subscription_userinfo_header subscription_live_usage subscription_client_auto_update_enabled subscription_show_empty_limits subscription_happ_info_enabled subscription_happ_info_announce_fallback_enabled subscription_happ_server_description_enabled subscription_device_tracking_enabled subscription_device_limit_enforced subscription_device_require_hwid subscription_expired_notice_enabled json_mux_enabled json_sniffing_enabled ios_safe_routing_enabled happ_app_controls_enabled happ_ping_tcp happ_ping_result_icon happ_fragmentation_enabled happ_noises_enabled happ_mux_enabled happ_subscription_auto_update_enabled happ_update_on_open_enabled happ_ping_on_open_enabled happ_subscriptions_collapse_enabled happ_expand_now_enabled happ_check_url_via_proxy_enabled happ_sniffing_enabled happ_force_apply_on_update_enabled panel_mobile_client_compact client_default_start_on_activation`.split(' ')) rules[key] = { values: ['0', '1'], fallback: '0' };
 Object.assign(rules, {
+  nodes_page_size: { values: ['0', '10', '12', '15', '25', '50', '100'], fallback: '10' },
+  nodes_list_mode: { values: ['pages', 'scroll'], fallback: 'pages' },
   subscription_clean_urls: { values: ['0', '1'], fallback: '1' },
   subscription_update_interval_hours: { min: 1, max: 168, fallback: '1' },
   subscription_expired_grace_days: { values: ['0', '3', '7'], fallback: '7' },

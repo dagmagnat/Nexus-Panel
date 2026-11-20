@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { PERMISSIONS, denyAccess } = require('./lib_access');
 const profiles = require('./lib_settings_profile');
-function attachAccessRoutes({ app, access, runtime, render, db, dataDir, requireAuth }) {
+function attachAccessRoutes({ app, access, render, db, dataDir, requireAuth }) {
   function signed(req, res, next) {
     res.setHeader('Cache-Control', 'private, no-store');
     if (!access.sessionUser(req)) return res.redirect('/login');
@@ -14,7 +14,7 @@ function attachAccessRoutes({ app, access, runtime, render, db, dataDir, require
     if (!access.sessionUser(req)?.is_owner || access.workspaceId !== 'main') return denyAccess(req, res);
     next();
   }
-  if (runtime) {
+  {
     // Read-only preflight: never execute the target route or change its data.
     app.get('/access/check', signed, (req, res) => {
       const raw = String(req.query.path || '');
@@ -27,41 +27,23 @@ function attachAccessRoutes({ app, access, runtime, render, db, dataDir, require
     });
     app.get('/access', signed, (req, res) => {
       const u = access.sessionUser(req);
-      render(res, 'access', { accessUser: u, allWorkspaces: access.workspaces(u), permissions: PERMISSIONS,
+      render(res, 'access', { accessUser: u, permissions: PERMISSIONS,
         accounts: u.is_owner ? access.control.prepare('SELECT id,username,is_owner,disabled FROM users ORDER BY id').all() : [],
         memberships: u.is_owner ? access.control.prepare('SELECT * FROM memberships').all() : [],
         audit: u.is_owner ? access.control.prepare('SELECT * FROM access_audit ORDER BY id DESC LIMIT 40').all() : [],
         message: String(req.query.message || ''), error: String(req.query.error || '') });
     });
-    app.post('/access/switch', signed, (req, res) => {
-      const wid = String(req.body.workspace_id || '');
-      if (!access.workspaces(access.sessionUser(req)).some(w => w.id === wid && w.status === 'ready')) return res.sendStatus(403);
-      req.session.workspaceId = wid;
-      req.session.save(() => res.redirect(access.landingPath(access.sessionUser(req), wid)));
-    });
-    app.post('/access/workspaces', signed, owner, async (req, res) => {
-      try {
-        await runtime.create(req.body.name, req.session.userId);
-        res.redirect('/access?message=' + encodeURIComponent('Пустое пространство создано. Теперь назначьте пользователя.'));
-      } catch (err) { res.redirect('/access?error=' + encodeURIComponent(err.message)); }
-    });
     app.post('/access/users', signed, owner, (req, res) => {
       try {
-        const id = access.createUser({ username: req.body.username, password: req.body.password, wid: req.body.workspace_id, permissions: req.body.permissions });
-        access.audit(req.session.userId, req.body.workspace_id, 'user.created', id);
+        const id = access.createUser({ username: req.body.username, password: req.body.password, wid: 'main', permissions: req.body.permissions });
+        access.audit(req.session.userId, 'main', 'user.created', id);
         res.redirect('/access?message=' + encodeURIComponent('Пользователь создан'));
       } catch (err) { res.redirect('/access?error=' + encodeURIComponent(err.code === 'SQLITE_CONSTRAINT_UNIQUE' ? 'Логин уже занят' : err.message)); }
     });
-    app.post('/access/workspaces/:id/retry', signed, owner, async (req, res) => {
-      try {
-        await runtime.retry(req.params.id, req.session.userId);
-        res.redirect('/access?message=' + encodeURIComponent('Пространство запущено'));
-      } catch (err) { res.redirect('/access?error=' + encodeURIComponent(err.message)); }
-    });
     app.post('/access/users/:id', signed, owner, (req, res) => {
       try {
-        access.updateUser(Number(req.params.id), { disabled: req.body.disabled === '1', password: req.body.password, wid: req.body.workspace_id, permissions: req.body.permissions });
-        access.audit(req.session.userId, req.body.workspace_id, 'user.updated.sessions-revoked', req.params.id);
+        access.updateUser(Number(req.params.id), { disabled: req.body.disabled === '1', password: req.body.password, wid: 'main', permissions: req.body.permissions });
+        access.audit(req.session.userId, 'main', 'user.updated.sessions-revoked', req.params.id);
         res.redirect('/access?message=' + encodeURIComponent('Права обновлены; прежние сессии отозваны'));
       } catch (err) { res.redirect('/access?error=' + encodeURIComponent(err.message)); }
     });

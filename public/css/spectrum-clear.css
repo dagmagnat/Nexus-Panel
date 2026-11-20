@@ -984,7 +984,7 @@ tr.muted-row { opacity: .58; }
 .node-list-row.is-selected { background: linear-gradient(90deg, rgba(22, 217, 255, .06), rgba(49, 120, 255, .08), transparent); box-shadow: inset 3px 0 0 var(--cyan); }
 .drag-handle { width: 32px; min-width: 32px; min-height: 55px; padding: 0; color: var(--muted); background: transparent; border: 0; border-radius: 0; box-shadow: none; cursor: grab; }
 .drag-handle:active { cursor: grabbing; }
-.node-row-select { width: 100%; min-height: 55px; padding: 8px 12px 8px 4px; color: var(--muted-strong); background: transparent; border: 0; border-radius: 0; box-shadow: none; text-align: left; }
+.node-row-select { width: 100%; min-width: 0; justify-content: normal; min-height: 55px; padding: 8px 12px 8px 4px; color: var(--muted-strong); background: transparent; border: 0; border-radius: 0; box-shadow: none; text-align: left; }
 .node-row-select:hover { filter: none; transform: none; }
 .node-row-select:active { transform: none; }
 .node-row-id { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
@@ -3405,7 +3405,7 @@ body.client-modal-open { overflow: hidden; overscroll-behavior: none; }
   /* The later auto-select rule used to re-show the mobile drag handle,
      adding an entire extra row above the actual card. */
   .page-nodes .auto-select-list-row > .auto-select-fixed-mark { display: none; }
-  .page-nodes .auto-select-list-row .node-row-select { padding-right: 12px; }
+  .page-nodes .auto-select-list-row .node-row-select { padding-right: 96px; }
   .page-nodes .node-list-row { min-height: 56px; touch-action: pan-y; }
   .page-nodes .node-row-select {
     grid-template-columns: 18px minmax(0, 1fr) auto;
@@ -3438,7 +3438,8 @@ body.client-modal-open { overflow: hidden; overscroll-behavior: none; }
   .page-nodes .node-list-row.is-expanded .node-mobile-quick-actions a { display: inline-flex; width: 100%; min-width: 0; height: 32px; min-height: 32px; margin: 0; align-items: center; justify-content: center; padding: 4px 5px; font-size: 8.5px; }
   .page-nodes .node-list-row.is-expanded .node-mobile-quick-actions form { padding: 0; }
   .page-nodes .node-list-row.is-expanded .node-mobile-quick-actions form > button { height: 100%; padding: 4px 5px; }
-  .page-nodes .node-list-row.is-expanded .auto-select-mobile-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); padding-right: 8px; }
+  .page-nodes .node-list-row.is-expanded .auto-select-mobile-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); padding-right: 84px; }
+  .page-nodes .auto-select-mobile-actions > button:last-child { grid-column: 1 / -1; }
   .page-nodes .node-mobile-order-controls { position: absolute !important; right: 7px; bottom: 8px; z-index: 4; display: flex; gap: 5px; padding: 0 !important; }
   .page-nodes .node-list-row:not(.is-expanded) .node-mobile-order-controls { top: 50%; bottom: auto; transform: translateY(-50%); }
   .page-nodes .node-list-row.is-touch-dragging { z-index: 20; opacity: .86; border-color: var(--cyan); box-shadow: 0 12px 30px rgba(0, 0, 0, .35), inset 3px 0 0 var(--cyan); }
@@ -3507,3 +3508,15 @@ body.client-modal-open { overflow: hidden; overscroll-behavior: none; }
 .bulk-scope-panel { margin:12px 0; padding:14px; border:1px solid var(--line); border-radius:16px; }
 .bulk-scope-panel .form-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:10px; }
 .bulk-scope-panel select,.bulk-scope-panel input { width:100%; }
+
+/* Account hub entry: readable in both themes and within a mobile viewport. */
+.client-account-hub { margin: 10px 0 16px; min-width: 0; }
+.client-account-hub .account-hub-link, .client-account-hub .account-hub-link:visited,
+.client-account-hub .account-hub-link:hover, .client-account-hub .account-hub-link:focus-visible {
+  color: #fff; background: linear-gradient(135deg, #2451b6, #5434b9); max-width: 100%;
+  min-height: 44px; white-space: normal; overflow-wrap: anywhere; text-decoration: none;
+}
+@media(max-width:600px) { .client-account-hub .account-hub-link { width: 100%; padding: 12px 14px; font-size: 13px; } }
+
+/* 2026-11-12: equal action cells on desktop and mobile */
+.node-detail-actions-top > form,.node-detail-actions-top > a{margin:0!important;padding:0!important;border:0!important;min-width:0;align-self:stretch}.node-detail-actions-top > form > button,.node-detail-actions-top > a{width:100%;min-width:0;height:40px;min-height:40px;margin:0;display:flex;align-items:center;justify-content:center;box-sizing:border-box}.node-detail-actions-top .node-remove-clients-form{grid-column:1 / -1}.node-detail-actions-top .hint{grid-column:1 / -1}

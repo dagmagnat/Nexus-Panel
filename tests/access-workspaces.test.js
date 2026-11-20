@@ -35,23 +35,16 @@ test('permissions, session revocation and owner protection', t => {
   assert.throws(() => access.updateUser(1, { disabled: true, wid: 'main', permissions: [] }), /защищён/);
   assert.throws(() => access.createUser({ username: 'bad', password: 'test-password-123', wid: 'main', permissions: ['owner'] }), /Неизвестное/);
 });
-test('workspace membership does not grant access to another database', t => {
+test('archived workspace memberships do not grant access to the main database', t => {
   const { access } = fixture(t);
   access.control.prepare('INSERT INTO workspaces VALUES (?,?,?,?)').run('other', 'Other', 'ready', '');
-  const id = access.createUser({ username: 'otheruser', password: 'test-password-123', wid: 'other', permissions: ['clients.read'] });
+  const id = access.createUser({ username: 'otheruser', password: 'test-password-123', permissions: ['clients.read'] });
+  access.control.prepare("UPDATE memberships SET workspace_id='other' WHERE user_id=?").run(id);
   assert.equal(access.can(access.user(id), 'main', 'clients.read'), false);
-  assert.equal(access.can(access.user(id), 'other', 'clients.read'), true);
+  assert.equal(access.can(access.user(id), 'other', 'clients.read'), false);
+  assert.deepEqual(access.workspaces(access.user(id)), []);
 });
 
-test('a remote panel belongs to only one workspace, including background calls', t => {
-  const { access, dir, db } = fixture(t);
-  access.claimRemote('https://panel.example.test:2053/secret-path');
-  const other = createAccess({rootDir:dir, localDb:db, workspaceId:'a'.repeat(24)});
-  try {
-    assert.throws(() => other.claimRemote('https://PANEL.example.test:2053/other-path'), /другим пространством/);
-    assert.doesNotThrow(() => other.claimRemote('https://separate.example.test:2053'));
-  } finally { other.control.close(); }
-});
 test('unknown and host-wide routes default to owner only', () => {
   for (const url of ['/backup/download','/backup/restore','/settings/security','/settings/project-update/start.json','/vpn/services/1/install','/new-future-api','/diagnostics','/debug/inbound/1']) assert.equal(permissionFor('POST', url), null, url);
 });

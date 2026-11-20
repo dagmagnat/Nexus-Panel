@@ -912,11 +912,11 @@
           '<div><span>Лимит дней</span><strong>' + htmlEscapeClientModal(c.durationDays || '∞') + '</strong></div>' +
           '<div><span>Лимит IP</span><strong>' + htmlEscapeClientModal(limitIpText) + '</strong></div>' +
           '<div><span>Устройства</span><strong>' + htmlEscapeClientModal(devices.length) + ' / ' + htmlEscapeClientModal(deviceLimitText) + '</strong></div>' +
-          '<div><span>' + (onlineContext ? 'Узлов онлайн сейчас' : 'Узлов') + '</span><strong>' + htmlEscapeClientModal(onlineContext ? cleanNodes.length : (c.nodeCount || 0)) + '</strong></div>' +
+          '<div><span>' + (onlineContext ? 'Узлов с недавней активностью' : 'Узлов') + '</span><strong>' + htmlEscapeClientModal(onlineContext ? cleanNodes.length : (c.nodeCount || 0)) + '</strong></div>' +
           '<div><span>Создан</span><strong>' + htmlEscapeClientModal(createdText) + '</strong></div>' +
           '<div class="client-quick-uuid"><span>UUID</span><strong title="' + htmlEscapeClientModal(c.uuid || '—') + '">' + htmlEscapeClientModal(c.uuid || '—') + '</strong></div>' +
         '</div>' +
-        '<div class="client-quick-section-title">' + (onlineContext ? 'Узлы, где клиент онлайн сейчас' : 'Узлы') + '</div>' +
+        '<div class="client-quick-section-title">' + (onlineContext ? 'Узлы с недавней активностью' : 'Узлы') + '</div>' +
         '<div class="client-quick-nodes-grid">' + nodesHtml + '</div>' +
         '<div class="client-quick-section-title">Устройства</div>' +
         '<div class="client-quick-devices-grid">' + devicesHtml + '</div>' +

@@ -3,6 +3,7 @@
 const { isIP } = require('node:net');
 const DIRECT_DNS_TAG = 'nexus-dns-direct';
 const PROXY_DNS_TAG = 'nexus-dns-proxy';
+const LIST_DNS_TAG = 'nexus-dns-list';
 const DIRECT_DNS_PRESETS = Object.freeze({
   doh_yandex: ['https://common.dot.dns.yandex.net/dns-query'],
   yandex: ['77.88.8.8', '77.88.8.1'],
@@ -40,15 +41,30 @@ function parseDirectDnsServers(preset, custom) {
   });
 }
 
-function applyJsonRoutingDns(config, routing, { active = false, mode = '', directDomains = [], proxyDomains = [] } = {}) {
+function applyJsonRoutingDns(config, routing, { active = false, mode = '', directDomains = [], proxyDomains = [], listProxyDomains = [] } = {}) {
   if (!config || typeof config !== 'object' || !active || routing?.enabled === false) return config;
   const options = directDnsSettings(routing);
   for (const inbound of config.inbounds || []) {
     if (inbound?.sniffing?.enabled === true) inbound.sniffing.routeOnly = options.sniffingRouteOnly;
   }
-  // This switch belongs to the explicit direct exceptions of proxy-except,
-  // not to all traffic/other node modes or to the upstream server profile.
-  if (!options.directDnsEnabled || mode !== 'proxy-except' || !directDomains.length || !config.routing) return config;
+  if (!options.directDnsEnabled || !config.routing) return config;
+  if (mode === 'node-selective' && listProxyDomains.length) {
+    let servers;
+    try { servers = parseDirectDnsServers(options.directDnsPreset, options.directDnsCustom); }
+    catch (_) { return config; }
+    const domains = [...new Set(listProxyDomains)];
+    const base = (config.dns?.servers || []).filter(server => server?.tag !== LIST_DNS_TAG);
+    config.dns.servers = [
+      ...servers.map(server => ({ ...server, address: server.address.replace(/^https\+local:/, 'https:'), domains, tag: LIST_DNS_TAG, skipFallback: true })),
+      ...base
+    ];
+    config.routing.rules = [
+      { type: 'field', inboundTag: [LIST_DNS_TAG], outboundTag: 'proxy' },
+      ...(config.routing.rules || []).filter(rule => !(rule.inboundTag?.length === 1 && rule.inboundTag[0] === LIST_DNS_TAG))
+    ];
+    return config;
+  }
+  if (mode !== 'proxy-except' || !directDomains.length) return config;
   let direct;
   try { direct = parseDirectDnsServers(options.directDnsPreset, options.directDnsCustom); }
   catch (_) { return config; } // A damaged imported setting must not turn JSON issuance into HTTP 500.

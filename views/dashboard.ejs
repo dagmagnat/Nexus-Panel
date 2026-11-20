@@ -341,19 +341,64 @@
 </div>
 
 
+<style>
+  body.page-dashboard:has(#onlineClientsModal:not(.hidden)) #clientQuickModal,
+  body.page-dashboard:has(#onlineClientsModal:not(.hidden)) #onlineClientDetailModal {
+    z-index: 13010 !important;
+  }
+  body.page-dashboard:has(#onlineClientsModal:not(.hidden)) .client-status-info-modal,
+  body.page-dashboard:has(#onlineClientsModal:not(.hidden)) #clientLinkPickerModal,
+  body.page-dashboard:has(#onlineClientsModal:not(.hidden)) #loadingModal {
+    z-index: 13020 !important;
+  }
+  #onlineClientsModal .online-modal-controls { flex-wrap: wrap; }
+  #onlineClientsModal .online-node-filter {
+    display: flex; align-items: center; gap: 8px; min-width: 0;
+  }
+  #onlineNodeFilter { width: auto; max-width: min(100%, 250px); min-height: 40px; }
+  #onlineClientsList .dashboard-online-entry {
+    display: grid; grid-template-columns: minmax(140px, .9fr) minmax(0, 1.5fr) auto;
+    align-items: start; gap: 10px 16px; padding: 10px 12px;
+    border: 1px solid var(--line, rgba(119, 145, 187, .3)); border-radius: 12px;
+    background: var(--card, transparent);
+  }
+  .dashboard-online-identity { display: flex; gap: 8px; align-items: baseline; min-width: 0; }
+  .dashboard-online-identity > div { min-width: 0; overflow-wrap: anywhere; }
+  .dashboard-online-identity strong, .dashboard-online-identity small { display: block; }
+  .dashboard-online-identity small + small { margin-top: 2px; }
+  .dashboard-online-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: #22c987; }
+  .dashboard-online-nodes { align-self: center; min-width: 0; }
+  .dashboard-online-chip {
+    display: inline-flex; align-items: center; gap: 5px; max-width: 100%;
+    padding: 3px 8px; margin: 2px 4px 2px 0; border-radius: 8px;
+    border: 1px solid var(--line, rgba(119, 145, 187, .3));
+    font-size: .83rem; overflow-wrap: anywhere;
+  }
+  .dashboard-online-chip > span:last-child { min-width: 0; }
+  .dashboard-online-extra summary { cursor: pointer; width: fit-content; padding: 5px 2px; }
+  #onlineClientsList .dashboard-online-action { min-height: 40px; padding: 5px 10px; }
+  @media (max-width: 640px) {
+    #onlineClientsList .dashboard-online-entry { grid-template-columns: minmax(0, 1fr) auto; gap: 6px 8px; }
+    .dashboard-online-nodes { grid-column: 1 / -1; grid-row: 2; padding-left: 15px; }
+    #onlineClientsList .dashboard-online-action { grid-column: 2; grid-row: 1; min-height: 44px; }
+    #onlineClientsModal .online-node-filter { flex-basis: 100%; }
+    #onlineNodeFilter { flex: 1; min-width: 0; max-width: none; }
+  }
+</style>
 <div id="onlineClientsModal" class="modal hidden" onclick="closeDashboardModal(event, 'onlineClientsModal')">
-  <div class="modal-card editor-modal online-modal-card dashboard-scroll-modal" onclick="event.stopPropagation()">
-    <button type="button" class="modal-close" onclick="hideDashboardModal('onlineClientsModal')">×</button>
+  <div class="modal-card editor-modal online-modal-card dashboard-scroll-modal" role="dialog" aria-modal="true" aria-labelledby="onlineClientsTitle" onclick="event.stopPropagation()">
+    <button type="button" class="modal-close" aria-label="Закрыть" onclick="hideDashboardModal('onlineClientsModal')">×</button>
     <div class="section-title-row">
       <div>
-        <h2>Онлайн клиенты</h2>
-        <p class="muted">Компактный список с активных узлов. Открыв карточку клиента, закрой её — список останется на прежнем месте.</p>
+        <h2 id="onlineClientsTitle">Клиенты в сети</h2>
+        <p class="muted">Remnawave показывает недавнюю активность. Для физической ноды — последний узел, который отметила панель.</p>
       </div>
     </div>
     <div class="online-modal-controls">
       <button type="button" class="btn-main" id="onlineRefreshBtn">Обновить</button>
       <label class="online-auto-toggle"><input type="checkbox" id="onlineAutoRefresh" <%= Number(clientAutoRefreshSeconds) > 0 ? 'checked' : '' %> /><span>Автообновление</span></label>
       <label class="online-auto-interval"><span>Каждые</span><select id="onlineRefreshInterval"><option value="10" <%= Number(clientAutoRefreshSeconds) === 10 ? 'selected' : '' %>>10 сек.</option><option value="30" <%= Number(clientAutoRefreshSeconds) === 30 ? 'selected' : '' %>>30 сек.</option><option value="60" <%= Number(clientAutoRefreshSeconds) === 60 ? 'selected' : '' %>>60 сек.</option></select></label>
+      <label class="online-node-filter"><span>Узел</span><select id="onlineNodeFilter"><option value="">Все узлы</option></select></label>
     </div>
     <div id="onlineClientsStatus" class="hint">Загружаю онлайн-клиентов…</div>
     <div id="onlineClientsList" class="dashboard-client-list online-list"></div>
@@ -679,21 +724,19 @@ function onlineNodeBadgesHtml(client) {
     return `<span class="node-badge" title="${escapeHtml(title + transport)}">${flag}<span>${escapeHtml(title)}${transport}</span></span>`;
   }).join('') || '<span class="node-badge muted">узел не определён</span>';
 }
-function onlineNodePreviewHtml(client) {
+function onlineNodeName(node) {
+  return node.name || node.publicName || node.countryNameRu || 'Узел';
+}
+function onlineNodePreviewHtml(client, key, isExpanded) {
   const nodes = Array.isArray(client.nodes) ? client.nodes : [];
-  const visible = nodes.slice(0, 3).map(n => {
-    const title = renderNodeTitle({
-      country_code: n.countryCode || n.country_code,
-      country_name_ru: n.countryNameRu || n.country_name_ru,
-      nodeName: n.publicName || n.name,
-      node_name: n.publicName || n.name,
-      label_suffix: n.labelSuffix || n.label_suffix || ''
-    });
-    const flag = renderFlag(n.countryCode || n.country_code, n.countryFlag || n.country_flag || n.flag, n.nodeType || n.node_type);
-    return `<span class="online-node-preview" title="${escapeHtml(title)}">${flag || '<span aria-hidden="true">●</span>'}</span>`;
+  const chips = nodes.map(node => {
+    const flag = renderFlag(node.countryCode, node.flag, node.nodeType);
+    return `<span class="dashboard-online-chip">${flag}<span>${escapeHtml(onlineNodeName(node))}</span></span>`;
   });
-  if (nodes.length > visible.length) visible.push(`<span class="online-node-more" title="Ещё узлов: ${nodes.length - visible.length}">+${nodes.length - visible.length}</span>`);
-  return visible.join('') || '<span class="online-node-none">—</span>';
+  const extras = chips.length > 2
+    ? `<details class="dashboard-online-extra" data-online-expanded="${escapeHtml(key)}"${isExpanded ? ' open' : ''}><summary>Ещё ${chips.length - 2}</summary>${chips.slice(2).join('')}</details>`
+    : '';
+  return chips.slice(0, 2).join('') + extras || '<span class="muted">Узел не определён</span>';
 }
 function onlineClientUntil(client) {
   return client.expiry_time && Number(client.expiry_time) > 0
@@ -701,66 +744,56 @@ function onlineClientUntil(client) {
     : '∞';
 }
 const onlineClientDetailsById = new Map();
+let onlineClientsSnapshot = null;
 function renderOnlineClients(data) {
+  onlineClientsSnapshot = data;
   const list = document.getElementById('onlineClientsList');
   const status = document.getElementById('onlineClientsStatus');
-  if (!list) return;
+  const filter = document.getElementById('onlineNodeFilter');
+  if (!list || !filter) return;
+  const expanded = new Set([...list.querySelectorAll('details[open][data-online-expanded]')].map(item => item.dataset.onlineExpanded));
+  const scroll = list.scrollTop;
+  const focused = list.contains(document.activeElement) ? document.activeElement.closest('[data-online-focus]')?.dataset.onlineFocus : null;
   const clients = Array.isArray(data.clients) ? data.clients : [];
+  const nodeMap = new Map();
   onlineClientDetailsById.clear();
-  clients.forEach(client => {
+  for (const client of clients) {
     const key = String(client.id || client.clientId || client.client_id || '').trim();
     if (key) onlineClientDetailsById.set(key, client);
-  });
-  const errors = Array.isArray(data.errors) && data.errors.length ? ' · ошибки: ' + data.errors.slice(0, 2).map(escapeHtml).join(' | ') : '';
-  const generated = data.generatedAt ? new Date(data.generatedAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
-  if (status) status.innerHTML = `Показано ${clients.length} онлайн-клиентов${generated ? ' · обновлено: ' + generated : ''}${errors}`;
-  if (!clients.length) {
-    list.innerHTML = '<div class="empty-state">Онлайн-клиентов не найдено или узлы не вернули список.</div>';
-    return;
+    for (const node of client.nodes || []) {
+      if (node.id != null) nodeMap.set(String(node.id), onlineNodeName(node));
+    }
   }
-  list.innerHTML = clients.map((client, index) => {
-    const comment = client.comment || ((client.display_name && client.display_name !== client.login) ? client.display_name : '');
-    const clientId = client.id || client.clientId || client.client_id || '';
+  const selected = filter.value;
+  const options = [...nodeMap].sort(([, a], [, b]) => a.localeCompare(b, 'ru'));
+  if (selected && !nodeMap.has(selected)) options.push([selected, filter.selectedOptions[0].textContent]);
+  const allOptions = [['', 'Все узлы'], ...options];
+  if (allOptions.some(([key, name], i) => filter.options[i]?.value !== key || filter.options[i]?.textContent !== name) || filter.options.length !== allOptions.length) {
+    filter.replaceChildren(...allOptions.map(([key, name]) => new Option(name, key)));
+    filter.value = selected;
+  }
+  const visible = selected ? clients.filter(client => (client.nodes || []).some(node => String(node.id) === selected)) : clients;
+  const errors = Array.isArray(data.errors) && data.errors.length ? ' · ошибки: ' + data.errors.slice(0, 2).map(escapeHtml).join(' | ') : '';
+  const generated = data.generatedAt ? new Date(data.generatedAt).toLocaleTimeString('ru-RU') : '';
+  if (status) status.innerHTML = `В сети: ${clients.length}${selected ? ' · по фильтру: ' + visible.length : ''}${generated ? ' · обновлено: ' + generated : ''}${errors}`;
+  list.innerHTML = visible.map(client => {
+    const login = client.login || client.display_name || 'Клиент';
+    const comment = client.comment || (client.display_name !== login ? client.display_name : '');
+    const key = String(client.id || client.clientId || client.client_id || '');
     const until = onlineClientUntil(client);
     return `
-      <div class="dashboard-client-card online-client-card online-client-row online-client-card-v2">
-        <span class="online-client-live-dot" title="Сейчас в сети" aria-label="Сейчас в сети"></span>
-        <div class="online-client-main-v4"><strong class="online-client-login-v4">${escapeHtml(client.login || client.display_name || '-')}</strong><small class="online-client-comment-v4">${escapeHtml(comment || 'Без комментария')}</small><span class="online-client-expiry-v4">до ${escapeHtml(until)}</span></div>
-        <div class="online-node-preview-list" aria-label="Узлы клиента">${onlineNodePreviewHtml(client)}</div>
-        <button type="button" class="online-details-toggle online-details-toggle-v4" data-online-client-index="${index}" ${clientId ? `data-open-online-client="${escapeHtml(clientId)}" data-online-client-id="${escapeHtml(clientId)}"` : `data-open-online-client-fallback="1" data-online-client-detail="${escapeAttrJson(client)}"`}>Подробнее</button>
-      </div>`;
-  }).join('');
-  bindOnlineDetailsButtons();
-}
-
-function bindOnlineDetailsButtons() {
-  const list = document.getElementById('onlineClientsList');
-  if (!list) return;
-  list.querySelectorAll('[data-open-online-client]').forEach(btn => {
-    if (btn.dataset.boundOnlineDetails === '1') return;
-    btn.dataset.boundOnlineDetails = '1';
-    btn.addEventListener('click', (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      const id = btn.getAttribute('data-open-online-client') || btn.getAttribute('data-online-client-id') || '';
-      if (!id) return;
-      openOnlineClientById(id, event);
-    }, { passive: false });
-  });
-  list.querySelectorAll('[data-open-online-client-fallback]').forEach(btn => {
-    if (btn.dataset.boundOnlineDetails === '1') return;
-    btn.dataset.boundOnlineDetails = '1';
-    btn.addEventListener('click', (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      try {
-        const raw = btn.getAttribute('data-online-client-detail') || '{}';
-        openOnlineClientDetail(JSON.parse(raw));
-      } catch (err) {
-        alert('Не удалось открыть детали клиента');
-      }
-    }, { passive: false });
-  });
+      <article class="dashboard-online-entry">
+        <div class="dashboard-online-identity">
+          <span class="dashboard-online-dot" aria-hidden="true"></span>
+          <div><strong>${escapeHtml(login)}</strong>${comment ? `<small class="muted">${escapeHtml(comment)}</small>` : ''}
+          <small class="muted">${until === '∞' ? 'Бессрочно' : 'До ' + escapeHtml(until)}</small></div>
+        </div>
+        <div class="dashboard-online-nodes" aria-label="Активные узлы">${onlineNodePreviewHtml(client, key, expanded.has(key))}</div>
+        <button type="button" class="btn-secondary dashboard-online-action" ${key ? `data-open-online-client="${escapeHtml(key)}" data-online-focus="${escapeHtml(key)}"` : `data-online-client-detail="${escapeAttrJson(client)}"`}>Подробнее</button>
+      </article>`;
+  }).join('') || '<div class="empty-state">По текущему фильтру нет клиентов с активностью.</div>';
+  list.scrollTop = scroll;
+  if (focused) [...list.querySelectorAll('[data-online-focus]')].find(item => item.dataset.onlineFocus === focused)?.focus({ preventScroll: true });
 }
 
 function nodeFlagForClientQuick(n) {
@@ -828,7 +861,7 @@ function renderClientQuickBody(c) {
       <div><span>Создан</span><strong>${escapeHtml(c.createdText || c.createdAt || '—')}</strong></div>
       <div><span>UUID</span><strong>${escapeHtml(c.uuid || '—')}</strong></div>
     </div>
-    <div class="client-quick-section-title">${c.onlineNodesContext ? 'Узлы, где клиент онлайн сейчас' : 'Узлы'}</div>
+    <div class="client-quick-section-title">${c.onlineNodesContext ? 'Узлы с недавней активностью' : 'Узлы'}</div>
     <div class="client-quick-nodes-grid">${nodesHtml}</div>
     <div class="client-quick-actions modern">
       <a class="btn-secondary" href="${escapeHtml(openLink)}" target="_blank">Открыть в панели</a>
@@ -996,7 +1029,10 @@ function configureOnlineClientsAutoRefresh() {
   if (!toggle.checked) return;
   const seconds = [10, 30, 60].includes(Number(select.value)) ? Number(select.value) : 10;
   onlineClientsAutoTimer = window.setInterval(() => {
-    if (!document.hidden) refreshOnlineClients();
+    const detailOpen = ['clientQuickModal', 'onlineClientDetailModal']
+      .some(id => document.querySelector(`#${id}:not(.hidden)`));
+    const list = document.getElementById('onlineClientsList');
+    if (!document.hidden && !detailOpen && !list?.contains(document.activeElement)) refreshOnlineClients();
   }, seconds * 1000);
 }
 
@@ -1075,7 +1111,7 @@ window.openOnlineClientFallbackButton = function(btn, event) {
   return false;
 };
 
-document.addEventListener('click', (e) => {
+document.getElementById('onlineClientsList')?.addEventListener('click', (e) => {
   const quickBtn = e.target.closest('[data-open-online-client], [data-online-client-id]');
   if (quickBtn) {
     e.preventDefault();
@@ -1112,6 +1148,11 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('openOnlineClientsFromStat')?.addEventListener('click', openOnlineClientsWorkspace);
   document.getElementById('openExpiryFromStat')?.addEventListener('click', openExpiryWorkspace);
   document.getElementById('onlineRefreshBtn')?.addEventListener('click', refreshOnlineClients);
+  document.getElementById('onlineNodeFilter')?.addEventListener('change', () => {
+    if (!onlineClientsSnapshot) return;
+    document.getElementById('onlineClientsList').scrollTop = 0;
+    renderOnlineClients(onlineClientsSnapshot);
+  });
   const topUsagePeriod = document.getElementById('topUsagePeriod');
   if (topUsagePeriod) topUsagePeriod.value = topUsageReport.period || 'week';
   document.getElementById('topUsageRefresh')?.addEventListener('click', () => refreshTopUsageReport(true));
@@ -1464,7 +1505,7 @@ function normalizeDashboardSearchText(value) {
         addCell(row, fmtBytes(node.downloadBytes));
         addCell(row, fmtBytes(node.uploadBytes));
         addCell(row, fmtBytes(node.totalBytes));
-        addCell(row, node.sharedRemnawaveCounter ? 'Счётчик может быть общим' : (node.enabled ? '—' : 'Выключена'), node.sharedRemnawaveCounter ? 'is-warning' : '');
+        addCell(row, node.sharedRemnawaveCounter ? 'Счётчик может быть общим' : (node.enabled ? '—' : '��ыключена'), node.sharedRemnawaveCounter ? 'is-warning' : '');
         rows.appendChild(row);
       });
     }

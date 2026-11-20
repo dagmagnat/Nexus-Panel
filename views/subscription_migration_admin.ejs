@@ -1,0 +1,24 @@
+<%- include('partials_header', { pageTitle: 'Личные кабинеты', pageSubtitle: 'Happ / INCY · перенос подписок', activePage: 'clients' }) %>
+<section class="card">
+  <h2>Перенос на закрытые подписки</h2>
+  <p>У каждого пользователя остаётся постоянный личный кабинет. Happ получает crypt5, INCY — crypt1. В будущем разделы кабинета можно менять без повторного импорта подписки.</p>
+  <p>Сначала показывается уведомление. Когда Happ успешно получает конфигурацию по новой ссылке, старый Happ-профиль этого же устройства при следующем обновлении получает только сообщение о переносе. Сам профиль удаляется в приложении вручную.</p>
+  <p class="muted">«Получили» означает успешную выдачу конфигурации с HWID, а не проверенное VPN-соединение. Определение Happ по User-Agent можно подделать. Отключение старой выдачи не отзывает ранее скачанные ключи.</p>
+  <form method="post" action="/subscription-migration/prepare-all" onsubmit="return confirm('Создать закрытые ссылки всем активным клиентам? Сервис Happ получит новые технические URL. Будут включены уведомления, доступ пока сохраняется.')">
+    <button type="submit" <%= bulk.running ? 'disabled' : '' %>>Подготовить кабинеты всем активным клиентам</button>
+  </form>
+  <% if (bulk.total) { %><p>Подготовлено <%= bulk.done %>/<%= bulk.total %> · <%= bulk.running ? 'выполняется' : 'завершено' %></p><% } %>
+  <% bulk.errors.forEach(item => { %><p class="alert err"><%= item.login %>: <%= item.error %></p><% }) %>
+</section>
+<div style="overflow:auto"><table><thead><tr><th>Пользователь</th><th>Кабинет</th><th>Получили новую выдачу</th><th>Старая ссылка</th></tr></thead><tbody>
+<% rows.forEach(row => { %><tr>
+  <td><strong><%= row.display_name || row.login %></strong><br><small><%= row.login %></small></td>
+  <td><% if(row.ready) { %><a href="<%= row.portal %>" target="_blank" rel="noreferrer">Открыть кабинет</a><% } else { %><form method="post" action="/subscription-migration/<%= row.id %>/prepare"><button>Подготовить ссылки</button></form><% } %></td>
+  <td>Happ: <%= row.delivered_happ %> · зарегистрировано Happ: <%= row.happ_devices %><br>INCY: <%= row.delivered_incy %></td>
+  <td><% if(row.ready) { %><form method="post" action="/subscription-migration/<%= row.id %>/mode" onsubmit="return this.mode.value==='notify'||this.mode.value==='off'||confirm('Ограничить старую выдачу для этого пользователя? Необновлённые приложения могут потерять подключение.')">
+    <select name="mode">
+      <% [['off','Без уведомлений'],['notify','Уведомление; закрывать старый Happ после переноса устройства'],['require-happ','Только сообщение для всех старых Happ'],['retired','Закрыть старую выдачу для всех приложений']].forEach(([value,label]) => { %><option value="<%= value %>" <%= row.mode===value?'selected':'' %>><%= label %></option><% }) %>
+    </select><button>Сохранить</button>
+  </form><% } %></td>
+</tr><% }) %></tbody></table></div>
+<%- include('partials_footer') %>

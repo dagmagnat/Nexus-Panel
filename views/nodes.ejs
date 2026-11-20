@@ -134,7 +134,7 @@
           <div class="alert ok auto-select-explainer">
             <strong>Автовыбор работает в Xray-клиенте и доступен в JSON-подписке.</strong>
             Можно создать несколько независимых автоподключений: например «Европа», «CDN», «Резерв». У каждого своё название, пул, приоритет и аварийный узел. Один физический узел может участвовать в нескольких профилях; существующие профили не заменяются.
-            Без быстрого старта первый запуск ждёт успешной HTTPS-проверки. Интервал 5 секунд ускоряет обнаружение восстановления; это не обещание подключения за 5 секунд. Приоритетный узел используется, пока проверка через него проходит. Затем Xray выбирает по минимальной задержке среди основного пула. Аварийный узел используется при недоступном основном пуле. Лимитные LTE-узлы размещайте в аварийном узле, а не в основном пуле. Уже открытые соединения автоматически не переносятся. Без приоритетного и аварийного узлов сохраняется обычный leastPing.
+            Первый запуск ждёт успешной HTTPS-проверки через один из узлов. Интервал 5 секунд ускоряет обнаружение восстановления; это не обещание подключения за 5 секунд. Приоритетный узел используется, пока проверка через него проходит. Затем Xray выбирает по минимальной задержке среди основного пула. Аварийный узел используется при недоступном основном пуле. Лимитные LTE-узлы размещайте в аварийном узле, а не в основном пуле. Уже открытые соединения автоматически не переносятся. Все ступени, включая резерв, используют только узлы с успешной проверкой.
           </div>
         </div>
 
@@ -161,8 +161,7 @@
             <option value="300">5 минут</option>
           </select>
           <input type="hidden" name="auto_select_fast_controls" value="1" />
-          <label><input type="checkbox" name="auto_select_fast_start" value="1" checked /> Быстрый старт обычного пула</label>
-          <small class="hint">Пока нет доступного узла по результатам проверки, пробует первый основной. Также действует, если все проверки неудачны. Не применяется к профилю с приоритетным или аварийным узлом. Выключи для строгого ожидания проверки.</small>
+          <label><input type="hidden" name="auto_select_fast_start" value="0"><strong>Только проверенные соединения</strong></label><small class="hint">До успешного HTTPS-запроса через VPN узел не используется. При отказе проверка исключает его из новых соединений, включая аварийный узел. Обычный ping и доступный API не считаются подтверждением.</small>
         </div>
 
         <div class="field half js-node-auto-select-only hidden" hidden style="display:none!important">
@@ -428,8 +427,7 @@
                         <% }) %>
                       </select>
           <input type="hidden" name="auto_select_fast_controls" value="1" />
-          <label><input type="checkbox" name="auto_select_fast_start" value="1" <%= profile.fastStart ? 'checked' : '' %> /> Быстрый старт обычного пула</label>
-          <small class="hint">Пока нет доступного узла по результатам проверки, пробует первый основной. Также действует, если все проверки неудачны. Не применяется к профилю с приоритетным или аварийным узлом. Выключи для строгого ожидания проверки.</small>
+          <label><input type="hidden" name="auto_select_fast_start" value="0"><strong>Только проверенные соединения</strong></label><small class="hint">До успешного HTTPS-запроса через VPN узел не используется. При отказе проверка исключает его из новых соединений, включая аварийный узел. Обычный ping и доступный API не считаются подтверждением.</small>
                     </div>
                     <div class="field half">
                       <label>URL проверки интернета</label>
@@ -571,7 +569,7 @@
               <button type="button" class="node-sort-button" data-node-sort="<%= key %>" aria-label="Сортировка: <%= label %>" title="По возрастанию → по убыванию → порядок подписки"><%= label %> <span data-sort-arrow aria-hidden="true">↕</span></button>
             <% } %>
           </div>
-          <div id="nodesOrderBody" class="nodes-modern-list" data-page-size="<%= nodePageSize || 10 %>">
+          <div id="nodesOrderBody" class="nodes-modern-list" data-page-size="<%= nodePageSize ?? 10 %>" data-list-mode="<%= typeof nodeListMode !== 'undefined' ? nodeListMode : 'pages' %>">
             <% autoProfiles.forEach((profile, profileIndex) => {
               const profileEnabled = Number(profile.enabled) === 1;
               const profileNodeNames = profile.nodes.map(node => {
@@ -583,13 +581,14 @@
             %>
               <div
                 class="node-list-row auto-select-list-row <%= profileIndex === 0 ? 'is-selected' : '' %> <%= profileEnabled ? '' : 'muted-row' %>"
+                draggable="true"
                 data-node-id="auto-<%= profile.id %>"
                 data-node-type="auto_select"
                 data-node-enabled="<%= profileEnabled ? 'enabled' : 'disabled' %>"
                 data-node-activity="<%= profileEnabled ? 'online' : 'disabled' %>"
                 data-node-search="<%= profileSearch %>"
               >
-                <span class="drag-handle auto-select-fixed-mark" title="Виртуальный профиль" aria-hidden="true">⚡</span>
+                <button type="button" draggable="true" class="drag-handle" title="Перетащить автовыбор" aria-label="Перетащить автовыбор">⠿</button>
                 <button type="button" class="node-row-select" data-select-node="auto-<%= profile.id %>" data-node-edit-url="/nodes?tab=add&amp;auto_select_edit=<%= profile.id %>#auto-select-profile-<%= profile.id %>" aria-label="Редактировать автовыбор <%= profile.name %>">
                   <span class="node-row-id">A<%= profile.id %></span>
                   <span class="node-row-name"><strong><span class="flag-badge emoji-fallback node-row-auto-icon"><%= profile.icon || '⚡' %></span><span><%= profile.name %></span></strong></span>
@@ -604,6 +603,11 @@
                 <div class="node-mobile-quick-actions auto-select-mobile-actions" aria-label="Действия с автовыбором" onclick="event.stopPropagation()">
                   <a href="/nodes?tab=add&amp;auto_select_edit=<%= profile.id %>#auto-select-profile-<%= profile.id %>" class="link-btn secondary">Изменить</a>
                   <form method="post" action="/auto-select-profiles/<%= profile.id %>/toggle" class="inline-form"><button type="submit" class="secondary"><%= profileEnabled ? 'Выключить' : 'Включить' %></button></form>
+                  <button type="button" class="secondary" onclick="moveAutoToEnd('auto-<%= profile.id %>')">В конец списка</button>
+                </div>
+                <div class="node-mobile-order-controls node-order-buttons" aria-label="Порядок автовыбора">
+                  <button type="button" class="secondary mobile-order-btn" data-mobile-move="up">↑</button>
+                  <button type="button" class="secondary mobile-order-btn" data-mobile-move="down">↓</button>
                 </div>
               </div>
             <% }) %>
@@ -634,7 +638,7 @@
                 data-node-activity="<%= activityStatus %>"
                 data-node-search="<%= searchText %>"
               >
-                <button type="button" class="drag-handle" title="Перетащить узел" aria-label="Перетащить узел">⠿</button>
+                <button type="button" draggable="true" class="drag-handle" title="Перетащить узел" aria-label="Перетащить узел">⠿</button>
                 <button type="button" class="node-row-select" data-select-node="<%= node.id %>" data-node-edit-url="/nodes/<%= node.id %>/edit" aria-label="Редактировать узел <%= displayName %>">
                   <span class="node-row-id"><%= node.id %></span>
                   <span class="node-row-name"><strong><%- flagHtml(node.country_code, node.country_flag, node.country_name_ru || node.name, node.node_type) %><span><%= displayName %></span></strong></span>
@@ -660,9 +664,9 @@
                   <a href="/nodes/<%= node.id %>/edit" class="link-btn secondary">Изменить</a>
                   <form method="post" action="/nodes/<%= node.id %>/delete" class="inline-form node-delete-form" onsubmit="return confirm('Удалить узел #<%= node.id %> из Nexus? Он исчезнет из подписок. Другие узлы и пользователи Nexus сохранятся. Сервер и аккаунты в удалённой панели не удаляются.');"><button type="submit" class="danger">Удалить</button></form>
                 </div>
-                <div class="node-mobile-order-controls" aria-label="Изменить порядок узла">
-                  <button type="button" class="secondary mobile-order-btn" data-mobile-move="up" title="Поднять выше">↑</button>
-                  <button type="button" class="secondary mobile-order-btn" data-mobile-move="down" title="Опустить ниже">↓</button>
+                <div class="node-mobile-order-controls node-order-buttons" aria-label="Изменить порядок узла">
+                  <button type="button" class="secondary mobile-order-btn" data-mobile-move="up" title="Поднять выше" aria-label="Поднять узел <%= displayName %> выше">↑</button>
+                  <button type="button" class="secondary mobile-order-btn" data-mobile-move="down" title="Опустить ниже" aria-label="Опустить узел <%= displayName %> ниже">↓</button>
                 </div>
               </div>
             <% }) %>
@@ -692,6 +696,7 @@
                 <form method="post" action="/auto-select-profiles/<%= profile.id %>/toggle" class="inline-form node-detail-action-form">
                   <button type="submit" class="secondary <%= profileEnabled ? 'danger-lite' : '' %>"><%= profileEnabled ? 'Выключить' : 'Включить' %></button>
                 </form>
+                <button type="button" class="secondary" onclick="moveAutoToEnd('auto-<%= profile.id %>')">В конец списка</button>
               </div>
 
               <div class="node-detail-kv">
@@ -920,8 +925,10 @@
   </div>
 </div>
 
+<link rel="stylesheet" href="/css/node-list-controls.css?v=1">
 <script>
 
+let nodeOrderSaving = false;
 function setNodeOrderStatus(text, isError) {
   const el = document.getElementById('nodeOrderStatus');
   if (!el) return;
@@ -931,6 +938,10 @@ function setNodeOrderStatus(text, isError) {
 async function saveNodeOrder(order) {
   if (nodeSortKey) return;
   if (!order.length) return;
+  if (nodeOrderSaving) throw new Error('Дождитесь сохранения порядка');
+  nodeOrderSaving = true;
+  refreshMobileOrderControls();
+  try {
   setNodeOrderStatus('Сохраняю порядок...', false);
   const response = await fetch('/nodes/reorder', {
     method: 'POST',
@@ -941,7 +952,10 @@ async function saveNodeOrder(order) {
   if (!response.ok || !data.ok) throw new Error(data.error || 'Не удалось сохранить порядок');
   setNodeOrderStatus('Порядок сохранён', false);
   rememberNodeOrder();
-  refreshMobileOrderControls();
+  } finally {
+    nodeOrderSaving = false;
+    refreshMobileOrderControls();
+  }
 }
 
 function getNodeRows() {
@@ -956,6 +970,11 @@ let nodeCurrentPage = 1;
 let nodeSortKey = '', nodeSortDirection = 'asc';
 const nodeOriginalOrder = new Map();
 function rememberNodeOrder() {
+  if (!nodeOriginalOrder.size) {
+    const body = document.getElementById('nodesOrderBody'), rows = new Map(getNodeRows().map(row => [row.dataset.nodeId, row]));
+    const saved = <%- JSON.stringify(typeof nodeDisplayOrder === 'undefined' ? [] : nodeDisplayOrder) %>;
+    saved.forEach(key => { if (rows.has(key)) body.appendChild(rows.get(key)); });
+  }
   getNodeRows().forEach((row, index) => nodeOriginalOrder.set(row, index));
 }
 function applyNodeSort() {
@@ -975,7 +994,7 @@ function applyNodeSort() {
     return diff * (nodeSortDirection === 'desc' ? -1 : 1) || nodeOriginalOrder.get(a)-nodeOriginalOrder.get(b);
   });
   rows.forEach(row => body.appendChild(row));
-  getPhysicalNodeRows().forEach(row => { row.draggable = !nodeSortKey; });
+  getNodeRows().forEach(row => { row.draggable = !nodeSortKey; });
   document.querySelectorAll('[data-node-sort]').forEach(button => {
     const active = button.dataset.nodeSort === nodeSortKey;
     button.setAttribute('aria-pressed', String(active));
@@ -986,14 +1005,17 @@ function applyNodeSort() {
   setNodeOrderStatus(nodeSortKey ? 'Сортировка только для просмотра. Для перемещения сбросьте её третьим нажатием на заголовок или кнопкой ↻.' : 'Перетащи ⠿ на ПК или используй ↑/↓ на телефоне, чтобы изменить порядок в приложении', false);
 }
 function setNodeSort(key, direction) {
+  if (nodeOrderSaving) return;
   nodeSortKey = key; nodeSortDirection = direction || 'asc'; nodeCurrentPage = 1;
   renderNodePagination(); ensureSelectedNodeOnVisiblePage();
 }
 
 function getNodePageSize() {
   const list = document.getElementById('nodesOrderBody');
+  if (list?.dataset.listMode === 'scroll') return Math.max(1, getNodeRows().length);
+  if (list?.dataset.pageSize === '0') return Math.max(1, getNodeRows().length);
   const n = Number(list?.dataset.pageSize || 10);
-  return [10, 12, 15].includes(n) ? n : 10;
+  return [10, 12, 15, 25, 50, 100].includes(n) ? n : 10;
 }
 
 function getFilteredNodeRows() {
@@ -1053,20 +1075,45 @@ function ensureSelectedNodeOnVisiblePage() {
 }
 
 function getDesktopNodeOrder() {
-  return getPhysicalNodeRows().map(row => Number(row.dataset.nodeId)).filter(Boolean);
+  return getNodeRows().map(row => row.dataset.nodeId);
 }
 
 function getMobileNodeOrder() {
   return getDesktopNodeOrder();
 }
 
+function getOrderableNodeRows() {
+  const ids = new Set(getDesktopNodeOrder().map(String));
+  return getNodeRows().filter(row => ids.has(String(row.dataset.nodeId)));
+}
+
+async function persistMovedNode(previousRows, row) {
+  const followRow = () => {
+    const index = getFilteredNodeRows().indexOf(row);
+    if (index >= 0) nodeCurrentPage = Math.floor(index / getNodePageSize()) + 1;
+    renderNodePagination();
+  };
+  rememberNodeOrder();
+  followRow();
+  try {
+    await saveNodeOrder(getDesktopNodeOrder());
+  } catch (err) {
+    const list = document.getElementById('nodesOrderBody');
+    previousRows.forEach(item => list.appendChild(item));
+    rememberNodeOrder();
+    followRow();
+    setNodeOrderStatus(err.message || String(err), true);
+  }
+  if (isMobileNodesLayout()) row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
 function refreshMobileOrderControls() {
-  const rows = getPhysicalNodeRows();
+  const rows = getOrderableNodeRows().filter(row => !row.classList.contains('hidden-by-filter'));
   rows.forEach((row, index) => {
     const up = row.querySelector('[data-mobile-move="up"]');
     const down = row.querySelector('[data-mobile-move="down"]');
-    if (up) up.disabled = !!nodeSortKey || index === 0;
-    if (down) down.disabled = !!nodeSortKey || index === rows.length - 1;
+    if (up) up.disabled = nodeOrderSaving || !!nodeSortKey || index === 0;
+    if (down) down.disabled = nodeOrderSaving || !!nodeSortKey || index === rows.length - 1;
   });
 }
 
@@ -1124,7 +1171,7 @@ function updateVisibleNodesCount() {
   renderNodePagination();
 }
 
-function applyNodeFilters() {
+function applyNodeFilters(options) {
   const q = String(document.getElementById('nodeSearchInput')?.value || '').trim().toLowerCase();
   const type = String(document.getElementById('nodeTypeFilter')?.value || 'all');
   const state = String(document.getElementById('nodeStateFilter')?.value || 'all');
@@ -1139,7 +1186,7 @@ function applyNodeFilters() {
     row.classList.toggle('hidden-by-filter', !visible);
     if (visible && row.classList.contains('is-selected')) selectedStillVisible = true;
   });
-  nodeCurrentPage = 1;
+  if (!options || options.preservePage !== true) nodeCurrentPage = 1;
   updateVisibleNodesCount();
   ensureSelectedNodeOnVisiblePage();
   if (!selectedStillVisible) {
@@ -1210,43 +1257,55 @@ function initNodeDetailsPanel() {
   updateVisibleNodesCount();
 }
 
+async function moveAutoToEnd(id) {
+  if (nodeSortKey) setNodeSort('');
+  const row = getNodeRows().find(row => row.dataset.nodeId === id);
+  if (!row) return;
+  document.getElementById('nodesOrderBody').appendChild(row);
+  try { await saveNodeOrder(getDesktopNodeOrder()); } catch (err) { setNodeOrderStatus(err.message, true); }
+}
+
 function initNodeDragOrder() {
   const body = document.getElementById('nodesOrderBody');
   if (!body) return;
   let dragged = null;
+  let previousRows = [], dropped = false;
   function bindRow(row) {
     row.addEventListener('dragstart', event => {
-      if (nodeSortKey) { event.preventDefault(); return; }
+      if (nodeSortKey || nodeOrderSaving) { event.preventDefault(); return; }
       if (event.target.closest('button:not(.drag-handle), a, input, select, textarea')) {
         event.preventDefault();
         return;
       }
       dragged = row;
+      previousRows = getNodeRows();
+      dropped = false;
       row.classList.add('dragging');
       setNodeOrderStatus('Перемести строку и отпусти мышь', false);
     });
     row.addEventListener('dragend', () => {
       row.classList.remove('dragging');
+      if (!dropped && previousRows.length) {
+        previousRows.forEach(item => body.appendChild(item));
+        rememberNodeOrder();
+        renderNodePagination();
+      }
       dragged = null;
     });
   }
-  getPhysicalNodeRows().forEach(bindRow);
+  getOrderableNodeRows().forEach(bindRow);
   body.addEventListener('dragover', event => {
     event.preventDefault();
     if (!dragged) return;
-    const rows = getPhysicalNodeRows().filter(row => row !== dragged && !row.classList.contains('hidden-by-filter') && !row.classList.contains('hidden-by-page'));
+    const rows = getOrderableNodeRows().filter(row => row !== dragged && !row.classList.contains('hidden-by-filter') && !row.classList.contains('hidden-by-page'));
     const next = rows.find(row => event.clientY <= row.getBoundingClientRect().top + row.getBoundingClientRect().height / 2);
-    body.insertBefore(dragged, next || null);
+    body.insertBefore(dragged, next || rows.at(-1)?.nextElementSibling || null);
   });
   body.addEventListener('drop', async event => {
     event.preventDefault();
     if (nodeSortKey || !dragged) return;
-    try {
-      await saveNodeOrder(getDesktopNodeOrder());
-      refreshMobileOrderControls();
-    } catch (err) {
-      setNodeOrderStatus(err.message || String(err), true);
-    }
+    dropped = true;
+    await persistMovedNode(previousRows, dragged);
   });
 }
 
@@ -1256,10 +1315,13 @@ function initMobileNodeOrder() {
   refreshMobileOrderControls();
   list.addEventListener('click', async event => {
     const button = event.target.closest('[data-mobile-move]');
-    if (!button || button.disabled) return;
+    if (!button || button.disabled || nodeOrderSaving || nodeSortKey) return;
+    event.preventDefault();
+    event.stopPropagation();
     const row = button.closest('.node-list-row');
     if (!row) return;
-    const rows = getPhysicalNodeRows();
+    const previousRows = getNodeRows();
+    const rows = getOrderableNodeRows().filter(item => !item.classList.contains('hidden-by-filter'));
     const index = rows.indexOf(row);
     const direction = button.dataset.mobileMove;
     if (direction === 'up' && index > 0) {
@@ -1269,12 +1331,7 @@ function initMobileNodeOrder() {
     } else {
       return;
     }
-    refreshMobileOrderControls();
-    try {
-      await saveNodeOrder(getMobileNodeOrder());
-    } catch (err) {
-      setNodeOrderStatus(err.message || String(err), true);
-    }
+    await persistMovedNode(previousRows, row);
   });
 }
 
@@ -1285,26 +1342,45 @@ function initMobileNodeLongPressOrder() {
   const finish = async (save) => {
     if (!state) return;
     window.clearTimeout(state.timer);
-    const { row, moved, active } = state;
+    window.cancelAnimationFrame(state.frame);
+    const { row, moved, active, previousRows } = state;
+    state = null;
     if (active) {
       row.classList.remove('is-touch-dragging');
       document.body.classList.remove('node-touch-reordering');
       row.dataset.suppressClick = '1';
       refreshMobileOrderControls();
       if (save && moved) {
-        try { await saveNodeOrder(getMobileNodeOrder()); }
-        catch (err) { setNodeOrderStatus(err.message || String(err), true); }
+        await persistMovedNode(previousRows, row);
+      } else if (moved) {
+        previousRows.forEach(item => list.appendChild(item));
+        rememberNodeOrder();
+        renderNodePagination();
       }
     }
-    state = null;
+  };
+  const moveTouchRow = () => {
+    if (!state?.active) return;
+    const target = document.elementFromPoint(state.x, state.y)?.closest('.node-list-row');
+    if (!target || !getOrderableNodeRows().includes(target) || target === state.row || target.parentElement !== list) return;
+    const before = state.y < target.getBoundingClientRect().top + target.offsetHeight / 2;
+    list.insertBefore(state.row, before ? target : target.nextElementSibling);
+    state.moved = true;
+  };
+  const autoScroll = () => {
+    if (!state?.active) return;
+    const edge = 90;
+    const delta = state.y < edge ? -8 : (state.y > window.innerHeight - edge ? 8 : 0);
+    if (delta) { window.scrollBy(0, delta); moveTouchRow(); }
+    state.frame = window.requestAnimationFrame(autoScroll);
   };
   list.addEventListener('pointerdown', event => {
-    if (nodeSortKey) return;
+    if (nodeSortKey || nodeOrderSaving || state) return;
     if (!isMobileNodesLayout() || !['touch', 'pen'].includes(event.pointerType)) return;
-    if (event.target.closest('a, button:not(.node-row-select), input, select, textarea')) return;
+    if (event.target.closest('a, button:not(.node-row-select):not(.drag-handle), input, select, textarea')) return;
     const row = event.target.closest('.node-list-row');
-    if (!row || row.dataset.physicalNode !== '1') return;
-    state = { row, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, active: false, moved: false, timer: 0 };
+    if (!row || !getOrderableNodeRows().includes(row)) return;
+    state = { row, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, x: event.clientX, y: event.clientY, previousRows: getNodeRows(), active: false, moved: false, timer: 0, frame: 0 };
     state.timer = window.setTimeout(() => {
       if (!state || state.row !== row) return;
       state.active = true;
@@ -1313,6 +1389,7 @@ function initMobileNodeLongPressOrder() {
       row.setPointerCapture?.(event.pointerId);
       setNodeOrderStatus('Перемещай узел вверх или вниз и отпусти', false);
       navigator.vibrate?.(30);
+      state.frame = window.requestAnimationFrame(autoScroll);
     }, 420);
   }, { passive: true });
   list.addEventListener('pointermove', event => {
@@ -1322,15 +1399,14 @@ function initMobileNodeLongPressOrder() {
       return;
     }
     event.preventDefault();
-    const target = document.elementFromPoint(event.clientX, event.clientY)?.closest('.node-list-row');
-    if (!target || target.dataset.physicalNode !== '1' || target === state.row || target.parentElement !== list) return;
-    const before = event.clientY < target.getBoundingClientRect().top + target.offsetHeight / 2;
-    list.insertBefore(state.row, before ? target : target.nextElementSibling);
-    state.moved = true;
+    state.x = event.clientX;
+    state.y = event.clientY;
+    moveTouchRow();
   }, { passive: false });
   list.addEventListener('pointerup', event => { if (state?.pointerId === event.pointerId) finish(true); });
   list.addEventListener('pointercancel', event => { if (state?.pointerId === event.pointerId) finish(false); });
 }
+
 function showLoading(title, text) {
   const modal = document.getElementById('loadingModal');
   if (!modal) return;
@@ -1423,7 +1499,7 @@ async function refreshNodeStatuses() {
         badge.title = check.error || (check.ms ? `${check.ms} мс` : '');
       });
     });
-    if (typeof applyNodeFilters === 'function') applyNodeFilters();
+    if (typeof applyNodeFilters === 'function') applyNodeFilters({ preservePage: true });
   } catch (err) {
     console.warn('Автопроверка узлов:', err);
     if (typeof window.showNexusNotice === 'function') window.showNexusNotice(err, 'err');
@@ -1443,7 +1519,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
   window.setTimeout(refreshNodeStatuses, 1500);
-  const nodeRefreshSeconds = <%- JSON.stringify(Number(nodeAutoRefreshSeconds || 10)) %>;
+  const nodeRefreshSeconds = <%- JSON.stringify(Number(nodeAutoRefreshSeconds ?? 10)) %>;
   if (nodeRefreshSeconds > 0) window.setInterval(refreshNodeStatuses, nodeRefreshSeconds * 1000);
 });
 </script>
