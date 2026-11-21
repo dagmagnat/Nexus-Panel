@@ -1,11 +1,12 @@
 {
-  "version": "2.7.32",
-  "name": "Nexus Panel 2.7.32 — видимость узлов в JSON-подписке",
+  "version": "2.7.33",
+  "name": "Nexus Panel 2.7.33 — видимость отдельных узлов",
   "repository": "https://github.com/dagmagnat/Nexus-Panel",
   "archive_url": "https://github.com/dagmagnat/Nexus-Panel/archive/refs/heads/main.zip",
   "archive": "Nexus-Panel-main.zip",
   "filename": "Nexus-Panel-main.zip",
   "notes": [
+    "В карточке узла можно скрыть его отдельный пункт в JSON-подписке и оставить узел в автовыборе.",
     "Узлы профиля можно скрыть из списка JSON-подписки, оставив их внутри автовыбора.",
     "Автовыбор: основные и резервные узлы, HTTPS-проверки и автоматический возврат к основным после восстановления.",
     "JSON-маршрутизация: группы узлов с независимыми списками и отдельным DNS.",

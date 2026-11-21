@@ -762,6 +762,21 @@
                 </form>
               </div>
 
+              <section class="node-detail-section">
+                <h3>Видимость в JSON-подписке</h3>
+                <% const hiddenInJson = Number(node.hide_standalone_json) === 1; %>
+                <form method="post" action="/nodes/<%= node.id %>/json-visibility" class="actions">
+                  <input type="hidden" name="hide_standalone_json" value="<%= hiddenInJson ? 0 : 1 %>" />
+                  <strong><%= hiddenInJson ? 'Скрыт из списка' : 'Показывается отдельно' %></strong>
+                  <button type="submit" class="secondary"><%= hiddenInJson ? 'Показывать отдельно' : 'Скрыть из списка' %></button>
+                </form>
+                <% if (isNativeAwg(node)) { %>
+                  <small class="hint">AmneziaWG доступен в INCY отдельным пунктом и не участвует в автовыборе Xray.</small>
+                <% } else { %>
+                  <small class="hint">Узел будет доступен в автовыборе, если добавлен в его активный профиль и доступен клиенту.</small>
+                <% } %>
+              </section>
+
               <div class="node-detail-kv">
                 <div class="node-detail-kv-row">
                   <span>API / Panel URL</span>
@@ -1500,6 +1515,10 @@ document.addEventListener('DOMContentLoaded', () => {
   initMobileNodeOrder();
   initMobileNodeLongPressOrder();
   initNodeDetailsPanel();
+  const showNode = new URLSearchParams(location.search).get('show_node');
+  if (showNode && getNodeRows().some(row => row.dataset.nodeId === showNode)) {
+    selectNodeDetails(showNode, { openMobile: true });
+  }
   document.querySelectorAll('form.js-long-action').forEach(form => {
     form.addEventListener('submit', () => {
       showLoading(form.dataset.loadingTitle, form.dataset.loadingText);

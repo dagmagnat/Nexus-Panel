@@ -1307,6 +1307,7 @@ function initDb() {
       source_sub_settings_error TEXT DEFAULT '',
       inbound_id INTEGER NOT NULL,
       enabled INTEGER NOT NULL DEFAULT 1,
+      hide_standalone_json INTEGER NOT NULL DEFAULT 0,
       last_status TEXT DEFAULT 'unknown',
       last_error TEXT DEFAULT '',
       country_code TEXT DEFAULT '',
@@ -1569,6 +1570,7 @@ function initDb() {
   addColumnIfMissing('nodes', 'remnawave_remark_mode', "TEXT NOT NULL DEFAULT 'aggregator'");
   addColumnIfMissing('nodes', 'inherit_3xui_mux', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing('nodes', 'allow_udp443', 'INTEGER NOT NULL DEFAULT 1');
+  addColumnIfMissing('nodes', 'hide_standalone_json', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing('nodes', 'reality_mlkem_hint', 'INTEGER NOT NULL DEFAULT 1');
 addColumnIfMissing('nodes', 'subscription_endpoint', "TEXT NOT NULL DEFAULT ''");
 addColumnIfMissing('nodes', 'api_connect_ip', "TEXT NOT NULL DEFAULT ''");
@@ -16695,6 +16697,17 @@ app.post('/nodes/:id/create-missing-clients', requireAuth, async (req, res) => {
 });
 
 
+app.post('/nodes/:id/json-visibility', requireAuth, (req, res) => {
+  const nodeId = Number(req.params.id);
+  const hidden = req.body.hide_standalone_json;
+  if (hidden !== '0' && hidden !== '1') return res.status(400).send('Некорректная видимость узла.');
+  const result = db.prepare('UPDATE nodes SET hide_standalone_json = ? WHERE id = ?').run(Number(hidden), nodeId);
+  if (!result.changes) return res.status(404).send('Узел не найден.');
+  const message = hidden === '1' ? 'Узел скрыт из списка JSON-подписки.' : 'Показ узла в JSON-подписке включён.';
+  const query = new URLSearchParams({ tab: 'list', show_node: String(nodeId), message });
+  return res.redirect('/nodes?' + query.toString());
+});
+
 app.post('/nodes/:id/toggle', requireAuth, (req, res) => {
   try {
     const nodeId = Number(req.params.id);
@@ -20114,16 +20127,22 @@ app.get('/json/:slug', async (req, res) => {
 
   const incyJson = String(req.query.format || '').toLowerCase() === 'incy'
     || /incy/i.test(String(req.headers['user-agent'] || ''));
-  const awgConfigs = incyJson ? entries.map(entry => require('./lib_amneziawg').jsonContainer(entry)).filter(Boolean) : [];
   const vlessEntries = entries.filter(entry => /^(?:vless|hysteria2|hy2):\/\//i.test(String(entry.line)));
+  // Build profiles from the full set of eligible routes before filtering
+  // the standalone rows displayed in the subscriber's application.
+  const { configs: resultConfigs, hiddenNodeIds } = vlessEntries.length && !isClientExpired(client)
+    ? buildAutoSelectJsonConfigs(client, vlessEntries, subscriptionName)
+    : { configs: [], hiddenNodeIds: new Set() };
+  for (const row of db.prepare('SELECT id FROM nodes WHERE hide_standalone_json = 1').all()) {
+    hiddenNodeIds.add(row.id);
+  }
+  const showStandalone = entry => entry.nodeType === 'notice' || !hiddenNodeIds.has(Number(entry.nodeId));
+  const awgConfigs = incyJson
+    ? entries.filter(showStandalone).map(entry => require('./lib_amneziawg').jsonContainer(entry)).filter(Boolean)
+    : [];
 
   if (vlessEntries.length) {
-    // The profile carries the balancer and the routes of any hidden members.
-    // Keep their individual rows hidden only when a profile is emitted.
-    const { configs: resultConfigs, hiddenNodeIds } = isClientExpired(client)
-      ? { configs: [], hiddenNodeIds: new Set() }
-      : buildAutoSelectJsonConfigs(client, vlessEntries, subscriptionName);
-    const visibleVlessEntries = vlessEntries.filter(entry => !hiddenNodeIds.has(Number(entry.nodeId)));
+    const visibleVlessEntries = vlessEntries.filter(showStandalone);
     const requestedNodeRaw = String(req.query.node || '').trim();
     const singleMode = requestedNodeRaw || ['single', 'object'].includes(String(req.query.format || '').toLowerCase());
 
@@ -20137,7 +20156,7 @@ app.get('/json/:slug', async (req, res) => {
       // Keep native AWG containers in the same node order as text subscriptions.
       // The common display order is applied after all configs are collected.
       const orderedEntries = incyJson
-        ? entries.filter(entry => !hiddenNodeIds.has(Number(entry.nodeId)) && /^(?:vless|hysteria2|hy2|amneziawg|awg):\/\//i.test(String(entry.line)))
+        ? entries.filter(entry => showStandalone(entry) && /^(?:vless|hysteria2|hy2|amneziawg|awg):\/\//i.test(String(entry.line)))
         : visibleVlessEntries;
       for (let index = 0; index < orderedEntries.length; index += 1) {
         const entry = orderedEntries[index];
@@ -20187,7 +20206,7 @@ app.get('/json/:slug', async (req, res) => {
 
     // Compatibility endpoint for clients that require a single Xray object:
     // /json/:slug?node=2 or /json/:slug?format=single
-    if (!visibleVlessEntries.length) return res.json(resultConfigs[0]);
+    if (!visibleVlessEntries.length) return res.json(resultConfigs[0] || awgConfigs);
     const requestedNode = Number.parseInt(requestedNodeRaw || '1', 10);
     const selectedIndex = Number.isFinite(requestedNode)
       ? Math.min(Math.max(requestedNode - 1, 0), visibleVlessEntries.length - 1)
