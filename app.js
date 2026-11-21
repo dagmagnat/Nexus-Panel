@@ -19563,8 +19563,13 @@ function buildAutoSelectJsonConfig(profile, client, entries, subscriptionName) {
 
   const routingCfg = getRoutingConfig();
   const routingEnabled = routingCfg.enabled !== false;
-  const firstGroup = routingCfg.ruleGroups?.find(group => group.nodeIds.includes(Number(usableEntries[0]?.nodeId)));
-  const sharedGroup = firstGroup && usableEntries.every(entry => firstGroup.nodeIds.includes(Number(entry.nodeId))) ? firstGroup : null;
+  // The router decides what to proxy before the balancer picks an outbound.
+  // Reserve routes must not make the profile drop the shared primary policy.
+  const primaryIds = new Set([...(profile.normalNodeIds || []), profile.preferredNodeId].filter(Boolean).map(Number));
+  const availablePrimaryEntries = usableEntries.filter(entry => primaryIds.has(Number(entry.nodeId)));
+  const policyEntries = availablePrimaryEntries.length ? availablePrimaryEntries : usableEntries;
+  const sharedGroup = routingCfg.ruleGroups?.find(group =>
+    policyEntries.every(entry => group.nodeIds.includes(Number(entry.nodeId)))) || null;
   const routingMode = routingEnabled ? String(sharedGroup?.mode || routingCfg.mode || 'proxy-except') : '';
   const config = buildHappJsonConfig(
     client,

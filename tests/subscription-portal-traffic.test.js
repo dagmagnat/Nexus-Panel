@@ -827,6 +827,18 @@ test('multiple auto-connections create, edit, toggle and delete independently vi
   assert.equal(incyHidden.filter(x=>!x.autoSelect).length,3);
   await post(nodeVisibility,{_csrf:csrf,hide_standalone_json:'0'});
   assert.equal((await configs()).filter(x=>!x.autoSelect).length,4);
+  const mixedRouting = new URLSearchParams({_csrf:csrf,routing_enabled:'1',dns_preset:'yandex',routing_groups:JSON.stringify([
+    {mode:'node-selective',nodeIds:[node1],domains:'domain:youtube.com',directDnsEnabled:true,directDnsPreset:'google'},
+    {mode:'proxy-except',nodeIds:[node2,node3],domains:'domain:example.ru',directDnsEnabled:true,directDnsPreset:'doh_yandex'}
+  ])});
+  const mixedSaved=await post('/routing',mixedRouting);
+  assert.ok(!mixedSaved.headers.get('location').includes('error='));
+  const mixedAuto=(await configs()).find(x=>x.autoSelect?.profileId===profiles[0].id);
+  assert.equal(mixedAuto.dns.servers.find(x=>x.tag==='nexus-dns-list').address,'8.8.8.8');
+  assert.ok(!mixedAuto.dns.servers.some(x=>x.tag==='nexus-dns-direct'));
+  assert.ok(mixedAuto.routing.rules.some(x=>x.domain?.includes('domain:youtube.com')&&x.balancerTag===main.tag));
+  assert.equal(mixedAuto.routing.rules.at(-1).outboundTag,'direct');
+  assert.deepEqual(mixedAuto.routing.balancers,autos[0].routing.balancers);
   const invalid=await post('/nodes',form({name:'Bad',nodes:[node1],seconds:30}));
   assert.equal(new URL(invalid.headers.get('location'),'http://local').searchParams.get('create'),'auto_select');
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM auto_select_profiles').get().n,3);
@@ -847,9 +859,10 @@ test('multiple auto-connections create, edit, toggle and delete independently vi
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM nodes').get().n,3);assert.equal(db.prepare('SELECT COUNT(*) AS n FROM clients').get().n,1);
   const sub=await(await request('/sub/portal-user?raw=1')).text();
   assert.ok(!sub.includes('Европа 2'),'auto profiles must not become fake VLESS/SUB endpoints');
-  const dnsRoutingForm=new URLSearchParams({_csrf:csrf,routing_enabled:'1',routing_dns_controls:'1',routing_modes:'proxy-except',
-    direct_dns_enabled:'1',direct_dns_preset:'yandex',sniffing_route_only:'1',except_domains:'geosite:category-ru\ndomain:qip.ru',dns_preset:'google'});
-  dnsRoutingForm.append('routing_mode_nodes_proxy_except',String(node1));dnsRoutingForm.append('routing_mode_nodes_proxy_except',String(node2));
+  const dnsRoutingForm=new URLSearchParams({_csrf:csrf,routing_enabled:'1',routing_dns_controls:'1',
+    sniffing_route_only:'1',dns_preset:'google',routing_groups:JSON.stringify([
+      {mode:'proxy-except',nodeIds:[node1,node2,node3],domains:'geosite:category-ru\ndomain:qip.ru',directDnsEnabled:true,directDnsPreset:'yandex'}
+    ])});
   const dnsSaved=await post('/routing',dnsRoutingForm);assert.ok(!dnsSaved.headers.get('location').includes('error='));
   const withDns=await configs();const autoDns=withDns.find(x=>x.autoSelect);
   assert.equal(autoDns.dns.servers.filter(x=>x.tag==='nexus-dns-direct').length,2);

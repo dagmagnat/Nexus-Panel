@@ -187,7 +187,7 @@
         <h3>Правила по списку</h3>
         <button type="button" class="btn-secondary" id="routing-add-rule">+ Добавить правило</button>
       </div>
-      <p class="hint">У каждого правила свои узлы, список и DNS. Узел можно выбрать в одном правиле. Автовыбор с узлами из разных правил использует общую схему маршрутизации.</p>
+      <p class="hint">У каждого правила свои узлы, список и DNS. Узел можно выбрать в одном правиле. Автовыбор использует правило основных узлов, если оно у них общее. Если основные узлы назначены разным правилам, применяются общие настройки маршрутизации.</p>
       <input type="hidden" name="routing_groups" id="routing-groups-payload" />
       <% const emptyRule = { mode: 'node-selective', nodeIds: [], domains: [], ips: [], directDnsEnabled: false, directDnsPreset: 'doh_yandex', directDnsCustom: '' }; %>
       <div class="routing-mode-assignments" id="routing-rule-list">

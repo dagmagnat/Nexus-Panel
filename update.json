@@ -1,11 +1,12 @@
 {
-  "version": "2.7.35",
-  "name": "Nexus Panel 2.7.35 — DNS и скорость автовыбора",
+  "version": "2.7.36",
+  "name": "Nexus Panel 2.7.36 — маршрутизация основных узлов в автовыборе",
   "repository": "https://github.com/dagmagnat/Nexus-Panel",
   "archive_url": "https://github.com/dagmagnat/Nexus-Panel/archive/refs/heads/main.zip",
   "archive": "Nexus-Panel-main.zip",
   "filename": "Nexus-Panel-main.zip",
   "notes": [
+    "Общий автовыбор сохраняет единое правило основных узлов при добавлении резервных узлов из другой группы.",
     "Известные DoH-серверы получают IP в dns.hosts. В автовыборе доступен интервал 3 секунды и ускорен переход к следующему DNS той же группы.",
     "В карточке узла можно скрыть его отдельный пункт в JSON-подписке и оставить узел в автовыборе.",
     "Узлы профиля можно скрыть из списка JSON-подписки, оставив их внутри автовыбора.",
