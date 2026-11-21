@@ -188,6 +188,17 @@
           <%- include("partials/auto-select-node-picker", { label: "Резервные узлы (LTE)", hint: "Резерв используется, когда ни один основной или приоритетный узел не проходит проверку. После восстановления новые соединения снова идут через основные узлы.", nodes, isNativeAwg, flagHtml, connectionLabel, fieldName: "auto_select_emergency_node_ids", selectedIds: [] }) %>
         </div>
 
+        <div class="field full js-node-auto-select-only hidden" hidden style="display:none!important">
+          <label>Видимость узлов в JSON-подписке
+            <select name="auto_select_member_visibility">
+              <option value="show-all">Показывать все узлы отдельно</option>
+              <option value="hide-reserve">Скрыть резервные узлы</option>
+              <option value="hide-all">Скрыть все узлы этого профиля</option>
+            </select>
+          </label>
+          <small class="hint">Скрытые узлы участвуют в автовыборе. В приложении они не отображаются отдельно.</small>
+        </div>
+
         <div class="field half" data-node-endpoint-field>
           <label data-node-endpoint-label>3x-ui Panel URL</label>
           <input name="panel_url" placeholder="https://panel.example.com:2053" required data-node-endpoint-input />
@@ -431,6 +442,16 @@
                     </div>
                     <div class="field full">
                       <%- include("partials/auto-select-node-picker", { label: "Резервные узлы (LTE)", hint: "Резерв используется, когда ни один основной или приоритетный узел не проходит проверку. После восстановления новые соединения снова идут через основные узлы.", nodes, isNativeAwg, flagHtml, connectionLabel, fieldName: "auto_select_emergency_node_ids", selectedIds: profile.emergencyNodeIds }) %>
+                    </div>
+                    <div class="field full">
+                      <label>Видимость узлов в JSON-подписке
+                        <select name="auto_select_member_visibility">
+                          <option value="show-all" <%= profile.memberVisibility === 'show-all' ? 'selected' : '' %>>Показывать все узлы отдельно</option>
+                          <option value="hide-reserve" <%= profile.memberVisibility === 'hide-reserve' ? 'selected' : '' %>>Скрыть резервные узлы</option>
+                          <option value="hide-all" <%= profile.memberVisibility === 'hide-all' ? 'selected' : '' %>>Скрыть все узлы этого профиля</option>
+                        </select>
+                      </label>
+                      <small class="hint">Скрытые узлы участвуют в автовыборе. В приложении они не отображаются отдельно.</small>
                     </div>
                   </div>
                   <div class="actions auto-select-profile-actions">

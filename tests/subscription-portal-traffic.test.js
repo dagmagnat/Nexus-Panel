@@ -791,6 +791,24 @@ test('multiple auto-connections create, edit, toggle and delete independently vi
   assert.deepEqual(JSON.parse(profiles[0].emergency_node_ids),[node2,node3]);
   const overlap=await post('/nodes',form({name:'Overlap',nodes:[node1],reserve:[node1,node2],seconds:30}));
   assert.match(overlap.headers.get('location'),/[?&]error=/);
+  const editRoute=`/auto-select-profiles/${profiles[0].id}/edit`;
+  const visibility=form(forms[0]);
+  visibility.set('auto_select_member_visibility','hide-reserve');
+  await post(editRoute,visibility);
+  const reserveHidden=await configs();
+  assert.equal(reserveHidden.filter(x=>!x.autoSelect).length,2);
+  assert.equal(reserveHidden.find(x=>x.autoSelect?.profileId===profiles[0].id).autoSelect.candidates,4);
+  visibility.set('auto_select_member_visibility','hide-all');
+  await post(editRoute,visibility);
+  for(const format of ['', '&format=incy']){
+    const payload=await (await request('/json/portal-user?download=1'+format)).json();
+    assert.deepEqual(payload.map(cfg=>cfg.autoSelect?.profileId),profiles.map(p=>p.id));
+  }
+  const single=await (await request('/json/portal-user?format=single')).json();
+  assert.equal(single.autoSelect.profileId,profiles[0].id);
+  visibility.set('auto_select_member_visibility','show-all');
+  await post(editRoute,visibility);
+  assert.equal((await configs()).filter(x=>!x.autoSelect).length,4);
   const invalid=await post('/nodes',form({name:'Bad',nodes:[node1],seconds:30}));
   assert.equal(new URL(invalid.headers.get('location'),'http://local').searchParams.get('create'),'auto_select');
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM auto_select_profiles').get().n,3);

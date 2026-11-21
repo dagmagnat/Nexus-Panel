@@ -1326,6 +1326,7 @@ function initDb() {
       preferred_node_id INTEGER DEFAULT NULL,
       emergency_node_id INTEGER DEFAULT NULL,
       emergency_node_ids TEXT NOT NULL DEFAULT '[]',
+      member_visibility TEXT NOT NULL DEFAULT 'show-all',
       probe_url TEXT NOT NULL DEFAULT 'https://cp.cloudflare.com/generate_204',
       probe_interval_seconds INTEGER NOT NULL DEFAULT 5,
       enabled INTEGER NOT NULL DEFAULT 1,
@@ -1592,6 +1593,7 @@ addColumnIfMissing('nodes', 'api_connect_ip', "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing('auto_select_profiles', 'preferred_node_id', 'INTEGER DEFAULT NULL');
   addColumnIfMissing('auto_select_profiles', 'emergency_node_id', 'INTEGER DEFAULT NULL');
   addColumnIfMissing('auto_select_profiles', 'emergency_node_ids', "TEXT NOT NULL DEFAULT '[]'");
+  addColumnIfMissing('auto_select_profiles', 'member_visibility', "TEXT NOT NULL DEFAULT 'show-all'");
   addColumnIfMissing('auto_select_profiles', 'probe_url', "TEXT NOT NULL DEFAULT 'https://cp.cloudflare.com/generate_204'");
   addColumnIfMissing('auto_select_profiles', 'probe_interval_seconds', 'INTEGER NOT NULL DEFAULT 5');
   addColumnIfMissing('auto_select_profiles', 'enabled', 'INTEGER NOT NULL DEFAULT 1');
@@ -3129,6 +3131,10 @@ function normalizeAutoSelectProbeInterval(value) {
   return Math.min(300, Math.max(5, seconds));
 }
 
+function normalizeAutoSelectMemberVisibility(value) {
+  return ['hide-reserve', 'hide-all'].includes(value) ? value : 'show-all';
+}
+
 function normalizeAutoSelectPolicy(body = {}) {
   const normalNodeIds = normalizeSubscriptionPolicyNodeIds(body.auto_select_node_ids);
   const preferredNodeId = Math.max(0, Number.parseInt(String(body.auto_select_preferred_node_id || '0'), 10) || 0);
@@ -3179,6 +3185,7 @@ function enrichAutoSelectProfile(row) {
     preferredNodeId,
     emergencyNodeIds,
     emergencyNodeId: emergencyNodeIds[0] || 0,
+    memberVisibility: normalizeAutoSelectMemberVisibility(row.member_visibility),
     nodes: nodeIds.map(id => nodeMap.get(id)).filter(Boolean),
     title: `${icon} ${normalizeAutoSelectProfileName(row.name)}`.trim(),
     probeIntervalSeconds: normalizeAutoSelectProbeInterval(row.probe_interval_seconds),
@@ -3200,9 +3207,9 @@ function createAutoSelectProfileFromBody(body = {}) {
   const interval = normalizeAutoSelectProbeInterval(body.auto_select_probe_interval_seconds);
   const sortOrder = Number(db.prepare('SELECT COALESCE(MAX(sort_order), 0) + 1 AS n FROM auto_select_profiles').get()?.n || 1);
   const info = db.prepare(`
-    INSERT INTO auto_select_profiles (name, icon, node_ids, normal_node_ids, preferred_node_id, emergency_node_id, emergency_node_ids, probe_url, probe_interval_seconds, enabled, sort_order, fast_start)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-  `).run(name, icon, JSON.stringify(policy.nodeIds), JSON.stringify(policy.normalNodeIds), policy.preferredNodeId || null, policy.emergencyNodeIds[0] || null, JSON.stringify(policy.emergencyNodeIds), probeUrl, interval, sortOrder, 0);
+    INSERT INTO auto_select_profiles (name, icon, node_ids, normal_node_ids, preferred_node_id, emergency_node_id, emergency_node_ids, member_visibility, probe_url, probe_interval_seconds, enabled, sort_order, fast_start)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+  `).run(name, icon, JSON.stringify(policy.nodeIds), JSON.stringify(policy.normalNodeIds), policy.preferredNodeId || null, policy.emergencyNodeIds[0] || null, JSON.stringify(policy.emergencyNodeIds), normalizeAutoSelectMemberVisibility(body.auto_select_member_visibility), probeUrl, interval, sortOrder, 0);
   return enrichAutoSelectProfile(db.prepare('SELECT * FROM auto_select_profiles WHERE id = ?').get(info.lastInsertRowid));
 }
 
@@ -3216,9 +3223,9 @@ function updateAutoSelectProfileFromBody(id, body = {}) {
   const interval = normalizeAutoSelectProbeInterval(body.auto_select_probe_interval_seconds);
   db.prepare(`
     UPDATE auto_select_profiles
-    SET name = ?, icon = ?, node_ids = ?, normal_node_ids = ?, preferred_node_id = ?, emergency_node_id = ?, emergency_node_ids = ?, probe_url = ?, probe_interval_seconds = ?, fast_start = ?, updated_at = CURRENT_TIMESTAMP
+    SET name = ?, icon = ?, node_ids = ?, normal_node_ids = ?, preferred_node_id = ?, emergency_node_id = ?, emergency_node_ids = ?, member_visibility = ?, probe_url = ?, probe_interval_seconds = ?, fast_start = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
-  `).run(name, icon, JSON.stringify(policy.nodeIds), JSON.stringify(policy.normalNodeIds), policy.preferredNodeId || null, policy.emergencyNodeIds[0] || null, JSON.stringify(policy.emergencyNodeIds), probeUrl, interval, 0, current.id);
+  `).run(name, icon, JSON.stringify(policy.nodeIds), JSON.stringify(policy.normalNodeIds), policy.preferredNodeId || null, policy.emergencyNodeIds[0] || null, JSON.stringify(policy.emergencyNodeIds), normalizeAutoSelectMemberVisibility(body.auto_select_member_visibility ?? current.member_visibility), probeUrl, interval, 0, current.id);
   return enrichAutoSelectProfile(db.prepare('SELECT * FROM auto_select_profiles WHERE id = ?').get(current.id));
 }
 
@@ -19646,6 +19653,7 @@ function buildAutoSelectJsonConfigs(client, entries, subscriptionName) {
   }
 
   const configs = [];
+  const hiddenNodeIds = new Set();
   for (const profile of profiles) {
     const seen = new Set();
     const selectedEntries = [];
@@ -19657,9 +19665,13 @@ function buildAutoSelectJsonConfigs(client, entries, subscriptionName) {
       }
     }
     const config = buildAutoSelectJsonConfig(profile, client, selectedEntries, subscriptionName);
-    if (config) configs.push(config);
+    if (!config) continue;
+    configs.push(config);
+    const hiddenMembers = profile.memberVisibility === 'hide-all' ? profile.nodeIds
+      : profile.memberVisibility === 'hide-reserve' ? profile.emergencyNodeIds : [];
+    for (const id of hiddenMembers) hiddenNodeIds.add(Number(id));
   }
-  return configs;
+  return { configs, hiddenNodeIds };
 }
 
 
@@ -20086,7 +20098,6 @@ app.get('/json/:slug', async (req, res) => {
   }
 
   const { entries, subscriptionExpiryOverride } = await buildSubscriptionEntriesForRequest(req, res, client);
-  const lines = entries.map(e => e.line);
   const subscriptionName = getSetting('subscription_name', DEFAULT_SUBSCRIPTION_NAME);
   const subscriptionUserInfo = buildSubscriptionUserInfo(entries, client, { expiryTime: subscriptionExpiryOverride });
   const subscriptionUpdateIntervalHours = getSubscriptionUpdateIntervalHours();
@@ -20104,9 +20115,15 @@ app.get('/json/:slug', async (req, res) => {
   const incyJson = String(req.query.format || '').toLowerCase() === 'incy'
     || /incy/i.test(String(req.headers['user-agent'] || ''));
   const awgConfigs = incyJson ? entries.map(entry => require('./lib_amneziawg').jsonContainer(entry)).filter(Boolean) : [];
-  const vlessLines = lines.filter(line => /^(?:vless|hysteria2|hy2):\/\//i.test(String(line)));
+  const vlessEntries = entries.filter(entry => /^(?:vless|hysteria2|hy2):\/\//i.test(String(entry.line)));
 
-  if (vlessLines.length >= 1) {
+  if (vlessEntries.length) {
+    // The profile carries the balancer and the routes of any hidden members.
+    // Keep their individual rows hidden only when a profile is emitted.
+    const { configs: resultConfigs, hiddenNodeIds } = isClientExpired(client)
+      ? { configs: [], hiddenNodeIds: new Set() }
+      : buildAutoSelectJsonConfigs(client, vlessEntries, subscriptionName);
+    const visibleVlessEntries = vlessEntries.filter(entry => !hiddenNodeIds.has(Number(entry.nodeId)));
     const requestedNodeRaw = String(req.query.node || '').trim();
     const singleMode = requestedNodeRaw || ['single', 'object'].includes(String(req.query.format || '').toLowerCase());
 
@@ -20114,17 +20131,14 @@ app.get('/json/:slug', async (req, res) => {
     // several configs/regions, while a single object is imported as only one
     // visible server. This was the reason only the last/random region appeared.
     if (!singleMode) {
-      const vlessEntries = entries.filter(e => /^(?:vless|hysteria2|hy2):\/\//i.test(String(e.line)));
-      // Virtual auto-select profiles are intentionally JSON-only: a plain
-      // vless:// link cannot carry an Xray balancer or an observatory. Put the
-      // independently configured profiles in the saved common node order.
-      const resultConfigs = isClientExpired(client) ? [] : buildAutoSelectJsonConfigs(client, vlessEntries, subscriptionName);
       const configNodeKeys = new Map();
       const pushConfig = (config, nodeId) => { configNodeKeys.set(config, String(nodeId)); resultConfigs.push(config); };
       const nativeJsonCache = new Map();
       // Keep native AWG containers in the same node order as text subscriptions.
       // The common display order is applied after all configs are collected.
-      const orderedEntries = incyJson ? entries.filter(entry => /^(?:vless|hysteria2|hy2|amneziawg|awg):\/\//i.test(String(entry.line))) : vlessEntries;
+      const orderedEntries = incyJson
+        ? entries.filter(entry => !hiddenNodeIds.has(Number(entry.nodeId)) && /^(?:vless|hysteria2|hy2|amneziawg|awg):\/\//i.test(String(entry.line)))
+        : visibleVlessEntries;
       for (let index = 0; index < orderedEntries.length; index += 1) {
         const entry = orderedEntries[index];
         const nativeAwg = incyJson && require('./lib_amneziawg').jsonContainer(entry);
@@ -20173,11 +20187,12 @@ app.get('/json/:slug', async (req, res) => {
 
     // Compatibility endpoint for clients that require a single Xray object:
     // /json/:slug?node=2 or /json/:slug?format=single
+    if (!visibleVlessEntries.length) return res.json(resultConfigs[0]);
     const requestedNode = Number.parseInt(requestedNodeRaw || '1', 10);
     const selectedIndex = Number.isFinite(requestedNode)
-      ? Math.min(Math.max(requestedNode - 1, 0), vlessLines.length - 1)
+      ? Math.min(Math.max(requestedNode - 1, 0), visibleVlessEntries.length - 1)
       : 0;
-    const selectedEntry = entries.filter(e => /^(?:vless|hysteria2|hy2):\/\//i.test(String(e.line)))[selectedIndex];
+    const selectedEntry = visibleVlessEntries[selectedIndex];
     return res.json(buildHappJsonConfigFromLine(client, selectedEntry.line, subscriptionName, selectedIndex, selectedEntry.nodeType === 'notice' ? false : isRoutingEnabledForNode(selectedEntry.nodeId), {
       preserveXhttpExtra: [NODE_TYPE_3XUI, NODE_TYPE_H1CLOUD_3XUI, NODE_TYPE_REMNAWAVE].includes(selectedEntry.nodeType),
       nodeId: Number(selectedEntry.nodeId || 0),
