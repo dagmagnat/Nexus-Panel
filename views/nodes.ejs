@@ -153,7 +153,8 @@
         <div class="field half js-node-auto-select-only hidden" hidden style="display:none!important">
           <label>Проверять каждые</label>
           <select name="auto_select_probe_interval_seconds">
-            <option value="5" selected>5 секунд — быстрое восстановление</option>
+            <option value="3">3 секунды — чаще проверять</option>
+            <option value="5" selected>5 секунд</option>
             <option value="10">10 секунд</option>
             <option value="30">30 секунд</option>
             <option value="60">1 минуту</option>
@@ -416,8 +417,8 @@
                     <div class="field half">
                       <label>Проверять каждые</label>
                       <select name="auto_select_probe_interval_seconds">
-                        <% [5, 10, 30, 60, 120, 300].forEach(seconds => { %>
-                          <option value="<%= seconds %>" <%= Number(profile.probeIntervalSeconds) === seconds ? 'selected' : '' %>><%= seconds < 60 ? `${seconds} секунд` : `${seconds / 60} мин.` %></option>
+                        <% [3, 5, 10, 30, 60, 120, 300].forEach(seconds => { %>
+                          <option value="<%= seconds %>" <%= Number(profile.probeIntervalSeconds) === seconds ? 'selected' : '' %>><%= seconds < 60 ? `${seconds} ${seconds === 3 ? "секунды" : "секунд"}` : `${seconds / 60} мин.` %></option>
                         <% }) %>
                       </select>
           <input type="hidden" name="auto_select_fast_controls" value="1" />

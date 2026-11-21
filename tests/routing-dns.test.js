@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { directDnsSettings, parseDirectDnsServers, applyJsonRoutingDns, DIRECT_DNS_TAG, PROXY_DNS_TAG } = require('../lib_json_routing_dns');
+const { directDnsSettings, parseDirectDnsServers, applyJsonRoutingDns, prepareJsonDns, DIRECT_DNS_TAG, PROXY_DNS_TAG } = require('../lib_json_routing_dns');
 
 const options = { active: true, mode: 'proxy-except', directDomains: ['geosite:category-ru', 'domain:qip.ru'], proxyDomains: ['domain:mail.ru'] };
 const settings = { enabled: true, directDnsEnabled: true, directDnsPreset: 'doh_yandex', sniffingRouteOnly: true };
@@ -64,4 +64,36 @@ test('damaged imported direct DNS never prevents JSON issuance', () => {
   const cfg = config(), dns = structuredClone(cfg.dns);
   assert.doesNotThrow(() => applyJsonRoutingDns(cfg, { ...settings, directDnsPreset: 'manual', directDnsCustom: 'broken' }, options));
   assert.deepEqual(cfg.dns, dns);
+});
+
+
+test('JSON contains bootstrap IPs only for configured known DoH hosts', () => {
+  const cfg = config();
+  applyJsonRoutingDns(cfg, settings, options);
+  cfg.dns.hosts = { 'full:dns.google': '8.8.4.4' };
+  cfg.dns.servers.push('https://dns.google/dns-query', 'https://cloudflare-dns.com/dns-query', 'https://unknown.example/dns-query');
+  prepareJsonDns(cfg.dns);
+  assert.deepEqual(cfg.dns.hosts, {
+    'full:dns.google': '8.8.4.4',
+    'common.dot.dns.yandex.net': '77.88.8.8',
+    'cloudflare-dns.com': '1.1.1.1'
+  });
+  assert.equal(cfg.dns.servers.at(-1), 'https://unknown.example/dns-query');
+});
+
+test('fast DNS fallback keeps matching rules, explicit timeouts and the last resolver of each scope', () => {
+  const dns = { servers: [
+    { address: '8.8.8.8', tag: PROXY_DNS_TAG, domains: ['domain:a.test'] },
+    { address: '8.8.4.4', tag: PROXY_DNS_TAG, domains: ['domain:a.test'] },
+    { address: 'https+local://common.dot.dns.yandex.net/dns-query', tag: DIRECT_DNS_TAG, domains: ['domain:b.test'] },
+    { address: '77.88.8.8', tag: DIRECT_DNS_TAG, domains: ['domain:b.test'], timeoutMs: 3000 },
+    { address: '77.88.8.1', tag: DIRECT_DNS_TAG, domains: ['domain:b.test'] },
+    '1.1.1.1',
+    '1.0.0.1'
+  ] };
+  prepareJsonDns(dns, { fastFallback: true });
+  assert.deepEqual(dns.servers.map(server => server.timeoutMs), [2000, undefined, 2000, 3000, undefined, 2000, undefined]);
+  assert.deepEqual(dns.servers[2].domains, ['domain:b.test']);
+  assert.equal(dns.servers[2].tag, DIRECT_DNS_TAG);
+  assert.equal(dns.servers[2].address, 'https+local://common.dot.dns.yandex.net/dns-query');
 });

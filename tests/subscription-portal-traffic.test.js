@@ -748,7 +748,7 @@ test('multiple auto-connections create, edit, toggle and delete independently vi
   assert.match(html,/data-create-auto-select/);
   const csrf=readCsrf(html);
   const forms=[
-    {name:'Европа',nodes:[node1],reserve:[node2,node3],seconds:5},
+    {name:'Европа',nodes:[node1],reserve:[node2,node3],seconds:3},
     {name:'CDN',nodes:[node1,node3],seconds:60},
     {name:'Резерв',nodes:[node2,node3],seconds:120}
   ];

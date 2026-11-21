@@ -30,7 +30,7 @@ const { initClientDirectory, queryClientDirectory } = require('./lib_client_dire
 const { deviceRefreshPolicy, applyDeviceRefreshPolicy } = require('./lib_device_refresh');
 const { createAsyncReadCache, cooperativeMap, yieldToRequests } = require('./lib_performance');
 const { supportAccess, supportReasonText, parseSupportDays, initSupportSchema } = require('./lib_expired_support');
-const { directDnsSettings, parseDirectDnsServers, applyJsonRoutingDns } = require('./lib_json_routing_dns');
+const { directDnsSettings, parseDirectDnsServers, applyJsonRoutingDns, prepareJsonDns } = require('./lib_json_routing_dns');
 const { parseRoutingGroups, assignmentsFromGroups, policyForGroup } = require('./lib_routing_groups');
 const { udp443FormValue, nodeVisionFlow, applyNodeUdp443 } = require('./lib_node_udp443');
 const { mlkemFormValue, appendRealityHint } = require('./lib_reality_compat');
@@ -3130,7 +3130,7 @@ function normalizeAutoSelectProbeUrl(value) {
 function normalizeAutoSelectProbeInterval(value) {
   const seconds = Number.parseInt(String(value ?? AUTO_SELECT_DEFAULT_PROBE_INTERVAL_SECONDS), 10);
   if (!Number.isFinite(seconds)) return AUTO_SELECT_DEFAULT_PROBE_INTERVAL_SECONDS;
-  return Math.min(300, Math.max(5, seconds));
+  return Math.min(300, Math.max(3, seconds));
 }
 
 function normalizeAutoSelectMemberVisibility(value) {
@@ -19576,7 +19576,8 @@ function buildAutoSelectJsonConfig(profile, client, entries, subscriptionName) {
       entryNodeIds: usableEntries.map(entry => Number(entry.nodeId || 0)),
       routingGroup: sharedGroup,
       routingMode,
-      preserveXhttpExtra: true
+      preserveXhttpExtra: true,
+      fastDnsFallback: true
     }
   );
 
@@ -20068,11 +20069,13 @@ function buildHappJsonConfig(client, lines, subscriptionName, routingEnabledForT
       }
     } : {})
   };
-  return applyJsonRoutingDns(normalizeXrayJsonForIos(config, selectiveOutboundTag, routingMode, routingCfg), routingCfg, {
+  const normalized = applyJsonRoutingDns(normalizeXrayJsonForIos(config, selectiveOutboundTag, routingMode, routingCfg), routingCfg, {
     active: routingActive, mode: routingMode,
     directDomains: getRoutingDirectDomains(routingCfg), proxyDomains: getRoutingProxyDomains(routingCfg),
     listProxyDomains: routingCfg.listProxyDomains || []
   });
+  prepareJsonDns(normalized.dns, { fastFallback: options.fastDnsFallback });
+  return normalized;
 }
 
 app.get('/happ-routing/:slug', async (req, res) => {

@@ -12,6 +12,39 @@ const DIRECT_DNS_PRESETS = Object.freeze({
   manual: []
 });
 
+const DOH_BOOTSTRAP_IPS = Object.freeze({
+  'cloudflare-dns.com': '1.1.1.1',
+  'dns.google': '8.8.8.8',
+  'common.dot.dns.yandex.net': '77.88.8.8'
+});
+
+function prepareJsonDns(dns, { fastFallback = false } = {}) {
+  if (!Array.isArray(dns?.servers)) return;
+  for (const server of dns.servers) {
+    const address = typeof server === 'string' ? server : server?.address;
+    if (!/^https(?:\+local)?:\/\//i.test(address || '')) continue;
+    let hostname;
+    try { hostname = new URL(address.replace(/^https\+local:/i, 'https:')).hostname; }
+    catch (_) { continue; }
+    if (!Object.hasOwn(DOH_BOOTSTRAP_IPS, hostname)) continue;
+    dns.hosts ??= {};
+    if (!Object.hasOwn(dns.hosts, 'full:' + hostname)) dns.hosts[hostname] ??= DOH_BOOTSTRAP_IPS[hostname];
+  }
+  if (!fastFallback) return;
+
+  // Give a backup resolver an earlier chance only within the same scope.
+  // Keep the full timeout for the sole or final resolver in each scope.
+  dns.servers = dns.servers.map((server, index) => {
+    const next = dns.servers[index + 1];
+    if (!server || !next || server.timeoutMs != null || server.finalQuery === true) return server;
+    if (server.tag !== next.tag || server.skipFallback !== next.skipFallback
+        || JSON.stringify(server.domains) !== JSON.stringify(next.domains)) return server;
+    const address = typeof server === 'string' ? server : server.address;
+    if (!(isIP(address || '') || /^https(?:\+local)?:\/\//i.test(address || ''))) return server;
+    return typeof server === 'string' ? { address, timeoutMs: 2000 } : { ...server, timeoutMs: 2000 };
+  });
+}
+
 function directDnsSettings(value = {}) {
   return {
     directDnsEnabled: value.directDnsEnabled === true,
@@ -92,4 +125,4 @@ function applyJsonRoutingDns(config, routing, { active = false, mode = '', direc
   return config;
 }
 
-module.exports = { directDnsSettings, parseDirectDnsServers, applyJsonRoutingDns, DIRECT_DNS_TAG, PROXY_DNS_TAG };
+module.exports = { directDnsSettings, parseDirectDnsServers, applyJsonRoutingDns, prepareJsonDns, DIRECT_DNS_TAG, PROXY_DNS_TAG };
