@@ -822,7 +822,7 @@ test('multiple auto-connections create, edit, toggle and delete independently vi
   assert.equal(hiddenAuto.autoSelect.candidates,4);
   const nodesHtml=await (await request('/nodes?tab=list')).text();
   assert.match(nodesHtml,/Узел будет доступен в автовыборе/);
-  assert.ok(new RegExp(String.raw`action="/nodes/${node2}/json-visibility"[\s\S]*?name="hide_standalone_json" value="0"`).test(nodesHtml));
+  assert.ok(new RegExp(String.raw`action="/nodes/${node2}/json-visibility"[\s\S]*?name="hide_standalone_json" value="0"[\s\S]*?role="switch" aria-checked="false"`).test(nodesHtml));
   const incyHidden=await (await request('/json/portal-user?download=1&format=incy')).json();
   assert.equal(incyHidden.filter(x=>!x.autoSelect).length,3);
   await post(nodeVisibility,{_csrf:csrf,hide_standalone_json:'0'});

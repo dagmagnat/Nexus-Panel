@@ -762,19 +762,22 @@
                 </form>
               </div>
 
-              <section class="node-detail-section">
-                <h3>Видимость в JSON-подписке</h3>
+              <section class="node-detail-section node-json-visibility">
                 <% const hiddenInJson = Number(node.hide_standalone_json) === 1; %>
-                <form method="post" action="/nodes/<%= node.id %>/json-visibility" class="actions">
+                <form method="post" action="/nodes/<%= node.id %>/json-visibility">
                   <input type="hidden" name="hide_standalone_json" value="<%= hiddenInJson ? 0 : 1 %>" />
-                  <strong><%= hiddenInJson ? 'Скрыт из списка' : 'Показывается отдельно' %></strong>
-                  <button type="submit" class="secondary"><%= hiddenInJson ? 'Показывать отдельно' : 'Скрыть из списка' %></button>
+                  <button type="submit" class="node-json-visibility-switch" role="switch" aria-checked="<%= !hiddenInJson %>" aria-describedby="json-visibility-hint-<%= node.id %>">
+                    <span>Отдельный пункт в JSON-подписке</span>
+                    <span class="node-json-visibility-track" aria-hidden="true"></span>
+                  </button>
                 </form>
-                <% if (isNativeAwg(node)) { %>
-                  <small class="hint">AmneziaWG доступен в INCY отдельным пунктом и не участвует в автовыборе Xray.</small>
-                <% } else { %>
-                  <small class="hint">Узел будет доступен в автовыборе, если добавлен в его активный профиль и доступен клиенту.</small>
-                <% } %>
+                <small class="hint" id="json-visibility-hint-<%= node.id %>">
+                  <% if (isNativeAwg(node)) { %>
+                    AmneziaWG доступен в INCY отдельным пунктом и не участвует в автовыборе Xray.
+                  <% } else { %>
+                    Узел будет доступен в автовыборе, если отмечен в его активном профиле и доступен клиенту.
+                  <% } %>
+                </small>
               </section>
 
               <div class="node-detail-kv">

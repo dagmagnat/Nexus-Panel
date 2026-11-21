@@ -1,6 +1,6 @@
 {
-  "version": "2.7.33",
-  "name": "Nexus Panel 2.7.33 — видимость отдельных узлов",
+  "version": "2.7.34",
+  "name": "Nexus Panel 2.7.34 — компактный переключатель видимости",
   "repository": "https://github.com/dagmagnat/Nexus-Panel",
   "archive_url": "https://github.com/dagmagnat/Nexus-Panel/archive/refs/heads/main.zip",
   "archive": "Nexus-Panel-main.zip",
