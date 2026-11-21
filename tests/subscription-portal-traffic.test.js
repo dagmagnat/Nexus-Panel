@@ -748,13 +748,15 @@ test('multiple auto-connections create, edit, toggle and delete independently vi
   assert.match(html,/data-create-auto-select/);
   const csrf=readCsrf(html);
   const forms=[
-    {name:'Европа',nodes:[node1,node2],seconds:5},
+    {name:'Европа',nodes:[node1],reserve:[node2,node3],seconds:5},
     {name:'CDN',nodes:[node1,node3],seconds:60},
     {name:'Резерв',nodes:[node2,node3],seconds:120}
   ];
   function form(spec){
     const body=new URLSearchParams({_csrf:csrf,node_type:'auto_select',auto_select_name:spec.name,auto_select_icon:'⚡',auto_select_probe_interval_seconds:String(spec.seconds),auto_select_probe_url:'https://cp.cloudflare.com/generate_204'});
-    for(const id of spec.nodes)body.append('auto_select_node_ids',String(id));return body;
+    for(const id of spec.nodes)body.append('auto_select_node_ids',String(id));
+    for(const id of spec.reserve || [])body.append('auto_select_emergency_node_ids',String(id));
+    return body;
   }
   for(const spec of forms){
     const r=await post('/nodes',form(spec));assert.equal(r.status,302);
@@ -769,6 +771,7 @@ test('multiple auto-connections create, edit, toggle and delete independently vi
   assert.equal(first.filter(x=>!x.autoSelect).length,4,'ordinary regions including two external proxies remain visible');
   for(let i=0;i<autos.length;i++){
     const cfg=autos[i],p=profiles[i],spec=forms[i];
+    assert.deepEqual(cfg.autoSelect.emergencyNodeIds,spec.reserve || []);
     assert.deepEqual(cfg.autoSelect.normalNodeIds,spec.nodes);assert.equal(cfg.observatory.probeInterval,`${spec.seconds}s`);
     assert.equal(cfg.autoSelect.fastStart,false);assert.equal(cfg.autoSelect.noHealthyNode,'block-until-healthy');
     assert.deepEqual(cfg.observatory.subjectSelector,[`auto-${p.id}-node-`]);
@@ -776,6 +779,18 @@ test('multiple auto-connections create, edit, toggle and delete independently vi
     for(const balancer of cfg.routing.balancers){assert.ok(balancer.selector.every(tag=>tags.has(tag)));assert.ok(tags.has(balancer.fallbackTag));}
     assert.ok(cfg.routing.balancers.every(b=>b.tag.startsWith(`auto-${p.id}-`)));
   }
+  const prefix=`auto-${profiles[0].id}`;
+  const main=autos[0].routing.balancers.find(b=>b.tag===`${prefix}-main-balancer`);
+  const reserve=autos[0].routing.balancers.find(b=>b.tag===`${prefix}-emergency-balancer`);
+  assert.deepEqual(main.selector,[`${prefix}-node-1`,`${prefix}-node-2`]);
+  assert.deepEqual(reserve.selector,[`${prefix}-node-3`,`${prefix}-node-4`]);
+  assert.equal(reserve.fallbackTag,`${prefix}-unavailable`);
+  const loopback=autos[0].outbounds.find(o=>o.tag===main.fallbackTag);
+  assert.equal(loopback.protocol,'loopback');
+  assert.ok(autos[0].routing.rules.some(r=>r.inboundTag?.includes(loopback.settings.inboundTag)&&r.balancerTag===reserve.tag));
+  assert.deepEqual(JSON.parse(profiles[0].emergency_node_ids),[node2,node3]);
+  const overlap=await post('/nodes',form({name:'Overlap',nodes:[node1],reserve:[node1,node2],seconds:30}));
+  assert.match(overlap.headers.get('location'),/[?&]error=/);
   const invalid=await post('/nodes',form({name:'Bad',nodes:[node1],seconds:30}));
   assert.equal(new URL(invalid.headers.get('location'),'http://local').searchParams.get('create'),'auto_select');
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM auto_select_profiles').get().n,3);
@@ -784,6 +799,7 @@ test('multiple auto-connections create, edit, toggle and delete independently vi
   const strict=form(edited);strict.set('auto_select_fast_controls','1');
   await post(`/auto-select-profiles/${profiles[0].id}/edit`,strict);
   const strictConfig=(await configs()).find(c=>c.autoSelect?.normalNodeIds?.includes(node3)&&c.title==='⚡ Европа 2');
+  assert.deepEqual(strictConfig.autoSelect.emergencyNodeIds,[]);
   assert.equal(strictConfig.autoSelect.fastStart,false);assert.equal(strictConfig.routing.balancers[0].fallbackTag,`auto-${profiles[0].id}-unavailable`);
   assert.deepEqual(db.prepare('SELECT * FROM auto_select_profiles WHERE id=?').get(profiles[1].id),profiles[1]);
   assert.deepEqual(db.prepare('SELECT * FROM auto_select_profiles WHERE id=?').get(profiles[2].id),profiles[2]);

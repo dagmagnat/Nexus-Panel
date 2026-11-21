@@ -1325,6 +1325,7 @@ function initDb() {
       normal_node_ids TEXT NOT NULL DEFAULT '[]',
       preferred_node_id INTEGER DEFAULT NULL,
       emergency_node_id INTEGER DEFAULT NULL,
+      emergency_node_ids TEXT NOT NULL DEFAULT '[]',
       probe_url TEXT NOT NULL DEFAULT 'https://cp.cloudflare.com/generate_204',
       probe_interval_seconds INTEGER NOT NULL DEFAULT 5,
       enabled INTEGER NOT NULL DEFAULT 1,
@@ -1590,6 +1591,7 @@ addColumnIfMissing('nodes', 'api_connect_ip', "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing('auto_select_profiles', 'normal_node_ids', "TEXT NOT NULL DEFAULT '[]'");
   addColumnIfMissing('auto_select_profiles', 'preferred_node_id', 'INTEGER DEFAULT NULL');
   addColumnIfMissing('auto_select_profiles', 'emergency_node_id', 'INTEGER DEFAULT NULL');
+  addColumnIfMissing('auto_select_profiles', 'emergency_node_ids', "TEXT NOT NULL DEFAULT '[]'");
   addColumnIfMissing('auto_select_profiles', 'probe_url', "TEXT NOT NULL DEFAULT 'https://cp.cloudflare.com/generate_204'");
   addColumnIfMissing('auto_select_profiles', 'probe_interval_seconds', 'INTEGER NOT NULL DEFAULT 5');
   addColumnIfMissing('auto_select_profiles', 'enabled', 'INTEGER NOT NULL DEFAULT 1');
@@ -3130,27 +3132,28 @@ function normalizeAutoSelectProbeInterval(value) {
 function normalizeAutoSelectPolicy(body = {}) {
   const normalNodeIds = normalizeSubscriptionPolicyNodeIds(body.auto_select_node_ids);
   const preferredNodeId = Math.max(0, Number.parseInt(String(body.auto_select_preferred_node_id || '0'), 10) || 0);
-  const emergencyNodeId = Math.max(0, Number.parseInt(String(body.auto_select_emergency_node_id || '0'), 10) || 0);
+  const emergencyNodeIds = normalizeSubscriptionPolicyNodeIds(body.auto_select_emergency_node_ids ?? body.auto_select_emergency_node_id);
   const knownNodes = db.prepare('SELECT * FROM nodes').all();
   const known = new Set(knownNodes.map(row => Number(row.id)));
-  const allIds = [...normalNodeIds, ...(preferredNodeId ? [preferredNodeId] : []), ...(emergencyNodeId ? [emergencyNodeId] : [])];
-  if (normalNodeIds.some(id => !known.has(id)) || (preferredNodeId && !known.has(preferredNodeId)) || (emergencyNodeId && !known.has(emergencyNodeId))) {
+  const allIds = [...normalNodeIds, ...(preferredNodeId ? [preferredNodeId] : []), ...emergencyNodeIds];
+  if (allIds.some(id => !known.has(id))) {
     throw new Error('В профиле автовыбора выбран узел, которого больше нет в панели. Обнови выбор узлов.');
   }
   const nativeAwg = knownNodes.find(node => allIds.includes(Number(node.id)) && require('./lib_amneziawg').isAmneziaWG(getCachedInbound(node)));
   if (nativeAwg) {
-    throw new Error(`AmneziaWG (узел #${nativeAwg.id}) не участвует в автовыборе Xray. Уберите его из основного, приоритетного и аварийного пулов; AWG доступен отдельным сервером в INCY.`);
+    throw new Error(`AmneziaWG (узел #${nativeAwg.id}) не участвует в автовыборе Xray. Уберите его из основной и резервной групп и из приоритетного узла; AWG доступен отдельным сервером в INCY.`);
   }
   if (preferredNodeId && normalNodeIds.includes(preferredNodeId)) throw new Error('Приоритетный узел не должен одновременно входить в основной пул.');
-  if (emergencyNodeId && normalNodeIds.includes(emergencyNodeId)) throw new Error('Аварийный узел не должен одновременно входить в основной пул.');
-  if (preferredNodeId && preferredNodeId === emergencyNodeId) throw new Error('Приоритетный и аварийный узлы должны быть разными.');
+  if (emergencyNodeIds.some(id => normalNodeIds.includes(id) || id === preferredNodeId)) {
+    throw new Error('Резервный узел не может одновременно быть основным или приоритетным.');
+  }
   if (!normalNodeIds.length) throw new Error('Выбери хотя бы один узел в основном пуле.');
   if (new Set(allIds).size < 2) throw new Error('Для автовыбора нужны минимум два разных узла.');
   return {
     normalNodeIds,
     preferredNodeId,
-    emergencyNodeId,
-    nodeIds: [...new Set(allIds)]
+    emergencyNodeIds,
+    nodeIds: allIds
   };
 }
 
@@ -3160,8 +3163,9 @@ function enrichAutoSelectProfile(row) {
   const storedNormalNodeIds = normalizeSubscriptionPolicyNodeIds(row.normal_node_ids);
   const normalNodeIds = storedNormalNodeIds.length ? storedNormalNodeIds : legacyNodeIds;
   const preferredNodeId = Math.max(0, Number(row.preferred_node_id) || 0);
-  const emergencyNodeId = Math.max(0, Number(row.emergency_node_id) || 0);
-  const nodeIds = [...new Set([...normalNodeIds, ...(preferredNodeId ? [preferredNodeId] : []), ...(emergencyNodeId ? [emergencyNodeId] : []), ...legacyNodeIds])];
+  const storedEmergencyNodeIds = normalizeSubscriptionPolicyNodeIds(row.emergency_node_ids);
+  const emergencyNodeIds = storedEmergencyNodeIds.length ? storedEmergencyNodeIds : normalizeSubscriptionPolicyNodeIds(row.emergency_node_id);
+  const nodeIds = [...new Set([...normalNodeIds, ...(preferredNodeId ? [preferredNodeId] : []), ...emergencyNodeIds, ...legacyNodeIds])];
   const nodeMap = new Map(db.prepare(`SELECT * FROM nodes ORDER BY ${nodeOrderSql()}`).all().map(node => [Number(node.id), enrichNodeFlagFields(node)]));
   let probeUrl = AUTO_SELECT_DEFAULT_PROBE_URL;
   let icon = '⚡';
@@ -3173,7 +3177,8 @@ function enrichAutoSelectProfile(row) {
     nodeIds,
     normalNodeIds,
     preferredNodeId,
-    emergencyNodeId,
+    emergencyNodeIds,
+    emergencyNodeId: emergencyNodeIds[0] || 0,
     nodes: nodeIds.map(id => nodeMap.get(id)).filter(Boolean),
     title: `${icon} ${normalizeAutoSelectProfileName(row.name)}`.trim(),
     probeIntervalSeconds: normalizeAutoSelectProbeInterval(row.probe_interval_seconds),
@@ -3195,9 +3200,9 @@ function createAutoSelectProfileFromBody(body = {}) {
   const interval = normalizeAutoSelectProbeInterval(body.auto_select_probe_interval_seconds);
   const sortOrder = Number(db.prepare('SELECT COALESCE(MAX(sort_order), 0) + 1 AS n FROM auto_select_profiles').get()?.n || 1);
   const info = db.prepare(`
-    INSERT INTO auto_select_profiles (name, icon, node_ids, normal_node_ids, preferred_node_id, emergency_node_id, probe_url, probe_interval_seconds, enabled, sort_order, fast_start)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-  `).run(name, icon, JSON.stringify(policy.nodeIds), JSON.stringify(policy.normalNodeIds), policy.preferredNodeId || null, policy.emergencyNodeId || null, probeUrl, interval, sortOrder, 0);
+    INSERT INTO auto_select_profiles (name, icon, node_ids, normal_node_ids, preferred_node_id, emergency_node_id, emergency_node_ids, probe_url, probe_interval_seconds, enabled, sort_order, fast_start)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+  `).run(name, icon, JSON.stringify(policy.nodeIds), JSON.stringify(policy.normalNodeIds), policy.preferredNodeId || null, policy.emergencyNodeIds[0] || null, JSON.stringify(policy.emergencyNodeIds), probeUrl, interval, sortOrder, 0);
   return enrichAutoSelectProfile(db.prepare('SELECT * FROM auto_select_profiles WHERE id = ?').get(info.lastInsertRowid));
 }
 
@@ -3211,9 +3216,9 @@ function updateAutoSelectProfileFromBody(id, body = {}) {
   const interval = normalizeAutoSelectProbeInterval(body.auto_select_probe_interval_seconds);
   db.prepare(`
     UPDATE auto_select_profiles
-    SET name = ?, icon = ?, node_ids = ?, normal_node_ids = ?, preferred_node_id = ?, emergency_node_id = ?, probe_url = ?, probe_interval_seconds = ?, fast_start = ?, updated_at = CURRENT_TIMESTAMP
+    SET name = ?, icon = ?, node_ids = ?, normal_node_ids = ?, preferred_node_id = ?, emergency_node_id = ?, emergency_node_ids = ?, probe_url = ?, probe_interval_seconds = ?, fast_start = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
-  `).run(name, icon, JSON.stringify(policy.nodeIds), JSON.stringify(policy.normalNodeIds), policy.preferredNodeId || null, policy.emergencyNodeId || null, probeUrl, interval, 0, current.id);
+  `).run(name, icon, JSON.stringify(policy.nodeIds), JSON.stringify(policy.normalNodeIds), policy.preferredNodeId || null, policy.emergencyNodeIds[0] || null, JSON.stringify(policy.emergencyNodeIds), probeUrl, interval, 0, current.id);
   return enrichAutoSelectProfile(db.prepare('SELECT * FROM auto_select_profiles WHERE id = ?').get(current.id));
 }
 
@@ -19557,7 +19562,12 @@ function buildAutoSelectJsonConfig(profile, client, entries, subscriptionName) {
 
   const tagPrefix = `auto-${Number(profile.id)}-node-`;
   const candidateOutbounds = (config.outbounds || []).filter(outbound => /^proxy(?:-|$)/.test(String(outbound?.tag || '')));
-  candidateOutbounds.forEach((outbound, index) => { outbound.tag = `${tagPrefix}${index + 1}`; });
+  // Xray matches selectors by prefix. Equal-width indices keep node 1
+  // from matching node 10 when the two belong to different tiers.
+  const tagWidth = String(candidateOutbounds.length).length;
+  candidateOutbounds.forEach((outbound, index) => {
+    outbound.tag = `${tagPrefix}${String(index + 1).padStart(tagWidth, '0')}`;
+  });
   if (!candidateOutbounds.length) return null;
 
   const unavailableTag = `auto-${Number(profile.id)}-unavailable`;
@@ -19570,20 +19580,13 @@ function buildAutoSelectJsonConfig(profile, client, entries, subscriptionName) {
     tagsByNodeId.get(nodeId).push(candidateOutbounds[index].tag);
   });
   const tagsForNodes = ids => [...new Set((ids || []).flatMap(id => tagsByNodeId.get(Number(id)) || []))];
-  let preferredTags = tagsForNodes(profile.preferredNodeId ? [profile.preferredNodeId] : []);
-  let normalTags = tagsForNodes(profile.normalNodeIds?.length ? profile.normalNodeIds : profile.nodeIds);
-  let emergencyTags = tagsForNodes(profile.emergencyNodeId ? [profile.emergencyNodeId] : []);
-  // Old saved profiles keep their original all-nodes leastPing behavior.
-  const tieredPolicy = Boolean(profile.preferredNodeId || profile.emergencyNodeId);
-  if (!tieredPolicy) normalTags = candidateOutbounds.map(outbound => outbound.tag);
-  // A client's assigned nodes may be a subset of the profile. If its normal
-  // pool is absent, use the remaining configured node(s) rather than creating
-  // an empty selector or silently dropping the auto-select entry.
-  if (tieredPolicy && !normalTags.length) {
-    normalTags = [...preferredTags, ...emergencyTags];
-    preferredTags = [];
-    emergencyTags = [];
-  }
+  const preferredTags = tagsForNodes(profile.preferredNodeId ? [profile.preferredNodeId] : []);
+  const emergencyNodeIds = profile.emergencyNodeIds ?? (profile.emergencyNodeId ? [profile.emergencyNodeId] : []);
+  const emergencyTags = tagsForNodes(emergencyNodeIds);
+  const tieredPolicy = Boolean(profile.preferredNodeId || emergencyNodeIds.length);
+  const normalTags = tieredPolicy
+    ? tagsForNodes(profile.normalNodeIds?.length ? profile.normalNodeIds : profile.nodeIds)
+    : candidateOutbounds.map(outbound => outbound.tag);
 
   const {balancers,reentryRules,routeBalancerTag}=require('./lib_auto_select_health').healthPolicy(config,{id:Number(profile.id),preferredTags,normalTags,emergencyTags,unavailableTag});
   const baseRules = Array.isArray(config.routing?.rules) && config.routing.rules.length
@@ -19613,7 +19616,8 @@ function buildAutoSelectJsonConfig(profile, client, entries, subscriptionName) {
     strategy: tieredPolicy ? 'preferred-then-leastPing-then-emergency' : 'leastPing',
     preferredNodeId: profile.preferredNodeId || null,
     normalNodeIds: profile.normalNodeIds || profile.nodeIds,
-    emergencyNodeId: profile.emergencyNodeId || null,
+    emergencyNodeIds,
+    emergencyNodeId: emergencyNodeIds[0] || null,
     connectivityCheck: true,
     probeUrl: config.observatory.probeURL,
     noHealthyNode: 'block-until-healthy',

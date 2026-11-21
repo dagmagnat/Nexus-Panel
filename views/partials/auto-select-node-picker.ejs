@@ -1,0 +1,19 @@
+<label><%= label %></label>
+<div class="auto-select-node-grid compact" role="group" aria-label="<%= label %>">
+  <% nodes.forEach(node => {
+    const suffix = String(node.label_suffix || '').trim();
+    const baseName = node.country_name_ru || node.name;
+    const displayName = suffix ? (/^\d+$/.test(suffix) ? `${baseName}-${suffix}` : `${baseName} ${suffix}`) : baseName;
+  %>
+    <label class="auto-select-node-option">
+      <input type="checkbox" name="<%= fieldName %>" value="<%= node.id %>" <%= isNativeAwg(node) ? 'disabled' : '' %> <%= selectedIds.includes(Number(node.id)) ? 'checked' : '' %> />
+      <span>
+        <%- flagHtml(node.country_code, node.country_flag, node.country_name_ru || node.name, node.node_type) %>
+        <strong><%= displayName %></strong>
+        <small class="auto-member-transport"><%= connectionLabel(node) %> · #<%= node.id %></small>
+        <small><%= Number(node.enabled) === 1 ? 'включён' : 'отключён' %></small>
+      </span>
+    </label>
+  <% }) %>
+</div>
+<small class="hint"><%= hint %></small>

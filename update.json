@@ -1,11 +1,12 @@
 {
-  "version": "2.7.30",
-  "name": "Nexus Panel 2.7.30 — маршрутизация, онлайн-клиенты и кабинет",
+  "version": "2.7.31",
+  "name": "Nexus Panel 2.7.31 — основные и резервные узлы автовыбора",
   "repository": "https://github.com/dagmagnat/Nexus-Panel",
   "archive_url": "https://github.com/dagmagnat/Nexus-Panel/archive/refs/heads/main.zip",
   "archive": "Nexus-Panel-main.zip",
   "filename": "Nexus-Panel-main.zip",
   "notes": [
+    "Автовыбор: основные и резервные узлы, HTTPS-проверки и автоматический возврат к основным после восстановления.",
     "JSON-маршрутизация: группы узлов с независимыми списками и отдельным DNS.",
     "Клиенты в сети: названия узлов, фильтр и карточка поверх списка.",
     "Узлы: порядок выдачи, проверки доступности и Hysteria 2 в JSON-автовыборе.",

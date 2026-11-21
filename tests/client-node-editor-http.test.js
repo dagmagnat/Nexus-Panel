@@ -364,7 +364,7 @@ for (const kind of ['3xui-modern', '3xui-legacy', 'remna-3.3', 'remna-3.4']) {
           assert.match(await page.locator('#node-create-form .auto-member-transport').first().textContent(), /XHTTP|TCP/i);
           await page.goto(base + '/nodes?tab=add&auto_select_edit=1#auto-select-profile-1');
           await page.locator('#auto-select-profile-1 .auto-member-transport').first().waitFor({ state: 'visible' });
-          await page.locator('#auto-select-profile-1 .auto-select-node-grid').scrollIntoViewIfNeeded();
+          await page.locator('#auto-select-profile-1').getByRole('group', { name: 'Основные узлы', exact: true }).scrollIntoViewIfNeeded();
           assert.match(await page.locator('#auto-select-profile-1 .auto-member-transport').first().textContent(), /XHTTP|TCP/i);
           if (process.env.NEXUS_UI_SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.NEXUS_UI_SCREENSHOT_DIR, 'auto-members-' + width + '.png') });
         }
