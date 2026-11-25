@@ -59,7 +59,8 @@
     document.documentElement.dataset.colorMode = cleanMode;
     document.documentElement.dataset.colorTheme = cleanMode;
     if (persist) {
-      try { localStorage.setItem('agg.color-theme.v1', cleanMode); } catch (_) {}
+      const key = document.documentElement.dataset.interfaceTheme === 'coreui' ? 'nexus.coreui.color-mode' : 'agg.color-theme.v1';
+      try { localStorage.setItem(key, cleanMode); } catch (_) {}
     }
     document.querySelectorAll('[data-theme-toggle]').forEach(button => {
       const icon = button.querySelector('[data-theme-icon]');
@@ -552,7 +553,14 @@
     tabs.innerHTML = tabMeta.map(function(item, index){
       return '<button type="button" class="settings-tab-btn" role="tab" data-settings-tab="' + item.id + '">' + item.title + '</button>';
     }).join('');
+    if (document.documentElement.dataset.interfaceTheme === 'coreui') {
+      const layout = document.createElement('div');
+      layout.className = 'coreui-settings-layout';
+      grid.before(layout);
+      layout.append(tabs, grid);
+    } else {
     grid.parentNode.insertBefore(tabs, grid);
+    }
     function activate(id){
       tabMeta.forEach(function(item){
         const active = item.id === id;

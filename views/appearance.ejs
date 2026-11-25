@@ -1,0 +1,22 @@
+<%- include('partials_header', { pageTitle: 'Оформление аккаунта', activePage: 'appearance' }) %>
+<% if (saved) { %><p class="alert ok" role="status">Оформление сохранено.</p><% } %>
+<% if (invalid) { %><p class="alert err" role="alert">Выберите оформление из списка.</p><% } %>
+<section class="card">
+  <h2>Дизайн панели</h2>
+  <p class="muted">Выбранный дизайн применяется при входе в этот аккаунт на любом устройстве.</p>
+  <form method="post" action="/preferences/appearance" class="form-grid">
+    <div class="field">
+      <label for="account-interface-theme">Оформление</label>
+      <select id="account-interface-theme" name="interface_theme">
+        <option value="default" <%= !accountInterfaceTheme ? 'selected' : '' %>>По умолчанию в панели</option>
+        <option value="classic" <%= accountInterfaceTheme === 'classic' ? 'selected' : '' %>>Классический</option>
+        <option value="coreui" <%= accountInterfaceTheme === 'coreui' ? 'selected' : '' %>>CoreUI</option>
+        <option value="graphite_blue" <%= accountInterfaceTheme === 'graphite_blue' ? 'selected' : '' %>>Графит и синий</option>
+        <option value="mobile_lite" <%= accountInterfaceTheme === 'mobile_lite' ? 'selected' : '' %>>Mobile Lite</option>
+      </select>
+      <small class="hint">CoreUI меняет главный экран, список онлайн-клиентов, узлы, таблицы и формы. Светлый и тёмный режимы доступны в меню «Тема».</small>
+    </div>
+    <div class="field full actions"><button class="btn-main" type="submit">Применить</button></div>
+  </form>
+</section>
+<%- include('partials_footer') %>

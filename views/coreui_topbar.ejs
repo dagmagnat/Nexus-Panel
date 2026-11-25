@@ -1,0 +1,21 @@
+<header class="coreui-topbar">
+  <div class="coreui-topbar-start">
+    <button type="button" class="spectrum-icon-button coreui-rail-toggle" data-coreui-rail-toggle aria-label="Свернуть боковое меню" aria-controls="panelSidebar" aria-expanded="true"><%- icon('menu') %></button>
+    <form action="/clients" method="get" class="coreui-quick-search" role="search" aria-label="Поиск клиентов">
+      <input type="search" name="q" data-coreui-search aria-label="Имя, логин или ID клиента" placeholder="Найти клиента" required>
+      <button type="submit" class="spectrum-icon-button" title="Найти" aria-label="Найти"><%- icon('search') %></button>
+      <kbd>Ctrl /</kbd>
+    </form>
+  </div>
+  <div class="coreui-topbar-end">
+    <button type="button" class="spectrum-icon-button" data-theme-toggle aria-label="Переключить тему"><span data-theme-icon><%- icon('moon', 'theme-moon') %><%- icon('sun', 'theme-sun') %></span></button>
+    <details class="coreui-account-menu" data-coreui-account>
+      <summary><span class="coreui-user-initial" aria-hidden="true"><%= username.slice(0, 1).toUpperCase() %></span><span class="coreui-user-name"><%= username %></span></summary>
+      <div class="coreui-account-links">
+        <a href="/preferences/appearance"><%- icon('settings') %> Оформление аккаунта</a>
+        <a href="/settings"><%- icon('settings') %> Настройки панели</a>
+        <form method="post" action="/logout"><button type="submit"><%- icon('logout') %> Выйти</button></form>
+      </div>
+    </details>
+  </div>
+</header>

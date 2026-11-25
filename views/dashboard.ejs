@@ -93,6 +93,16 @@
 <% if (message) { %><div class="alert ok"><%= message %></div><% } %>
 <% if (error) { %><div class="alert err"><%= error %></div><% } %>
 
+<% const coreuiDashboard = typeof panelInterfaceTheme !== "undefined" && panelInterfaceTheme === "coreui"; %>
+<% if (coreuiDashboard) { %>
+  <%- include('coreui_overview', { stats, expiringSevenCount }) %>
+<section class="card coreui-inline-online" id="coreuiOnline" aria-labelledby="onlineClientsTitle">
+  <header class="coreui-card-header">
+    <div><h2 id="onlineClientsTitle">Клиенты в сети</h2><span class="muted">Недавняя активность на узлах</span></div>
+  </header>
+    <%- include('dashboard_online_list', { inline: true, withNodeFilter: true }) %>
+</section>
+<% } %>
 <div class="desktop-page-tabs" data-page-tabs="dashboard">
   <button type="button" class="is-active" data-tab-target="expiry"><span class="agg-tab-ico"><svg class="agg-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.4"/><path d="M12 7.6V12l2.9 1.9"/></svg></span>Сроки</button>
   <button type="button" data-tab-target="traffic"><span class="agg-tab-ico"><svg class="agg-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v9.5"/><path d="m7.5 10 4.5 4.5L16.5 10"/><path d="M5 19.5h14"/></svg></span>Скачано</button>
@@ -101,6 +111,7 @@
 
 
 <div class="grid dashboard-grid">
+  <% if (!coreuiDashboard) { %>
   <button type="button" class="stats-card span-6 dashboard-primary-stat dashboard-online-stat" id="openOnlineClientsFromStat">
     <div class="stats-label">Клиентов в сети</div>
     <div class="stats-number" id="dashboardOnlineNowCount">—</div>
@@ -111,6 +122,8 @@
     <div class="stats-number" id="dashboardExpiryNowCount"><%= expiringSevenCount %></div>
     <small>Открыть сроки 7 / 14 / 30 дней</small>
   </button>
+
+  <% } %>
 
   <section class="card span-12 dashboard-health-overview" aria-label="Состояние инфраструктуры">
     <div class="dashboard-health-item" id="dashboardNodesHealth" data-state="<%= initialNodeProblemCount ? 'error' : 'ok' %>">
@@ -131,8 +144,10 @@
   </section>
 
   <section class="dashboard-secondary-stats span-12" aria-label="Общая статистика">
+    <% if (!coreuiDashboard) { %>
     <span><small>Клиентов</small><strong><%= stats.clients %></strong></span>
     <span><small>Узлов</small><strong><%= stats.nodes %></strong></span>
+    <% } %>
     <span><small>Расход по узлам</small><a href="/node-traffic"><strong>Трафик →</strong></a></span>
     <span><small>Статистика клиентов</small><a href="/node-traffic"><strong>Период / сброс →</strong></a></span>
   </section>
@@ -159,6 +174,7 @@
       <span class="count-chip"><%= trafficReport ? trafficReport.periodLabel : '' %></span>
     </div>
 
+    <% if (!coreuiDashboard) { %>
     <div class="agg-chart-wrap" id="aggChartWrap" data-days="30">
       <div class="agg-chart-top">
         <span>Скачано по дням за 30 дней</span>
@@ -167,6 +183,7 @@
       <div id="aggChartBox"></div>
       <div class="agg-chart-empty" id="aggChartEmpty" hidden>Пока мало данных: график наполнится по мере накопления снимков трафика.</div>
     </div>
+    <% } %>
 
     <div class="traffic-toolbar">
       <form method="get" action="/dashboard" class="traffic-filter-form">
@@ -385,6 +402,7 @@
     #onlineNodeFilter { flex: 1; min-width: 0; max-width: none; }
   }
 </style>
+<% if (!coreuiDashboard) { %>
 <div id="onlineClientsModal" class="modal hidden" onclick="closeDashboardModal(event, 'onlineClientsModal')">
   <div class="modal-card editor-modal online-modal-card dashboard-scroll-modal" role="dialog" aria-modal="true" aria-labelledby="onlineClientsTitle" onclick="event.stopPropagation()">
     <button type="button" class="modal-close" aria-label="Закрыть" onclick="hideDashboardModal('onlineClientsModal')">×</button>
@@ -394,16 +412,11 @@
         <p class="muted">Remnawave показывает недавнюю активность. Для физической ноды — последний узел, который отметила панель.</p>
       </div>
     </div>
-    <div class="online-modal-controls">
-      <button type="button" class="btn-main" id="onlineRefreshBtn">Обновить</button>
-      <label class="online-auto-toggle"><input type="checkbox" id="onlineAutoRefresh" <%= Number(clientAutoRefreshSeconds) > 0 ? 'checked' : '' %> /><span>Автообновление</span></label>
-      <label class="online-auto-interval"><span>Каждые</span><select id="onlineRefreshInterval"><option value="10" <%= Number(clientAutoRefreshSeconds) === 10 ? 'selected' : '' %>>10 сек.</option><option value="30" <%= Number(clientAutoRefreshSeconds) === 30 ? 'selected' : '' %>>30 сек.</option><option value="60" <%= Number(clientAutoRefreshSeconds) === 60 ? 'selected' : '' %>>60 сек.</option></select></label>
-      <label class="online-node-filter"><span>Узел</span><select id="onlineNodeFilter"><option value="">Все узлы</option></select></label>
-    </div>
-    <div id="onlineClientsStatus" class="hint">Загружаю онлайн-клиентов…</div>
-    <div id="onlineClientsList" class="dashboard-client-list online-list"></div>
+    <%- include('dashboard_online_list', { inline: false, withNodeFilter: true }) %>
   </div>
 </div>
+
+<% } %>
 
 <div id="onlineClientDetailModal" class="modal hidden online-client-detail-modal" onclick="closeDashboardModal(event, 'onlineClientDetailModal')">
   <div class="modal-card editor-modal online-client-detail-card" onclick="event.stopPropagation()">
@@ -764,6 +777,7 @@ function renderOnlineClients(data) {
       if (node.id != null) nodeMap.set(String(node.id), onlineNodeName(node));
     }
   }
+  const coreui = document.documentElement.dataset.interfaceTheme === 'coreui';
   const selected = filter.value;
   const options = [...nodeMap].sort(([, a], [, b]) => a.localeCompare(b, 'ru'));
   if (selected && !nodeMap.has(selected)) options.push([selected, filter.selectedOptions[0].textContent]);
@@ -781,14 +795,19 @@ function renderOnlineClients(data) {
     const comment = client.comment || (client.display_name !== login ? client.display_name : '');
     const key = String(client.id || client.clientId || client.client_id || '');
     const until = onlineClientUntil(client);
+    const expiry = until === '∞' ? 'Бессрочно' : escapeHtml(until);
+    const avatar = coreui
+      ? '<span class="coreui-online-avatar" aria-hidden="true">' + escapeHtml(String(login).trim().slice(0, 1).toUpperCase()) + '</span>'
+      : '<span class="dashboard-online-dot" aria-hidden="true"></span>';
     return `
       <article class="dashboard-online-entry">
         <div class="dashboard-online-identity">
-          <span class="dashboard-online-dot" aria-hidden="true"></span>
+          ${avatar}
           <div><strong>${escapeHtml(login)}</strong>${comment ? `<small class="muted">${escapeHtml(comment)}</small>` : ''}
-          <small class="muted">${until === '∞' ? 'Бессрочно' : 'До ' + escapeHtml(until)}</small></div>
+          ${coreui ? '' : '<small class="muted">' + (until === '∞' ? expiry : 'До ' + expiry) + '</small>'}</div>
         </div>
         <div class="dashboard-online-nodes" aria-label="Активные узлы">${onlineNodePreviewHtml(client, key, expanded.has(key))}</div>
+        ${coreui ? '<div class="coreui-online-expiry"><span>Доступ до</span>' + expiry + '</div>' : ''}
         <button type="button" class="btn-secondary dashboard-online-action" ${key ? `data-open-online-client="${escapeHtml(key)}" data-online-focus="${escapeHtml(key)}"` : `data-online-client-detail="${escapeAttrJson(client)}"`}>Подробнее</button>
       </article>`;
   }).join('') || '<div class="empty-state">По текущему фильтру нет клиентов с активностью.</div>';
@@ -1037,6 +1056,11 @@ function configureOnlineClientsAutoRefresh() {
 }
 
 function openOnlineClientsWorkspace() {
+  const inline = document.getElementById('coreuiOnline');
+  if (inline) {
+    inline.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return;
+  }
   openDashboardModal('onlineClientsModal');
   refreshOnlineClients();
 }
@@ -1370,6 +1394,7 @@ function normalizeDashboardSearchText(value) {
 })();
 
 (function aggTrafficChart(){
+  if (document.querySelector('[data-coreui-traffic]')) return;
   const wrap = document.getElementById('aggChartWrap');
   const box = document.getElementById('aggChartBox');
   const totalEl = document.getElementById('aggChartTotal');

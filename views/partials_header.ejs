@@ -1,27 +1,34 @@
+<%
+  const interfaceTheme = typeof panelInterfaceTheme === 'undefined' ? '' : panelInterfaceTheme;
+  const graphiteTheme = interfaceTheme === 'graphite_blue';
+  const coreuiTheme = interfaceTheme === 'coreui';
+-%>
 <!doctype html>
-<html lang="ru">
+<html lang="ru"<% if (graphiteTheme) { %> data-interface-theme="graphite-blue"<% } else if (coreuiTheme) { %> data-interface-theme="coreui"<% } %>>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="csrf-token" content="<%= csrfToken %>">
   <meta name="nexus-workspace" content="<%= typeof workspaceId !== 'undefined' ? workspaceId : 'main' %>">
-  <meta name="theme-color" content="#070b17">
+  <meta name="theme-color" content="<%= coreuiTheme ? '#edf0f5' : graphiteTheme ? '#15191f' : '#070b17' %>">
   <title><%= typeof pageTitle !== 'undefined' ? pageTitle : 'Nexus Panel' %> — Nexus Panel</title>
-  <link rel="icon" href="/favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" sizes="192x192" href="/img/nexus-icon-192.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/img/nexus-panel-tab-16.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/img/nexus-panel-tab-32.png">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="manifest" href="/site.webmanifest?v=271">
   <script>
   (function(){
-    try {
-      const saved = localStorage.getItem('agg.color-theme.v1');
-      const mode = saved === 'light' ? 'light' : 'dark';
-      document.documentElement.dataset.colorMode = mode;
-      document.documentElement.dataset.colorTheme = mode;
-    } catch (_) {
-      document.documentElement.dataset.colorMode = 'dark';
-      document.documentElement.dataset.colorTheme = 'dark';
+    const { dataset } = document.documentElement;
+    let mode = dataset.interfaceTheme === 'coreui' ? 'light' : 'dark';
+    if (dataset.interfaceTheme !== 'graphite-blue') {
+      try {
+        const key = dataset.interfaceTheme === 'coreui' ? 'nexus.coreui.color-mode' : 'agg.color-theme.v1';
+        const saved = localStorage.getItem(key);
+        if (saved === 'light' || saved === 'dark') mode = saved;
+      } catch (_) {}
     }
+    dataset.colorMode = mode;
+    dataset.colorTheme = mode;
   })();
   (function(){
     document.documentElement.classList.add('ui-order-preload');
@@ -38,6 +45,8 @@
   <link rel="stylesheet" href="/css/management-layout.css?v=1" />
   <script src="/js/management-layout.js?v=1" defer></script>
   <script src="/js/security.js?v=3"></script>
+  <% if (graphiteTheme) { %><link rel="stylesheet" href="/css/graphite-blue.css?v=1" /><% } %>
+  <% if (coreuiTheme) { %><link rel="stylesheet" href="/css/coreui.css?v=6" /><script src="/js/coreui-layout.js?v=1" defer></script><% } %>
   <% if (typeof isDevelopment !== 'undefined' && isDevelopment) { %><script src="/js/dev-inspector.js?v=1" defer></script><% } %>
 </head>
 <%
@@ -54,13 +63,17 @@
     moon: '<path d="M20 14a8 8 0 1 1-10-10 6.5 6.5 0 0 0 10 10Z"/>',
     sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
     logout: '<path d="M9 21H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3m6 13 4-4-4-4m4 4H9"/>',
+    billing: '<rect x="3.5" y="6" width="17" height="12" rx="2"/><path d="M4 10h16M7 14.5h3"/>',
+    access: '<path d="M12 3 5 6v5c0 4 2.8 7.7 7 10 4.2-2.3 7-6 7-10V6l-7-3Z"/><path d="m9.4 12 1.6 1.7 3.6-3.7"/>',
+    preferences: '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 9h8M8 15h8"/><circle cx="10" cy="9" r="1.5"/><circle cx="14" cy="15" r="1.5"/>',
+    search: '<circle cx="10.5" cy="10.5" r="5.8"/><path d="m15 15 4 4"/>',
     menu: '<path d="M4 7h16M4 12h16M4 17h16"/>'
   };
   function nexusIcon(name, cls) {
     return '<svg class="nexus-icon' + (cls ? ' ' + cls : '') + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (NEXUS_ICONS[name] || '') + '</svg>';
   }
   const currentPath = typeof activePage !== 'undefined' ? activePage : '';
-  const moreNavActive = ['more', 'subscription-billing', 'settings', 'access', 'preferences', 'redirects', 'diagnostics', 'telegram_bot', 'nexus_nodes'].includes(currentPath);
+  const moreNavActive = ['more', 'appearance', 'subscription-billing', 'settings', 'access', 'preferences', 'redirects', 'diagnostics', 'telegram_bot', 'nexus_nodes'].includes(currentPath);
   const sectionLabels = {
     dashboard: 'Обзор', nodes: 'Инфраструктура', clients: 'Доступ',
     routing: 'Сеть', redirects: 'Сеть', diagnostics: 'Система', telegram_bot: 'Интеграции',
@@ -70,7 +83,7 @@
 <body class="nexus-spectrum theme-classic page-<%= currentPath || 'app' %> clients-view-<%= typeof clientsViewMode !== 'undefined' ? clientsViewMode : 'modern' %> mobile-nav-<%= typeof panelMobileNavMode !== 'undefined' ? panelMobileNavMode : 'bottom' %> mobile-size-<%= typeof panelMobileUiScale !== 'undefined' ? panelMobileUiScale : 'compact' %>">
   <div class="spectrum-mobilebar">
     <button class="mobile-menu-toggle spectrum-icon-button" type="button" aria-label="Открыть меню" aria-controls="panelSidebar" aria-expanded="false"><%- nexusIcon('menu') %></button>
-    <a class="spectrum-mobile-brand" href="/dashboard"><img src="/img/nexus-logo-192.png" alt=""><span style="display:flex;flex-direction:column;min-width:0">Nexus</span></a>
+    <a class="spectrum-mobile-brand" href="/dashboard"><img src="/img/nexus-panel-mark.png" alt=""><span style="display:flex;flex-direction:column;min-width:0">Nexus</span></a>
     <div class="spectrum-mobile-title"><strong><%= typeof pageTitle !== 'undefined' ? pageTitle : 'Панель' %></strong></div>
     <button type="button" class="theme-toggle spectrum-icon-button" data-theme-toggle aria-label="Переключить тему"><span data-theme-icon><%- nexusIcon('moon', 'theme-moon') %><%- nexusIcon('sun', 'theme-sun') %></span></button>
   </div>
@@ -79,8 +92,8 @@
   <div class="spectrum-shell layout">
     <aside class="spectrum-sidebar sidebar" id="panelSidebar">
       <a class="spectrum-brand brand" href="/dashboard" aria-label="Nexus Panel — главная">
-        <span class="spectrum-brand-mark brand-shield"><img src="/img/nexus-logo-192.png" alt=""></span>
-        <span class="spectrum-brand-copy brand-text"><strong>Nexus Panel</strong><small>Spectrum Clear</small></span>
+        <img src="/img/nexus-panel-mark.png" width="40" height="40" alt="">
+        <span class="spectrum-brand-copy brand-text"><strong>Nexus Panel</strong></span>
       </a>
 
       <nav class="spectrum-nav side-nav" aria-label="Основная навигация">
@@ -92,18 +105,18 @@
           <a href="/clients" class="<%= currentPath === 'clients' ? 'active' : '' %>"><span class="nav-icon"><%- nexusIcon('clients') %></span><span>Пользователи</span></a>
         </div>
         <div class="spectrum-nav-group">
-          <span class="spectrum-nav-label">Сеть</span>
+          <% if (coreuiTheme) { %><button type="button" class="coreui-group-toggle" data-coreui-group-toggle aria-expanded="true"><span>Сеть</span><span aria-hidden="true">⌄</span></button><% } else { %><span class="spectrum-nav-label">Сеть</span><% } %>
           <a href="/routing" class="<%= currentPath === 'routing' ? 'active' : '' %>"><span class="nav-icon"><%- nexusIcon('routing') %></span><span>Маршрутизация</span></a>
           <a href="/redirects" class="<%= currentPath === 'redirects' ? 'active' : '' %>"><span class="nav-icon"><%- nexusIcon('redirects') %></span><span>Перенаправление</span></a>
         </div>
         <div class="spectrum-nav-group">
-          <span class="spectrum-nav-label">Система</span>
+          <% if (coreuiTheme) { %><button type="button" class="coreui-group-toggle" data-coreui-group-toggle aria-expanded="true"><span>Система</span><span aria-hidden="true">⌄</span></button><% } else { %><span class="spectrum-nav-label">Система</span><% } %>
           <a href="/diagnostics" class="<%= currentPath === 'diagnostics' ? 'active' : '' %>"><span class="nav-icon"><%- nexusIcon('diagnostics') %></span><span>Диагностика</span></a>
           <a href="/telegram-bot" class="<%= currentPath === 'telegram_bot' ? 'active' : '' %>"><span class="nav-icon"><%- nexusIcon('telegram') %></span><span>Telegram</span></a>
-          <a href="/subscription-billing" class="<%= currentPath === 'subscription-billing' ? 'active' : '' %>"><span class="nav-icon"><%- nexusIcon('settings') %></span><span>Оплата</span></a>
+          <a href="/subscription-billing" class="<%= currentPath === 'subscription-billing' ? 'active' : '' %>"><span class="nav-icon"><%- nexusIcon(coreuiTheme ? 'billing' : 'settings') %></span><span>Оплата</span></a>
           <a href="/settings" class="<%= currentPath === 'settings' ? 'active' : '' %>"><span class="nav-icon"><%- nexusIcon('settings') %></span><span>Настройки</span></a>
-          <a href="/access" class="<%= currentPath === 'access' ? 'active' : '' %>" <%- currentPath === 'access' ? 'aria-current="page"' : '' %>><span class="nav-icon"><%- nexusIcon('clients') %></span><span>Пользователи и доступ</span></a>
-          <a href="/preferences" class="<%= currentPath === 'preferences' ? 'active' : '' %>" <%- currentPath === 'preferences' ? 'aria-current="page"' : '' %>><span class="nav-icon"><%- nexusIcon('settings') %></span><span>Профиль настроек</span></a>
+          <a href="/access" class="<%= currentPath === 'access' ? 'active' : '' %>" <%- currentPath === 'access' ? 'aria-current="page"' : '' %>><span class="nav-icon"><%- nexusIcon(coreuiTheme ? 'access' : 'clients') %></span><span>Пользователи и доступ</span></a>
+          <a href="/preferences" class="<%= currentPath === 'preferences' ? 'active' : '' %>" <%- currentPath === 'preferences' ? 'aria-current="page"' : '' %>><span class="nav-icon"><%- nexusIcon(coreuiTheme ? 'preferences' : 'settings') %></span><span>Профиль настроек</span></a>
         </div>
       </nav>
 
@@ -111,13 +124,16 @@
         <button type="button" class="sidebar-order-button spectrum-order-button" data-open-order-modal>Настроить порядок</button>
         <div class="sidebar-user-card spectrum-user-card">
           <div class="sidebar-user-avatar"><%= String(typeof currentAdminUsername !== 'undefined' && currentAdminUsername ? currentAdminUsername : 'A').slice(0,1).toUpperCase() %></div>
-          <div class="sidebar-user-meta"><strong><%= typeof currentAdminUsername !== 'undefined' && currentAdminUsername ? currentAdminUsername : 'admin' %></strong><small>Панель управления</small></div>
+          <a class="sidebar-user-meta" href="/preferences/appearance" title="Оформление аккаунта"><strong><%= typeof currentAdminUsername !== 'undefined' && currentAdminUsername ? currentAdminUsername : 'admin' %></strong><small>Панель управления</small></a>
           <form class="logout-form sidebar-logout" method="post" action="/logout"><button type="submit" class="spectrum-icon-button" title="Выйти"><%- nexusIcon('logout') %></button></form>
         </div>
       </div>
     </aside>
 
     <main class="spectrum-main main <%= typeof hidePageHeader !== 'undefined' && hidePageHeader ? 'main-compact-header' : '' %>">
+      <% if (coreuiTheme) { %>
+        <%- include('coreui_topbar', { icon: nexusIcon, username: typeof currentAdminUsername !== 'undefined' && currentAdminUsername ? currentAdminUsername : 'admin' }) %>
+      <% } else { %>
       <header class="spectrum-pagebar topbar">
         <div class="spectrum-page-heading page-intro">
           <span class="spectrum-eyebrow"><%= sectionLabels[currentPath] || 'Nexus Panel' %></span>
@@ -128,7 +144,14 @@
           <button type="button" class="theme-toggle spectrum-theme-button" data-theme-toggle aria-label="Переключить тему"><span data-theme-icon><%- nexusIcon('moon', 'theme-moon') %><%- nexusIcon('sun', 'theme-sun') %></span><span class="theme-label">Тема</span></button>
         </div>
       </header>
+      <% } %>
       <div class="spectrum-page-content">
+        <% if (coreuiTheme) { %>
+          <div class="coreui-page-title">
+            <h1><%= typeof pageTitle !== "undefined" ? pageTitle : "Nexus Panel" %></h1>
+            <nav aria-label="Путь"><a href="/dashboard">Панель</a><span aria-hidden="true">/</span><span aria-current="page"><%= typeof pageTitle !== "undefined" ? pageTitle : "Nexus Panel" %></span></nav>
+          </div>
+        <% } %>
 
   <nav class="mobile-bottom-nav spectrum-bottom-nav" aria-label="Быстрая навигация">
     <a href="/dashboard" class="<%= currentPath === 'dashboard' ? 'active' : '' %>"><span class="bn-ico"><%- nexusIcon('dashboard') %></span><em>Главная</em></a>

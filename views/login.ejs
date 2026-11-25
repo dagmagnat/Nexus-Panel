@@ -1,48 +1,52 @@
+<% const coreuiLogin = typeof defaultPanelInterfaceTheme !== 'undefined' && defaultPanelInterfaceTheme === 'coreui'; -%>
 <!doctype html>
-<html lang="ru">
+<html lang="ru"<% if (coreuiLogin) { %> data-interface-theme="coreui"<% } %>>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="csrf-token" content="<%= csrfToken %>">
-  <meta name="theme-color" content="#070b16">
+  <meta name="theme-color" content="<%= coreuiLogin ? '#edf0f5' : '#070b16' %>">
   <title>Вход — Nexus Panel</title>
-  <link rel="icon" href="/favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" sizes="192x192" href="/img/nexus-icon-192.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/img/nexus-panel-tab-16.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/img/nexus-panel-tab-32.png">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="manifest" href="/site.webmanifest?v=271">
   <script>
   (function(){
+    const { dataset } = document.documentElement;
+    const coreui = dataset.interfaceTheme === 'coreui';
+    let mode = coreui ? 'light' : 'dark';
     try {
-      const saved = localStorage.getItem('agg.color-theme.v1');
-      const mode = saved === 'light' ? 'light' : 'dark';
-      document.documentElement.dataset.colorMode = mode;
-      document.documentElement.dataset.colorTheme = mode;
-    } catch (_) {
-      document.documentElement.dataset.colorMode = 'dark';
-      document.documentElement.dataset.colorTheme = 'dark';
-    }
+      const key = coreui ? 'nexus.coreui.color-mode' : 'agg.color-theme.v1';
+      const saved = localStorage.getItem(key);
+      if (saved === 'light' || saved === 'dark') mode = saved;
+    } catch (_) {}
+    dataset.colorMode = mode;
+    dataset.colorTheme = mode;
+    if (coreui && mode === 'dark') document.querySelector('meta[name="theme-color"]').content = '#191b26';
   })();
   </script>
   <link rel="stylesheet" href="/css/spectrum-clear.css?v=270" />
+  <% if (coreuiLogin) { %><link rel="stylesheet" href="/css/coreui.css?v=6" /><% } %>
   <script src="/js/security.js?v=1"></script>
   <% if (typeof isDevelopment !== 'undefined' && isDevelopment) { %><script src="/js/dev-inspector.js?v=1" defer></script><% } %>
 </head>
 <body class="nexus-spectrum login-page">
   <main class="login-wrap">
     <section class="card login-card">
-      <div class="login-brand"><img class="login-brand-logo" src="/img/nexus-logo-192.png" alt="Логотип Nexus Panel">Nexus <span>Panel</span><small>Spectrum Clear</small></div>
+      <div class="login-brand"><img class="login-brand-logo" src="/img/nexus-panel-mark.png" alt=""><% if (coreuiLogin) { %><span>Nexus Panel</span><% } else { %>Nexus <span>Panel</span><% } %></div>
       <h1>Вход в панель</h1>
 
       <% if (error) { %>
-        <div class="alert err"><%= error %></div>
+        <div class="alert err" role="alert"><%= error %></div>
       <% } %>
 
       <form method="post" action="/login" class="login-form">
-        <label>Логин</label>
-        <input name="username" required autocomplete="username" />
+        <label for="login-username">Логин</label>
+        <input id="login-username" name="username" required autocomplete="username" />
 
-        <label>Пароль</label>
-        <input name="password" type="password" required autocomplete="current-password" />
+        <label for="login-password">Пароль</label>
+        <input id="login-password" name="password" type="password" required autocomplete="current-password" />
 
         <button type="submit" class="login-submit">Войти</button>
       </form>

@@ -1,4 +1,5 @@
 <%- include('partials_header', { pageTitle: 'Профиль настроек', pageSubtitle: 'Перенос переключателей и значений по умолчанию без данных клиентов', activePage: 'preferences' }) %>
+<section class="card" style="margin-bottom:16px"><h2>Оформление аккаунта</h2><a class="btn" href="/preferences/appearance">Выбрать дизайн панели</a></section>
 <section class="card" style="margin-bottom:16px"><h2>Название VPN этого пространства</h2><p class="muted">Не включается в переносимый профиль и не меняется при его загрузке.</p>
 <form action="/preferences/name" method="post" class="management-inline-form"><input name="subscription_name" value="<%= vpnName %>" maxlength="100" required aria-label="Название VPN"><button class="btn" type="submit">Сохранить название</button></form></section>
 <section class="card"><h2>Значения для новых клиентов</h2>

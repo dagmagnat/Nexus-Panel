@@ -5,6 +5,7 @@
 const RESERVED = new Set(('access api auto-select-profiles backup clients css dashboard diagnostics favicon.ico flags happ happ-routing happ-routing-json healthz hiddify img js json login logout mobile-login more node-traffic nodes open operations preferences qr redirects routing s settings site.webmanifest sub sub-plain telegram vpn').split(' '));
 RESERVED.add('subscription-migration');
 RESERVED.add('subscription-billing');
+RESERVED.add('telegram-bot');
 const CLEAN_SLUG = /^[A-Za-z0-9_-]{12,128}$/;
 
 function cleanSlug(slug) {

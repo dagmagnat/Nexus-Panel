@@ -1,0 +1,1372 @@
+@font-face {
+  font-family: "Nexus Inter";
+  src: url("/fonts/InterVariable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+html[data-interface-theme="coreui"] {
+  color-scheme: light;
+  --font-ui: "Nexus Inter", "Segoe UI", "Nexus Flags", sans-serif;
+  --bg: #edf0f5;
+  --bg-elevated: #f5f6f9;
+  --surface: #fff;
+  --surface-raised: #f7f8fb;
+  --surface-strong: #e9ecf2;
+  --surface-soft: #f5f6fa;
+  --surface-hover: #eeebff;
+  --input: #fff;
+  --line: #d4d9e3;
+  --line-strong: #b7bfce;
+  --text: #292e3e;
+  --text-strong: #1f2535;
+  --muted: #586176;
+  --muted-strong: #41495d;
+  --blue: #4d36b6;
+  --blue-strong: #3b2994;
+  --cyan: #2e607e;
+  --violet: var(--blue);
+  --magenta: var(--blue);
+  --info-soft: #eeebff;
+  --green: #176546;
+  --green-soft: #e1f4ea;
+  --red: #a12841;
+  --red-soft: #fceaf0;
+  --amber: #815408;
+  --amber-soft: #fff3d9;
+  --brand-gradient: var(--blue);
+  --brand-surface: var(--surface-raised);
+  --shadow-sm: none;
+  --shadow-brand: none;
+  --radius-sm: 7px;
+  --radius-md: 8px;
+  --radius-lg: 9px;
+  --radius-xl: 12px;
+  --sidebar-width: 232px;
+  --coreui-rail: #202536;
+  --coreui-rail-text: #c4cadb;
+  --coreui-rail-active: #3b3e61;
+  --coreui-rail-border: #60677b;
+  --coreui-action: #4b36ad;
+  --coreui-action-hover: #3d2b93;
+  --coreui-action-label: #fff;
+}
+
+html[data-interface-theme="coreui"][data-color-mode="dark"] {
+  color-scheme: dark;
+  --bg: #191b26;
+  --bg-elevated: #202331;
+  --surface: #242735;
+  --surface-raised: #2b2e3e;
+  --surface-strong: #343749;
+  --surface-soft: #292c3a;
+  --surface-hover: #34304f;
+  --input: #1d1f2b;
+  --line: #3d4154;
+  --line-strong: #5c6279;
+  --text: #ebedf6;
+  --text-strong: #fff;
+  --muted: #b7bbd1;
+  --muted-strong: #d5d8e7;
+  --blue-strong: #ac9dff;
+  --cyan: #a1c0f4;
+  --info-soft: #383051;
+  --green: #8bddb3;
+  --green-soft: #254538;
+  --red: #ffadbc;
+  --red-soft: #502d40;
+  --amber: #ffcf87;
+  --amber-soft: #4c3c28;
+  --coreui-rail: #151723;
+}
+
+[data-interface-theme="coreui"] body {
+  background: var(--bg);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+[data-interface-theme="coreui"] .login-page {
+  padding: clamp(16px, 5vw, 48px);
+  background: var(--bg);
+}
+
+[data-interface-theme="coreui"] .login-wrap {
+  width: min(420px, 100%);
+}
+
+[data-interface-theme="coreui"] .login-card {
+  padding: clamp(22px, 5vw, 32px);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: 0 8px 28px rgb(19 29 49 / .07);
+}
+
+[data-interface-theme="coreui"] .login-brand {
+  gap: 10px;
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--line);
+  font-size: 15px;
+  font-weight: 650;
+}
+
+[data-interface-theme="coreui"] .login-brand span {
+  color: inherit;
+}
+
+[data-interface-theme="coreui"] .login-brand-logo {
+  width: 38px;
+  height: 38px;
+  filter: none;
+}
+
+[data-interface-theme="coreui"] .login-card h1 {
+  margin: 0 0 20px;
+  font-size: clamp(23px, 5vw, 27px);
+  font-weight: 650;
+}
+
+[data-interface-theme="coreui"] .login-form {
+  gap: 7px;
+}
+
+[data-interface-theme="coreui"] .login-form label {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 550;
+}
+
+[data-interface-theme="coreui"] .login-form input {
+  min-height: 43px;
+  margin-bottom: 7px;
+  border: 1px solid var(--line-strong);
+  background: var(--input);
+}
+
+[data-interface-theme="coreui"] .login-form input:autofill {
+  box-shadow: 0 0 0 1000px var(--input) inset;
+  -webkit-text-fill-color: var(--text);
+}
+
+[data-interface-theme="coreui"] .login-submit {
+  border-color: transparent;
+  background: var(--coreui-action);
+  color: var(--coreui-action-label);
+  box-shadow: none;
+}
+
+[data-interface-theme="coreui"] .login-submit:is(:hover, :focus-visible) {
+  background: var(--coreui-action-hover);
+  filter: none;
+  transform: none;
+}
+
+[data-interface-theme="coreui"] .spectrum-sidebar {
+  color: var(--coreui-rail-text);
+  background: var(--coreui-rail);
+  border-color: var(--coreui-rail);
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+[data-interface-theme="coreui"] .spectrum-sidebar :is(
+  .spectrum-brand, .spectrum-nav-label, .spectrum-nav a, .spectrum-order-button,
+  .spectrum-icon-button, .sidebar-user-meta small
+) {
+  color: var(--coreui-rail-text);
+}
+
+[data-interface-theme="coreui"] .spectrum-sidebar :is(.spectrum-brand strong, .sidebar-user-meta strong) {
+  color: #fff;
+}
+
+[data-interface-theme="coreui"] .spectrum-sidebar :is(
+  .spectrum-brand:hover, .spectrum-nav a:hover, .spectrum-nav a.active,
+  .spectrum-order-button:hover, .spectrum-icon-button:hover
+) {
+  color: #fff;
+  background: var(--coreui-rail-active);
+  box-shadow: none;
+  transform: none;
+}
+
+[data-interface-theme="coreui"] .spectrum-sidebar .spectrum-nav a.active {
+  border-color: transparent;
+}
+
+[data-interface-theme="coreui"] .spectrum-sidebar .spectrum-nav a .nav-icon {
+  color: inherit;
+  filter: none;
+}
+
+[data-interface-theme="coreui"] .spectrum-sidebar :is(.spectrum-user-card, .spectrum-icon-button) {
+  background: transparent;
+  border-color: var(--coreui-rail-border);
+}
+
+[data-interface-theme="coreui"] .spectrum-sidebar :is(.spectrum-brand-copy, .sidebar-user-meta) {
+  flex-direction: column;
+  gap: 4px;
+}
+
+[data-interface-theme="coreui"] :is(.spectrum-pagebar, .spectrum-mobilebar) {
+  background: var(--surface);
+  border-bottom-color: var(--line);
+}
+
+[data-interface-theme="coreui"] .spectrum-page-heading h1 {
+  font-weight: 650;
+}
+
+[data-interface-theme="coreui"] :is(.card, .stats-card, .node-detail-card, .client-quick-card) {
+  background: var(--surface);
+}
+
+[data-interface-theme="coreui"] :is(.card, .stats-card)::before,
+[data-interface-theme="coreui"] .stats-card::after {
+  content: none;
+}
+
+[data-interface-theme="coreui"] :is(
+  button.primary, .btn-main, .spectrum-quick-action, a.link-btn:not(.secondary, .outline),
+  button.icon-btn:not(.secondary, .outline, .danger-lite)
+):not(.danger, .btn-danger, .danger-lite) {
+  color: var(--coreui-action-label);
+  background: var(--coreui-action);
+  border-color: transparent;
+  box-shadow: none;
+}
+
+[data-interface-theme="coreui"] :is(
+  button.primary, .btn-main, .spectrum-quick-action, a.link-btn:not(.secondary, .outline),
+  button.icon-btn:not(.secondary, .outline, .danger-lite)
+):not(.danger, .btn-danger, .danger-lite):is(:hover, :focus-visible) {
+  color: var(--coreui-action-label);
+  background: var(--coreui-action-hover);
+}
+
+[data-interface-theme="coreui"] .dashboard-secondary-stats {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+[data-interface-theme="coreui"] .agg-chart-wrap {
+  background: var(--surface);
+  border-color: var(--line);
+  box-shadow: none;
+}
+
+[data-interface-theme="coreui"] .coreui-inline-online {
+  --coreui-online-grid: minmax(0, 1.1fr) minmax(0, 1.4fr) minmax(95px, .75fr) 94px;
+}
+
+[data-interface-theme="coreui"] :is(.coreui-online-columns, #onlineClientsList .dashboard-online-entry) {
+  display: grid;
+  grid-template-columns: var(--coreui-online-grid);
+  gap: 10px;
+  align-items: center;
+  padding: 9px 12px;
+}
+
+[data-interface-theme="coreui"] .coreui-online-columns {
+  color: var(--muted-strong);
+  background: var(--surface-strong);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  font-weight: 650;
+  font-size: .78rem;
+}
+
+[data-interface-theme="coreui"] #onlineClientsList {
+  gap: 0;
+  margin-top: 0;
+  padding: 0;
+  border-inline: 1px solid var(--line);
+}
+
+[data-interface-theme="coreui"] #onlineClientsList .dashboard-online-entry {
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--surface);
+}
+
+[data-interface-theme="coreui"] #onlineClientsList .dashboard-online-entry:nth-child(even) {
+  background: var(--surface-soft);
+}
+
+[data-interface-theme="coreui"] .dashboard-online-identity {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+[data-interface-theme="coreui"] .dashboard-online-identity > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+[data-interface-theme="coreui"] .dashboard-online-identity :is(strong, small) {
+  display: block;
+}
+
+[data-interface-theme="coreui"] .dashboard-online-nodes {
+  min-width: 0;
+}
+
+[data-interface-theme="coreui"] .coreui-online-avatar {
+  position: relative;
+  display: grid;
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--blue-strong);
+  background: var(--info-soft);
+  font-weight: 700;
+}
+
+[data-interface-theme="coreui"] .coreui-online-avatar::after {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 8px;
+  height: 8px;
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+  background: #249765;
+  content: "";
+}
+
+[data-interface-theme="coreui"] .coreui-online-expiry {
+  color: var(--muted-strong);
+  font-size: .83rem;
+}
+
+[data-interface-theme="coreui"] .coreui-online-expiry > span {
+  display: none;
+}
+
+[data-interface-theme="coreui"] #onlineClientsList .dashboard-online-action {
+  min-width: 0;
+  justify-content: center;
+}
+
+[data-interface-theme="coreui"] .nodes-modern-card.is-active {
+  background: var(--bg);
+  border-color: transparent;
+}
+
+[data-interface-theme="coreui"] .nodes-modern-head {
+  margin-bottom: 12px;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+[data-interface-theme="coreui"] .nodes-modern-layout {
+  border-top: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+[data-interface-theme="coreui"] .nodes-list-header,
+[data-interface-theme="coreui"] #nodesOrderBody > .node-list-row:nth-child(even) {
+  background: var(--surface-soft);
+}
+
+[data-interface-theme="coreui"] #nodesOrderBody > .node-list-row.is-selected {
+  background: var(--info-soft);
+  box-shadow: inset 3px 0 var(--blue);
+}
+
+[data-interface-theme="coreui"] :is(.nodes-list-header, .clients-table th) {
+  color: var(--muted-strong);
+  text-transform: none;
+  letter-spacing: normal;
+  background: var(--surface-strong);
+}
+
+[data-interface-theme="coreui"] .node-detail-title-row {
+  padding-block: 8px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+[data-interface-theme="coreui"] .clients-table > tbody > tr:nth-child(even) {
+  background: var(--surface-soft);
+}
+
+[data-interface-theme="coreui"] .clients-table > tbody > tr:hover {
+  background: var(--surface-hover);
+}
+
+[data-interface-theme="coreui"] #createClientModal .modal-card {
+  border-top: 4px solid var(--blue);
+}
+
+[data-interface-theme="coreui"] #createClientModal .modal-actions {
+  padding: 12px;
+  background: var(--bg-elevated);
+  border-top: 1px solid var(--line);
+}
+
+@media (min-width: 761px) {
+  [data-interface-theme="coreui"] :is(#clientQuickModal, #onlineClientDetailModal, #createClientModal).modal {
+    justify-items: end;
+    padding: 0;
+  }
+
+  [data-interface-theme="coreui"] :is(#clientQuickModal, #onlineClientDetailModal, #createClientModal) .modal-card {
+    width: min(640px, 100vw);
+    max-height: 100dvh;
+    height: 100dvh;
+    margin: 0;
+    border-radius: 0;
+  }
+}
+
+@media (max-width: 640px) {
+  [data-interface-theme="coreui"] .coreui-online-columns {
+    display: none;
+  }
+
+  [data-interface-theme="coreui"] #onlineClientsList .dashboard-online-entry {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 6px;
+  }
+
+  [data-interface-theme="coreui"] #onlineClientsList .dashboard-online-nodes {
+    padding: 0;
+  }
+
+  [data-interface-theme="coreui"] .coreui-online-expiry {
+    grid-column: 1 / -1;
+  }
+
+  [data-interface-theme="coreui"] .coreui-online-expiry > span {
+    display: inline;
+    margin-inline-end: 6px;
+  }
+}
+
+@media (min-width: 1041px) {
+  [data-interface-theme="coreui"] .coreui-settings-layout {
+    display: grid;
+    grid-template-columns: minmax(158px, 205px) minmax(0, 1fr);
+    align-items: start;
+    gap: 16px;
+  }
+
+  [data-interface-theme="coreui"] .coreui-settings-layout .settings-tabs {
+    top: 80px;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    max-width: 100%;
+    margin: 0;
+    white-space: normal;
+    background: var(--surface);
+  }
+
+  [data-interface-theme="coreui"] .coreui-settings-layout .settings-tab-btn {
+    justify-content: flex-start;
+    text-align: start;
+    white-space: normal;
+  }
+
+  [data-interface-theme="coreui"] .spectrum-sidebar :is(.spectrum-nav a, .spectrum-brand, .spectrum-user-card) {
+    justify-content: flex-start;
+  }
+
+  [data-interface-theme="coreui"] .spectrum-sidebar .spectrum-nav a {
+    min-height: 36px;
+  }
+
+  [data-interface-theme="coreui"]:not([data-coreui-rail-collapsed]) .spectrum-sidebar :is(.spectrum-nav-label, .spectrum-nav a > span:last-child) {
+    display: block;
+  }
+
+  [data-interface-theme="coreui"] .spectrum-sidebar :is(.spectrum-brand-copy, .sidebar-user-meta) {
+    display: flex;
+  }
+
+  [data-interface-theme="coreui"] .spectrum-sidebar .spectrum-user-card {
+    display: grid;
+  }
+}
+
+[data-interface-theme="coreui"] .coreui-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 65;
+  display: flex;
+  flex: none;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  min-height: 58px;
+  padding: 8px clamp(12px, 2vw, 27px);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.coreui-topbar-start, .coreui-topbar-end, .coreui-quick-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.coreui-quick-search {
+  width: min(320px, 35vw);
+  padding-inline: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+}
+
+.coreui-quick-search:focus-within {
+  border-color: var(--blue-strong);
+}
+
+.coreui-quick-search input[type="search"] {
+  padding: 7px;
+  border: 0;
+  min-width: 0;
+  min-height: 30px;
+  background: transparent;
+  box-shadow: none;
+  outline: none;
+}
+
+.coreui-quick-search .spectrum-icon-button {
+  order: -1;
+  flex: 0 0 32px;
+  width: 32px;
+  min-width: 32px;
+  min-height: 30px;
+  background: transparent;
+  border-color: transparent;
+}
+
+.coreui-quick-search kbd {
+  flex: none;
+  padding: 2px 4px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--muted-strong);
+  font: inherit;
+  font-size: 10px;
+}
+
+.coreui-account-menu {
+  position: relative;
+}
+
+.coreui-account-menu summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  list-style: none;
+  cursor: pointer;
+}
+
+.coreui-account-menu summary::-webkit-details-marker {
+  display: none;
+}
+
+.coreui-account-menu[open] summary, .coreui-account-menu summary:hover {
+  background: var(--surface-raised);
+  border-color: var(--line);
+}
+
+.coreui-user-initial {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--blue-strong);
+  background: var(--info-soft);
+  font-weight: 700;
+}
+
+.coreui-user-name {
+  max-width: 95px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.coreui-account-links {
+  position: absolute;
+  inset: calc(100% + 7px) 0 auto auto;
+  width: max-content;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: 0 10px 30px #080f231c;
+}
+
+.coreui-account-links :is(a, button) {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  background: transparent;
+  box-shadow: none;
+  font-weight: 500;
+  text-align: start;
+}
+
+.coreui-account-links :is(a, button):hover {
+  background: var(--surface-hover);
+}
+
+.coreui-account-links .nexus-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.coreui-page-title {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 16px;
+}
+
+.coreui-page-title h1 {
+  margin: 0;
+  font-size: clamp(22px, 2.4vw, 31px);
+  font-weight: 630;
+  letter-spacing: -.025em;
+}
+
+.coreui-page-title nav {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.coreui-page-title nav a {
+  color: var(--blue-strong);
+}
+
+.coreui-page-title nav a:hover {
+  text-decoration: underline;
+}
+
+.coreui-overview {
+  display: grid;
+  grid-template-columns: minmax(215px, 1fr) minmax(0, 2fr);
+  align-items: stretch;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.coreui-overview-stats {
+  display: grid;
+  grid-template-rows: minmax(106px, 1fr) auto auto;
+  gap: 10px;
+  min-width: 0;
+}
+
+.coreui-overview-mini {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+[data-interface-theme="coreui"] .coreui-overview-stats .card {
+  display: grid;
+  min-width: 0;
+  justify-content: stretch;
+  gap: 6px;
+  padding: 12px;
+  color: var(--text-strong);
+  text-align: start;
+}
+
+[data-interface-theme="coreui"] .coreui-overview-stats .card:hover {
+  border-color: var(--blue-strong);
+}
+
+.coreui-overview-stats .card > span {
+  font-size: 12px;
+}
+
+.coreui-overview-stats .card > strong {
+  font-size: 22px;
+}
+
+[data-interface-theme="coreui"] .coreui-overview-mini .card {
+  margin-block: 0;
+}
+
+.coreui-overview-stats .coreui-online-stat {
+  align-content: center;
+  background: linear-gradient(145deg, var(--surface), var(--info-soft));
+}
+
+.coreui-overview-stats .coreui-online-stat > strong {
+  font-size: clamp(30px, 4vw, 43px);
+  line-height: 1.15;
+}
+
+.coreui-activity-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-inline-end: 2px;
+  border-radius: 50%;
+  background: #27966d;
+}
+
+[data-interface-theme="coreui"] .coreui-overview-stats .coreui-expiry-stat {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.coreui-card-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  align-items: start;
+  margin-bottom: 10px;
+}
+
+.coreui-card-header h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 650;
+}
+
+.coreui-card-header .muted {
+  font-size: 12px;
+}
+
+.coreui-period {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.coreui-period select {
+  width: auto;
+  min-height: 34px;
+}
+
+.coreui-traffic-summary {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  flex-wrap: wrap;
+  min-height: 28px;
+  margin-bottom: 8px;
+}
+
+.coreui-traffic-summary strong {
+  font-size: 20px;
+}
+
+.coreui-traffic-summary span {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.coreui-traffic-plot {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 9px;
+}
+
+.coreui-traffic-plot[hidden] {
+  display: none;
+}
+
+.coreui-traffic-scale {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: end;
+  color: var(--muted);
+  font-size: 10px;
+  padding-bottom: 19px;
+}
+
+.coreui-traffic-bars {
+  display: flex;
+  height: 147px;
+  gap: clamp(1px, .26vw, 5px);
+  border-bottom: 1px solid var(--line-strong);
+  background: repeating-linear-gradient(to top, transparent 0 calc(25% - 1px), var(--line) calc(25% - 1px) 25%);
+}
+
+.coreui-traffic-bars button {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  justify-content: center;
+  align-items: end;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.coreui-traffic-bars button::before {
+  width: min(80%, 18px);
+  height: max(2px, var(--traffic-bar-height));
+  content: "";
+  background: #3486d4;
+  border-radius: 4px 4px 0 0;
+}
+
+.coreui-traffic-bars button:is(:hover, :focus-visible)::before {
+  background: var(--blue-strong);
+}
+
+.coreui-traffic-dates {
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 10px;
+  padding-top: 5px;
+}
+
+.coreui-inline-online {
+  margin-bottom: 16px;
+  scroll-margin-top: 74px;
+}
+
+.coreui-inline-online #onlineClientsStatus {
+  margin-block: 8px 6px;
+}
+
+.coreui-inline-online #onlineClientsList {
+  max-height: 310px;
+  overflow-y: auto;
+  border-bottom: 1px solid var(--line);
+}
+
+.coreui-inline-online .online-modal-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.coreui-inline-online .online-node-filter {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  min-width: 0;
+}
+
+.coreui-inline-online .online-node-filter select {
+  width: auto;
+}
+
+[data-interface-theme="coreui"] .coreui-group-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 28px;
+  padding: 4px 11px;
+  border: 0;
+  color: var(--coreui-rail-text);
+  background: transparent;
+  box-shadow: none;
+  text-align: start;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.coreui-group-toggle > span:last-child {
+  font-size: 14px;
+}
+
+[data-interface-theme="coreui"] .spectrum-nav-group[data-coreui-group-closed] > a {
+  display: none;
+}
+
+[data-interface-theme="coreui"] [data-coreui-group-closed] .coreui-group-toggle > span:last-child {
+  transform: rotate(-90deg);
+}
+
+@media (min-width: 901px) {
+  html[data-interface-theme="coreui"][data-coreui-rail-collapsed] {
+    --sidebar-width: 68px;
+  }
+
+  [data-interface-theme="coreui"][data-coreui-rail-collapsed] .spectrum-sidebar :is(.spectrum-brand, .spectrum-nav a) {
+    display: flex;
+    justify-content: center;
+    padding-inline: 3px;
+  }
+
+  [data-interface-theme="coreui"][data-coreui-rail-collapsed] .spectrum-sidebar {
+    padding-inline: 8px;
+    scrollbar-width: none;
+  }
+
+  [data-interface-theme="coreui"][data-coreui-rail-collapsed] .spectrum-nav,
+  [data-interface-theme="coreui"][data-coreui-rail-collapsed] .spectrum-nav-group {
+    width: 100%;
+    min-width: 0;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  [data-interface-theme="coreui"][data-coreui-rail-collapsed] .spectrum-nav a {
+    width: 100%;
+    min-width: 0;
+    min-height: 41px;
+    gap: 0;
+  }
+
+  [data-interface-theme="coreui"][data-coreui-rail-collapsed] .spectrum-sidebar :is(.spectrum-brand-copy, .spectrum-nav-label, .spectrum-sidebar-footer, .coreui-group-toggle) {
+    display: none;
+  }
+
+  [data-interface-theme="coreui"][data-coreui-rail-collapsed] .spectrum-nav a > span:last-child {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
+  [data-interface-theme="coreui"] .expiry-list {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+
+  [data-interface-theme="coreui"] .expiry-list .dashboard-client-card {
+    min-height: 0;
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.5fr) auto minmax(120px, 160px);
+    grid-template-areas: "identity meta devices renew";
+    align-items: center;
+    border: 0;
+    border-bottom: 1px solid var(--line);
+    border-radius: 0;
+    background: var(--surface);
+  }
+
+  [data-interface-theme="coreui"] .expiry-list .dashboard-client-card:nth-child(even) {
+    background: var(--surface-soft);
+  }
+
+  [data-interface-theme="coreui"] .expiry-list .dashboard-client-card::before {
+    content: none;
+  }
+}
+
+[data-interface-theme="coreui"] body.nexus-spectrum :is(button, input, select, textarea) {
+  font-family: inherit;
+}
+
+[data-interface-theme="coreui"] :is(.coreui-page-title, .card, .modal-card) :is(h1, h2, h3) {
+  line-height: 1.25;
+  letter-spacing: -.02em;
+  font-weight: 650;
+}
+
+[data-interface-theme="coreui"] :is(.card, .modal-card) :is(h2, .client-quick-section-title) {
+  font-size: 17px;
+  font-weight: 650;
+}
+
+[data-interface-theme="coreui"] .spectrum-nav a {
+  font-size: 13px;
+  line-height: 1.35;
+  font-weight: 550;
+}
+
+[data-interface-theme="coreui"] .spectrum-nav .nav-icon {
+  width: 20px;
+  height: 20px;
+  flex-basis: 20px;
+}
+
+[data-interface-theme="coreui"] :is(.coreui-page-title nav, .client-quick-comment, .coreui-user-name) {
+  font-size: 13px;
+}
+
+[data-interface-theme="coreui"] :is(.hint, .form-hint, .field-help, .client-quick-info-grid small,
+  .dashboard-online-identity small, .nodes-modern-head small, .node-row-id, .node-row-type,
+  .dashboard-client-meta, .coreui-traffic-summary span, .coreui-card-header .muted) {
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+[data-interface-theme="coreui"] :is(.form-grid, .management-form, .bulk-scope-panel, .clients-filter-form) label {
+  font-size: 13px;
+  font-weight: 550;
+  line-height: 1.35;
+}
+
+[data-interface-theme="coreui"] :is(.spectrum-page-content, .modal-card) :is(
+  select, textarea, input:not([type="checkbox"], [type="radio"], [type="range"], [type="hidden"], [type="file"])
+) {
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 450;
+  line-height: 1.35;
+}
+
+[data-interface-theme="coreui"] :is(.card, .modal-card) :is(
+  .btn-main, .btn-secondary, .link-btn, button.primary, button.secondary, button.icon-btn
+) {
+  min-height: 36px;
+  font-size: 13px;
+  font-weight: 550;
+  line-height: 1.3;
+}
+
+[data-interface-theme="coreui"] :is(.btn-main, .btn-secondary, .link-btn, button.primary, button.secondary, .coreui-group-toggle):is(:hover, :active) {
+  transform: none;
+  filter: none;
+}
+
+[data-interface-theme="coreui"] :is(.settings-tab-btn, .desktop-page-tabs button, .client-protocol-tabs button, .nodes-mobile-tabs a) {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+[data-interface-theme="coreui"] :is(.clients-table, .clients-modern-table, .nodes-list-header, .nodes-modern-list) {
+  font-size: 13px;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+}
+
+[data-interface-theme="coreui"] :is(.table-wrap th, .nodes-list-header, .nodes-list-header button, .coreui-online-columns) {
+  font-size: 12px;
+  font-weight: 650;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+[data-interface-theme="coreui"] :is(.spectrum-page-content, .modal-card) th {
+  font-size: 12px;
+  font-weight: 650;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+[data-interface-theme="coreui"] :is(.spectrum-page-content, .modal-card) :is(.badge, .count-chip, .transport-chip) {
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+[data-interface-theme="coreui"] :is(.client-quick-primary-actions, .client-quick-section-title, .client-quick-status-row) {
+  margin-block: 12px 7px;
+}
+
+[data-interface-theme="coreui"] .client-quick-info-grid strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+[data-interface-theme="coreui"] :is(.coreui-traffic-scale, .coreui-traffic-dates, .coreui-period, .online-auto-interval, .online-auto-toggle) {
+  font-size: 12px;
+}
+
+[data-interface-theme="coreui"] :is(.dashboard-online-identity, .coreui-online-expiry, .client-overview-strip, .expiry-list) {
+  font-variant-numeric: tabular-nums;
+}
+
+[data-interface-theme="coreui"] :is(.coreui-traffic-card, .coreui-inline-online, .coreui-account-links) {
+  box-shadow: 0 2px 9px rgb(20 26 44 / .055);
+}
+
+[data-interface-theme="coreui"] #onlineClientsList .dashboard-online-entry {
+  padding-block: 7px;
+}
+
+[data-interface-theme="coreui"] .expiry-list .dashboard-client-meta {
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  gap: 5px 14px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+[data-interface-theme="coreui"] :is(.clients-toolbar, .clients-toolbar-actions, .bulk-scope-actions, .online-modal-controls) {
+  gap: 8px 10px;
+}
+
+[data-interface-theme="coreui"] .clients-toolbar {
+  flex-wrap: wrap;
+}
+
+[data-interface-theme="coreui"] .settings-tab-btn {
+  min-height: 39px;
+}
+
+[data-interface-theme="coreui"] .modal-close {
+  display: grid;
+  min-width: 36px;
+  width: 36px;
+  min-height: 36px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--line);
+  color: var(--muted-strong);
+  background: var(--surface-raised);
+  box-shadow: none;
+  font-size: 19px;
+  font-weight: 450;
+  line-height: 1;
+}
+
+[data-interface-theme="coreui"] .modal-close:hover {
+  color: var(--text-strong);
+  background: var(--surface-hover);
+  transform: none;
+}
+
+[data-interface-theme="coreui"] :is(#panelCheckModal, #limitsModal) .modal-card {
+  max-height: calc(100dvh - 36px);
+  padding: 18px 20px;
+  border-color: var(--line);
+}
+
+[data-interface-theme="coreui"] #panelCheckResult {
+  margin-top: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+[data-interface-theme="coreui"] #panelCheckResult .kv-item {
+  grid-template-columns: minmax(145px, .85fr) minmax(0, 1.15fr);
+  gap: 6px 14px;
+  padding: 10px 12px;
+  font-size: 13px;
+}
+
+[data-interface-theme="coreui"] #panelCheckResult .kv-item:nth-child(even):not(.warn-box) {
+  background: var(--surface-raised);
+}
+
+[data-interface-theme="coreui"] #limitsModal .limit-dashboard-list {
+  gap: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+[data-interface-theme="coreui"] .limit-dashboard-row {
+  margin: 0;
+  padding: 10px 12px;
+  border: none;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--surface);
+}
+
+[data-interface-theme="coreui"] .limit-dashboard-row:nth-child(even) {
+  background: var(--surface-raised);
+}
+
+[data-interface-theme="coreui"] .limit-dashboard-row > div:first-child :is(strong, small) {
+  display: block;
+}
+
+[data-interface-theme="coreui"] .limit-dashboard-row small {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+[data-interface-theme="coreui"] .limit-dashboard-values {
+  gap: 5px 14px;
+  font-size: 12px;
+}
+
+[data-interface-theme="coreui"] .client-quick-card :is(.client-quick-hero, .client-quick-primary-actions) {
+  gap: 10px 13px;
+}
+
+[data-interface-theme="coreui"] .client-quick-card .client-quick-title p {
+  margin: 3px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+[data-interface-theme="coreui"] .client-quick-card .client-quick-status-strip {
+  display: inline-flex;
+  width: auto;
+  min-height: 27px;
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: 999px;
+}
+
+[data-interface-theme="coreui"] .client-quick-card .client-quick-section-title {
+  margin: 16px 0 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  font-size: 14px;
+}
+
+[data-interface-theme="coreui"] .client-quick-info-grid {
+  gap: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+[data-interface-theme="coreui"] .client-quick-info-grid > div {
+  padding: 9px 10px;
+  border: 0;
+  border-inline-end: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--surface-raised);
+}
+
+[data-interface-theme="coreui"] .client-quick-info-grid > div > span {
+  color: var(--muted-strong);
+  font-size: 12px;
+}
+
+@media (min-width: 761px) {
+  [data-interface-theme="coreui"] :is(#clientQuickModal, #onlineClientDetailModal).modal {
+    padding: 12px 12px 12px 0;
+  }
+
+  [data-interface-theme="coreui"] :is(#clientQuickModal, #onlineClientDetailModal) .modal-card {
+    height: calc(100dvh - 24px);
+    max-height: calc(100dvh - 24px);
+    padding: 20px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+  }
+}
+
+@media (max-width: 560px) {
+  [data-interface-theme="coreui"] #panelCheckResult .kv-item {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (min-width: 1121px) {
+  [data-interface-theme="coreui"] body.page-nodes:has(.nodes-modern-card.is-active) {
+    height: auto;
+    overflow: visible;
+  }
+
+  [data-interface-theme="coreui"] .page-nodes:has(.nodes-modern-card.is-active) :is(.spectrum-shell, .spectrum-main),
+  [data-interface-theme="coreui"] .page-nodes .spectrum-page-content:has(.nodes-modern-card.is-active),
+  [data-interface-theme="coreui"] .page-nodes .nodes-modern-card.is-active {
+    height: auto;
+    overflow: visible;
+  }
+
+  [data-interface-theme="coreui"] .page-nodes:has(.nodes-modern-card.is-active) .spectrum-main,
+  [data-interface-theme="coreui"] .page-nodes .spectrum-page-content:has(.nodes-modern-card.is-active) {
+    display: block;
+  }
+
+  [data-interface-theme="coreui"] .page-nodes :is(.nodes-modern-layout, .nodes-list-panel, .nodes-modern-list, .nodes-detail-panel) {
+    overflow: visible;
+    scrollbar-gutter: auto;
+  }
+
+  [data-interface-theme="coreui"] .page-nodes .nodes-modern-layout {
+    grid-template-columns: minmax(0, 1fr) minmax(260px, 31%);
+  }
+
+  [data-interface-theme="coreui"] .page-nodes :is(.nodes-list-header, .node-row-select) {
+    grid-template-columns: 34px minmax(0, 1.45fr) minmax(0, 1fr) minmax(0, 1.25fr) minmax(0, .85fr) minmax(0, 1.1fr) 15px;
+    gap: 6px;
+  }
+
+  [data-interface-theme="coreui"] .page-nodes .nodes-modern-head {
+    position: sticky;
+    top: calc(58px + 8px);
+    z-index: 40;
+  }
+}
+
+@media (max-width: 900px) {
+  [data-interface-theme="coreui"] body.nexus-spectrum :is(.spectrum-page-content, .modal-card)
+  :is(select, textarea, input:not([type="checkbox"], [type="radio"], [type="range"], [type="hidden"], [type="file"])) {
+    font-size: 14px;
+  }
+
+  [data-interface-theme="coreui"] .coreui-traffic-bars {
+    height: 125px;
+  }
+
+  [data-interface-theme="coreui"] .coreui-inline-online .online-modal-controls {
+    gap: 8px 10px;
+  }
+}
+
+@media (max-width: 900px) {
+  [data-interface-theme="coreui"] .coreui-topbar {
+    position: relative;
+    min-height: 46px;
+  }
+
+  .coreui-topbar-start, .coreui-quick-search {
+    width: 100%;
+  }
+
+  .coreui-topbar :is(.coreui-rail-toggle, [data-theme-toggle], .coreui-user-name, kbd) {
+    display: none;
+  }
+
+  .coreui-page-title, .coreui-page-title nav {
+    margin: 0 0 10px;
+  }
+}
+
+@media (max-width: 620px) {
+  .coreui-overview {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .coreui-overview-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: auto;
+  }
+
+  .coreui-overview-mini {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .coreui-expiry-stat {
+    grid-column: 1 / -1;
+  }
+
+  .coreui-period > span {
+    display: none;
+  }
+}

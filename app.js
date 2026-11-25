@@ -2202,6 +2202,8 @@ function renderClientsFallbackPage(res, params, err) {
 }
 
 function render(res, view, params = {}) {
+  const accountInterfaceTheme = getAccountInterfaceTheme(res.req?.session?.userId);
+  const defaultPanelInterfaceTheme = getPanelInterfaceTheme();
   let currentAdminUsername = '';
   try {
     currentAdminUsername = access.user(res.req?.session?.userId)?.username || '';
@@ -2230,7 +2232,9 @@ function render(res, view, params = {}) {
     workspaceName: '',
     clientDefaults: Object.fromEntries(Object.entries(require('./lib_settings_profile').rules).filter(([key]) => key.startsWith('client_default_')).map(([key, rule]) => [key, getSetting(key, rule.fallback)])),
     currentPath: res.req.path,
-    panelInterfaceTheme: getPanelInterfaceTheme(),
+    panelInterfaceTheme: accountInterfaceTheme || defaultPanelInterfaceTheme,
+    accountInterfaceTheme,
+    defaultPanelInterfaceTheme,
     clientsViewMode: getClientsViewMode(),
     panelMobileClientCompact: getPanelMobileClientCompact(),
     panelMobileNavMode: getPanelMobileNavMode(),
@@ -2538,10 +2542,43 @@ setInterval(function(){__busyTick('Идёт обработка');},1000);
 }
 
 
-function getPanelInterfaceTheme() {
-  const raw = String(getSetting('panel_interface_theme', 'classic') || 'classic').trim().toLowerCase();
-  return ['classic', 'mobile_lite'].includes(raw) ? raw : 'classic';
+function normalizePanelInterfaceTheme(value, fallback = 'classic') {
+  const theme = String(value || '').trim().toLowerCase();
+  return ['classic', 'mobile_lite', 'graphite_blue', 'coreui'].includes(theme) ? theme : fallback;
 }
+
+function getPanelInterfaceTheme() {
+  return normalizePanelInterfaceTheme(getSetting('panel_interface_theme', 'classic'));
+}
+
+const accountAppearanceDb = access.control;
+accountAppearanceDb.exec('CREATE TABLE IF NOT EXISTS admin_appearance (user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, interface_theme TEXT NOT NULL)');
+const accountAppearanceSelect = accountAppearanceDb.prepare('SELECT interface_theme FROM admin_appearance WHERE user_id = ?');
+const accountAppearanceSave = accountAppearanceDb.prepare('INSERT INTO admin_appearance (user_id, interface_theme) VALUES (?, ?) ON CONFLICT (user_id) DO UPDATE SET interface_theme = excluded.interface_theme');
+const accountAppearanceReset = accountAppearanceDb.prepare('DELETE FROM admin_appearance WHERE user_id = ?');
+
+function getAccountInterfaceTheme(userId) {
+  return userId ? normalizePanelInterfaceTheme(accountAppearanceSelect.get(userId)?.interface_theme, '') : '';
+}
+
+app.get('/preferences/appearance', requireAuth, (req, res) => {
+  render(res, 'appearance', { saved: req.query.saved === '1', invalid: false });
+});
+
+app.post('/preferences/appearance', requireAuth, (req, res) => {
+  const requested = req.body.interface_theme;
+  const userId = req.session.userId;
+  if (requested === 'default') accountAppearanceReset.run(userId);
+  else {
+    const theme = normalizePanelInterfaceTheme(requested, '');
+    if (!theme) {
+      res.status(400);
+      return render(res, 'appearance', { saved: false, invalid: true });
+    }
+    accountAppearanceSave.run(userId, theme);
+  }
+  return res.redirect(303, '/preferences/appearance?saved=1');
+});
 
 function getClientsViewMode() {
   const raw = String(getSetting('clients_view_mode', 'modern') || 'modern').trim().toLowerCase();
@@ -15535,9 +15572,7 @@ app.get('/more', requireAuth, async (req, res) => {
 
 app.post('/settings/panel-ui', requireAuth, (req, res) => {
   try {
-    const panelInterfaceTheme = ['classic', 'mobile_lite'].includes(String(req.body.panel_interface_theme || 'mobile_lite'))
-      ? String(req.body.panel_interface_theme || 'mobile_lite')
-      : 'mobile_lite';
+    const panelInterfaceTheme = normalizePanelInterfaceTheme(req.body.panel_interface_theme, 'mobile_lite');
     const panelMobileNavMode = ['bottom', 'side'].includes(String(req.body.panel_mobile_nav_mode || 'bottom'))
       ? String(req.body.panel_mobile_nav_mode || 'bottom')
       : 'bottom';
@@ -15872,7 +15907,7 @@ app.post('/settings', requireAuth, (req, res) => {
     setSetting('update_repo_url', String(req.body.update_repo_url || OFFICIAL_REPOSITORY_URL).trim() || OFFICIAL_REPOSITORY_URL);
 
     if (Object.prototype.hasOwnProperty.call(req.body, 'panel_interface_theme')) {
-      const panelInterfaceTheme = ['classic', 'mobile_lite'].includes(String(req.body.panel_interface_theme || 'classic')) ? String(req.body.panel_interface_theme || 'classic') : 'classic';
+      const panelInterfaceTheme = normalizePanelInterfaceTheme(req.body.panel_interface_theme);
       setSetting('panel_interface_theme', panelInterfaceTheme);
     }
     if (Object.prototype.hasOwnProperty.call(req.body, 'panel_mobile_client_compact')) {

@@ -1,0 +1,78 @@
+html[data-interface-theme="graphite-blue"] {
+  --font-ui: "Segoe UI", system-ui, sans-serif, "Nexus Flags";
+  --bg: #15191f;
+  --bg-elevated: #101318;
+  --surface: #1c222b;
+  --surface-raised: #222a35;
+  --surface-strong: #293340;
+  --surface-soft: #1a2029;
+  --surface-hover: #293340;
+  --input: #181e26;
+  --line: #343c49;
+  --line-strong: #515d70;
+  --text: #f1f4fa;
+  --text-strong: #f7f9fd;
+  --muted: #a9b5c6;
+  --muted-strong: #c8d2e2;
+  --blue: #779dff;
+  --blue-strong: #6390ff;
+  --cyan: #a0baff;
+  --violet: var(--blue);
+  --magenta: var(--blue);
+  --green: #83d8af;
+  --green-soft: #83d8af1f;
+  --red: #ff9b9c;
+  --red-soft: #ff9b9c1f;
+  --amber: #f6c17c;
+  --amber-soft: #f6c17c1f;
+  --info-soft: #779dff1f;
+  --brand-gradient: var(--blue);
+  --brand-surface: #252f43;
+  --shadow-sm: 0 2px 6px #0002;
+  --shadow-md: 0 16px 36px #0005;
+  --shadow-brand: none;
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+  --graphite-action-text: #101a33;
+}
+
+[data-interface-theme="graphite-blue"] body {
+  background: var(--bg);
+}
+
+[data-interface-theme="graphite-blue"] :is(.spectrum-sidebar, .spectrum-mobilebar, .spectrum-bottom-nav) {
+  background: var(--bg-elevated);
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+[data-interface-theme="graphite-blue"] [data-theme-toggle] {
+  visibility: hidden;
+}
+
+[data-interface-theme="graphite-blue"] :is(.card, .stats-card, .diagnostic-card, .node-detail-card, .client-quick-card) {
+  background: var(--surface);
+}
+
+[data-interface-theme="graphite-blue"] :is(.card, .stats-card)::before,
+[data-interface-theme="graphite-blue"] .stats-card::after {
+  content: none;
+}
+
+[data-interface-theme="graphite-blue"] :is(.btn-main:not(.danger):not(.btn-danger), .spectrum-quick-action) {
+  color: var(--graphite-action-text);
+  background: var(--blue);
+  box-shadow: none;
+}
+
+[data-interface-theme="graphite-blue"] .node-list-row.is-selected {
+  background: var(--info-soft);
+  box-shadow: inset 3px 0 0 var(--blue);
+}
+
+@media (min-width: 1041px) {
+  [data-interface-theme="graphite-blue"] .node-row-select {
+    min-height: 48px;
+  }
+}

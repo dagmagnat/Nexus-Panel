@@ -118,6 +118,7 @@ function createAccess({ rootDir, localDb, legacyUsername, workspaceId = 'main' }
     
     if(wid!=='main' || !workspaces(u).length)return false;
     const read = ['GET', 'HEAD'].includes(method);
+    if (url === '/preferences/appearance' && (read || method === 'POST')) return true;
     if (url === '/logout' || (read && ['/access', '/more'].includes(url)) || url === '/access/switch') return true;
     if (url.startsWith('/access/')) return Boolean(u.is_owner && wid === 'main');
     if (u.is_owner && wid === 'main') return true;

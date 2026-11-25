@@ -1,0 +1,36 @@
+<div class="coreui-overview">
+  <div class="coreui-overview-stats">
+    <button type="button" class="card coreui-online-stat" id="openOnlineClientsFromStat" aria-controls="coreuiOnline">
+      <span class="coreui-stat-label"><span class="coreui-activity-dot" aria-hidden="true"></span> Клиенты в сети</span>
+      <strong id="dashboardOnlineNowCount">—</strong>
+      <span>К списку клиентов <span aria-hidden="true">↓</span></span>
+    </button>
+    <div class="coreui-overview-mini">
+      <a href="/clients" class="card"><span>Всего клиентов</span><strong><%= stats.clients %></strong></a>
+      <a href="/nodes" class="card"><span>Узлы</span><strong><%= stats.nodes %></strong></a>
+    </div>
+    <button type="button" class="card coreui-expiry-stat" id="openExpiryFromStat">
+      <span>Истекают за 7 дней</span><strong id="dashboardExpiryNowCount"><%= expiringSevenCount %></strong>
+    </button>
+  </div>
+  <section class="card coreui-traffic-card" data-coreui-traffic aria-labelledby="coreui-traffic-title">
+    <header class="coreui-card-header">
+      <div><h2 id="coreui-traffic-title">Трафик клиентов</h2><span class="muted">Скачано по дням</span></div>
+      <label class="coreui-period"><span>Период</span>
+        <select data-traffic-days aria-label="Период графика трафика">
+          <option value="7">7 дней</option>
+          <option value="14">14 дней</option>
+          <option value="30" selected>30 дней</option>
+        </select>
+      </label>
+    </header>
+    <div class="coreui-traffic-summary"><strong data-traffic-total>—</strong><span data-traffic-status role="status">Загружаю график…</span></div>
+    <div class="coreui-traffic-plot" data-traffic-plot hidden>
+      <div class="coreui-traffic-scale" data-traffic-scale aria-hidden="true"></div>
+      <div class="coreui-traffic-series">
+        <div class="coreui-traffic-bars" data-traffic-bars></div>
+        <div class="coreui-traffic-dates" data-traffic-dates aria-hidden="true"></div>
+      </div>
+    </div>
+  </section>
+</div>

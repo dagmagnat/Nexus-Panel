@@ -26,6 +26,7 @@ test('clean subscription links default to JSON, SUB is explicit, legacy IDs rema
 });
 
 test('internal alias keeps query options and rejects ambiguous formats and unsafe/admin paths', () => {
+  assert.equal(cleanSubscriptionTarget('/telegram-bot'), null);
   assert.deepEqual(cleanSubscriptionTarget('/clean-key-12345678?download=1&format=sub&rev=42'), { url: '/sub/clean-key-12345678?download=1&rev=42' });
   assert.deepEqual(cleanSubscriptionTarget('/clean-key-12345678/?format=single&node=2'), { url: '/json/clean-key-12345678?format=single&node=2' });
   assert.deepEqual(cleanSubscriptionTarget('/clean-key-12345678?format=json'), { url: '/json/clean-key-12345678' });

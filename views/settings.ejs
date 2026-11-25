@@ -5,19 +5,21 @@
 
 <form id="bumpSubRevisionForm" method="post" action="/settings/subscription-revision/bump"></form>
 
-<section class="card"><h2>Оплата и продление</h2><p class="muted">Тарифы, устройства, скидки, банковские реквизиты и заявки клиентов.</p><a class="link-btn" href="/subscription-billing">Открыть раздел «Оплата»</a></section>
+<% if (panelInterfaceTheme !== 'coreui') { %><section class="card"><h2>Оплата и продление</h2><p class="muted">Тарифы, устройства, скидки, банковские реквизиты и заявки клиентов.</p><a class="link-btn" href="/subscription-billing">Открыть раздел «Оплата»</a></section><% } %>
 <div class="grid">
   <section class="card span-6 panel-settings-card" data-settings-key="panel">
     <h2><span class="section-icon" aria-hidden="true">🎛️</span>Настройка панели</h2>
-    <p class="muted">Управляет внешним видом мобильной версии: размер интерфейса и тип навигации.</p>
+    <p class="muted">Оформление панели, размер интерфейса и мобильная навигация.</p>
     <form method="post" action="/settings/panel-ui" class="form-grid">
       <div class="field">
-        <label>Вид интерфейса панели</label>
-        <select name="panel_interface_theme">
-          <option value="classic" <%= panelInterfaceTheme === 'classic' ? 'selected' : '' %>>Классический</option>
-          <option value="mobile_lite" <%= panelInterfaceTheme === 'mobile_lite' ? 'selected' : '' %>>Mobile Lite</option>
+        <label for="panel-interface-theme">Вид интерфейса панели</label>
+        <select name="panel_interface_theme" id="panel-interface-theme">
+          <option value="classic" <%= defaultPanelInterfaceTheme === 'classic' ? 'selected' : '' %>>Классический</option>
+          <option value="mobile_lite" <%= defaultPanelInterfaceTheme === 'mobile_lite' ? 'selected' : '' %>>Mobile Lite</option>
+          <option value="graphite_blue" <%= defaultPanelInterfaceTheme === 'graphite_blue' ? 'selected' : '' %>>Графит и синий</option>
+          <option value="coreui" <%= defaultPanelInterfaceTheme === 'coreui' ? 'selected' : '' %>>CoreUI</option>
         </select>
-        <small class="hint">Mobile Lite применяется на телефоне, а на компьютере остаётся обычная панель.</small>
+        <small class="hint">Значение применяется по умолчанию. <a href="/preferences/appearance">Настроить оформление своего аккаунта</a></small>
       </div>
 
       <div class="field">

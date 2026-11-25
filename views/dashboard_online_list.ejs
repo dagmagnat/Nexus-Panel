@@ -1,0 +1,13 @@
+<div class="online-modal-controls">
+  <button type="button" class="btn-main" id="onlineRefreshBtn">Обновить</button>
+  <label class="online-auto-toggle"><input type="checkbox" id="onlineAutoRefresh" <%= Number(clientAutoRefreshSeconds) > 0 ? 'checked' : '' %> /><span>Автообновление</span></label>
+  <label class="online-auto-interval"><span>Каждые</span><select id="onlineRefreshInterval"><option value="10" <%= Number(clientAutoRefreshSeconds) === 10 ? 'selected' : '' %>>10 сек.</option><option value="30" <%= Number(clientAutoRefreshSeconds) === 30 ? 'selected' : '' %>>30 сек.</option><option value="60" <%= Number(clientAutoRefreshSeconds) === 60 ? 'selected' : '' %>>60 сек.</option></select></label>
+<% if (withNodeFilter) { %>
+  <label class="online-node-filter"><span>Узел</span><select id="onlineNodeFilter"><option value="">Все узлы</option></select></label>
+<% } %>
+</div>
+<div id="onlineClientsStatus" class="hint">Загружаю онлайн-клиентов…</div>
+<% if (inline) { %>
+<div class="coreui-online-columns" aria-hidden="true"><span>Клиент</span><span>Активные узлы</span><span>Доступ до</span><span>Действие</span></div>
+<% } %>
+<div id="onlineClientsList" class="dashboard-client-list online-list"></div>

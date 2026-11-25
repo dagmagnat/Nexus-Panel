@@ -32,7 +32,7 @@ Object.assign(rules, {
   subscription_expired_grace_days: { values: ['0', '3', '7'], fallback: '7' },
   node_auto_refresh_seconds: { values: ['0', '10', '30', '60'], fallback: '10' },
   client_auto_refresh_seconds: { values: ['0', '10', '30', '60'], fallback: '10' },
-  panel_interface_theme: { values: ['classic', 'mobile_lite'], fallback: 'classic' },
+  panel_interface_theme: { values: ['classic', 'mobile_lite', 'graphite_blue', 'coreui'], fallback: 'classic' },
   clients_view_mode: { values: ['classic', 'modern'], fallback: 'modern' },
   panel_mobile_nav_mode: { values: ['bottom', 'side'], fallback: 'bottom' },
   panel_mobile_ui_scale: { values: ['compact', 'normal', 'large'], fallback: 'compact' },
