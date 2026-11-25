@@ -48,8 +48,14 @@ test('manifest and every standalone page use the Nexus Panel logo', () => {
 
   for (const view of ['views/partials_header.ejs', 'views/login.ejs', 'views/open_sub.ejs']) {
     const source = readProjectFile(view).toString('utf8');
-    assert.match(source, /\/favicon\.ico/);
+    assert.match(source, /rel="apple-touch-icon"[^>]*href="\/apple-touch-icon\.png(?:\?[^"]*)?"/);
     assert.match(source, /\/site\.webmanifest/);
-    assert.match(source, /nexus-logo/);
+    if (view === 'views/open_sub.ejs') {
+      assert.match(source, /\/favicon\.ico/);
+      assert.match(source, /nexus-logo/);
+    } else {
+      assert.match(source, /\/img\/nexus-panel-tab-32\.png/);
+      assert.match(source, /\/img\/nexus-panel-mark\.png/);
+    }
   }
 });
