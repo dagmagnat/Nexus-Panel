@@ -121,7 +121,7 @@
 
   const dialog = document.getElementById('clientAppDialog');
   if (!dialog) return;
-  const apps = { happ: 'Happ', incy: 'INCY', karing: 'Karing', router: 'Роутер', sub: 'Обычная SUB' };
+  const apps = { happ: 'Happ', incy: 'INCY', karing: 'Karing', router: 'Роутер', sub: 'Обычная SUB', portal: 'Личный кабинет' };
   const choices = document.getElementById('clientAppChoices');
   const buttons = choices.querySelectorAll('[data-sub-app]');
   const status = document.getElementById('clientAppStatus');
@@ -149,7 +149,7 @@
   }
   function openAppLinks(trigger) {
     clientId = trigger.dataset.clientAppLinks;
-    clearPreview(trigger.hasAttribute('data-copy-first') ? 'Выберите, какую ссылку скопировать' : 'Выберите приложение');
+    clearPreview(trigger.hasAttribute('data-copy-first') ? 'Выберите, какую ссылку скопировать' : 'Выберите тип ссылки');
     buttons.forEach(button => button.setAttribute('aria-pressed', 'false'));
     document.getElementById('clientAppTitle').textContent = 'Подписка · ' + trigger.dataset.clientTitle;
     dialog.showModal();
@@ -181,7 +181,8 @@
       status.textContent = {
         router: 'HTTPS-подписка VLESS для RouteWolf и Forkop. Для Podkop выберите отдельный узел ниже.',
         sub: 'Обычная HTTPS-подписка для Hiddify, Forkop и совместимых приложений.',
-        karing: 'Сканируйте в Karing. При подтверждении импорта включите X-HWID.',
+        karing: 'При импорте включите X-HWID. Автовыбор включается в Karing в меню выбора сервера.',
+        portal: 'Клиент откроет кабинет и выберет приложение для подключения.',
       }[app] || 'QR-код для ' + name;
       if (result.qr) {
         image.alt = 'QR-код для ' + name;
@@ -189,9 +190,12 @@
         image.hidden = false;
       }
       routerDetails.hidden = app !== 'router';
-      copy.textContent = app === 'router' || app === 'sub' ? 'Копировать подписку' : 'Копировать ссылку ' + name;
+      copy.textContent = {
+        router: 'Копировать подписку',
+        sub: 'Копировать подписку',
+        portal: 'Копировать ссылку на кабинет',
+      }[app] || 'Копировать ссылку ' + name;
       copy.disabled = false;
-      copyImport.hidden = !currentImportUrl;
     } catch (error) {
       if (!controller.signal.aborted) status.textContent = error instanceof SyntaxError ? 'Ссылка недоступна. Обновите страницу.' : error.message;
     }

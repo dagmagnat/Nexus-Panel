@@ -46,7 +46,7 @@
 .client-workflow-body [data-bulk-modes="edit"] > .client-workflow-check { margin: 8px 0; }
 .client-workflow-body .client-workflow-danger { border-color: #d0596e; }
 .client-app-dialog { width: min(480px, calc(100% - 24px)); }
-.client-app-choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(75px, 1fr)); gap: 8px; }
+.client-app-choices { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .client-app-choices button[aria-pressed=true] { outline: 2px solid var(--accent, #7065ed); outline-offset: -2px; font-weight: 700; }
 .client-app-preview { display: grid; justify-items: center; gap: 10px; padding: 12px; text-align: center; border: 1px solid var(--line); border-radius: 12px; }
 .client-app-preview img { display: block; width: min(220px, 100%); height: auto; aspect-ratio: 1; background: #fff; border-radius: 8px; }

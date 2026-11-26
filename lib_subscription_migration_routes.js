@@ -1,6 +1,6 @@
 'use strict';
 const QRCode=require('qrcode');
-function attachSubscriptionMigrationRoutes({ app, db, migration, karingLinks, routerNodes, requireAuth, render, subscriptionName, portalModel, billing, supportUrl=()=>'' }) {
+function attachSubscriptionMigrationRoutes({ app, db, migration, karingLinks, routerNodes, shortPortalUrl, requireAuth, render, subscriptionName, portalModel, billing, supportUrl=()=>'' }) {
   let bulk = { running: false, total: 0, done: 0, errors: [] };
   const back = (res, message, error = false) => res.redirect('/subscription-migration?' + (error ? 'error=' : 'message=') + encodeURIComponent(message));
   app.get('/subscription-migration', requireAuth, (req, res) => {
@@ -45,8 +45,9 @@ function attachSubscriptionMigrationRoutes({ app, db, migration, karingLinks, ro
     const client = db.prepare('SELECT * FROM clients WHERE id = ?').get(Number(req.params.id));
     if (!client) return res.status(404).json({ error: 'Клиент не найден.' });
     const appName = req.body.app;
-    if (!['happ', 'incy', 'karing', 'router', 'sub'].includes(appName)) return res.status(400).json({ error: 'Выберите приложение.' });
+    if (!['happ', 'incy', 'karing', 'router', 'sub', 'portal'].includes(appName)) return res.status(400).json({ error: 'Выберите тип ссылки.' });
     try {
+      if (appName === 'portal') return res.json({ link: shortPortalUrl(client) });
       if (appName === 'router') {
         if (req.body.detail === 'nodes') return res.json({ nodes: await routerNodes(client) });
         return res.json({ link: karingLinks.routerUrl(client) });

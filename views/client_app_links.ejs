@@ -4,12 +4,13 @@
     <button type="button" class="btn-secondary" aria-label="Закрыть" data-close-dialog>×</button>
   </header>
   <div class="client-workflow-body">
-    <div id="clientAppChoices" class="client-app-choices" role="group" aria-label="Приложение">
+    <div id="clientAppChoices" class="client-app-choices" role="group" aria-label="Тип ссылки">
       <button type="button" class="btn-secondary" data-sub-app="happ" aria-pressed="false">Happ</button>
       <button type="button" class="btn-secondary" data-sub-app="incy" aria-pressed="false">INCY</button>
       <button type="button" class="btn-secondary" data-sub-app="karing" aria-pressed="false">Karing</button>
       <button type="button" class="btn-secondary" data-sub-app="router" aria-pressed="false">Роутер</button>
       <button type="button" class="btn-secondary" data-sub-app="sub" aria-pressed="false">Обычная SUB</button>
+      <button type="button" class="btn-secondary" data-sub-app="portal" aria-pressed="false">Личный кабинет</button>
     </div>
     <details id="clientRouterNodes" hidden>
       <summary>Отдельный узел для Podkop</summary>
@@ -18,7 +19,7 @@
       <button id="clientRouterNodeCopy" class="btn-secondary" type="button" hidden>Копировать ссылку узла</button>
     </details>
     <div class="client-app-preview">
-      <p id="clientAppStatus" role="status">Выберите приложение</p>
+      <p id="clientAppStatus" role="status">Выберите тип ссылки</p>
       <img id="clientAppQr" width="220" height="220" alt="" hidden>
     </div>
   </div>

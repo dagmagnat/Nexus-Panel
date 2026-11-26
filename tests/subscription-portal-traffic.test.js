@@ -691,6 +691,13 @@ test('client actions target the whole directory and app links serve a protected 
   const route = new URL(importUrl).pathname;
   const portal = await fetchAccount(base + '/open/' + client.sub_slug);
   assert.match(await portal.text(), /data-app="karing"/);
+  const shortPortal = JSON.parse((await request(appLinks, { app: 'portal' })).text).link;
+  const shortPortalPath = new URL(shortPortal).pathname;
+  assert.match(shortPortalPath, /^\/cabinet\/p[0-9a-z]+-[A-Za-z0-9_-]{24}$/);
+  assert.equal(JSON.parse((await request(appLinks, { app: 'portal' })).text).link, shortPortal);
+  assert.match(await (await fetchAccount(shortPortal)).text(), /data-app="karing"/);
+  const tampered = shortPortalPath.slice(0, -1) + (shortPortalPath.endsWith('A') ? 'B' : 'A');
+  assert.equal((await request(tampered)).status, 404);
   const hwid = { 'X-HWID': 'test-karing-device', 'User-Agent': 'Karing' };
   assert.doesNotMatch((await request(route)).text, /vless:\/\//);
   assert.match((await request(route, null, hwid)).text, /vless:\/\//);
@@ -710,15 +717,27 @@ test('client actions target the whole directory and app links serve a protected 
   db.prepare('UPDATE nodes SET hide_standalone_json = 1').run();
   assert.doesNotMatch((await request(route, null, hwid)).text, /vless:\/\//);
   assert.equal((await request(routerPath)).status, 404);
+  const reserve = db.prepare(`INSERT INTO auto_select_profiles
+    (name,node_ids,emergency_node_id,emergency_node_ids,enabled) VALUES ('Резерв', '[1]', 1, '[1]', 1)`).run();
+  assert.match((await request(route, null, hwid)).text, /vless:\/\//);
+  assert.doesNotMatch((await request(route)).text, /vless:\/\//);
+  assert.equal((await request(routerPath)).status, 404);
+  db.prepare('DELETE FROM auto_select_profiles WHERE id = ?').run(reserve.lastInsertRowid);
   db.prepare('UPDATE nodes SET hide_standalone_json = 0').run();
   db.prepare('UPDATE clients SET sub_slug = ? WHERE id = ?').run('new-token', client.id);
   assert.equal((await request(route, null, hwid)).status, 404);
+  assert.equal((await request(shortPortalPath)).status, 404);
 
   if (process.env.NEXUS_PLAYWRIGHT_MODULE) {
     const { chromium } = require(process.env.NEXUS_PLAYWRIGHT_MODULE);
     const browser = await chromium.launch({ headless: true, channel: 'msedge' });
     try {
       const page = await browser.newPage();
+      await page.addInitScript(() => {
+        Object.defineProperty(navigator, 'clipboard', {
+          value: { writeText: async text => { window.__copiedLink = text; } }
+        });
+      });
       page.setDefaultTimeout(6000);
       const errors = [];
       page.on('pageerror', error => errors.push(error.message));
@@ -746,10 +765,20 @@ test('client actions target the whole directory and app links serve a protected 
         assert.equal(await page.locator('#clientAppCopy').isEnabled(), true);
         assert.equal(await page.locator('#clientAppDialog').evaluate(el => el.scrollWidth > el.clientWidth + 1), false);
         await page.getByRole('button', { name: 'Роутер', exact: true }).click();
-        await page.getByRole('button', { name: 'Копировать подписку', exact: true }).waitFor({ state: 'visible' });
+        await page.getByText(/HTTPS-подписка VLESS для RouteWolf/).waitFor();
+        await page.getByRole('button', { name: 'Копировать подписку', exact: true }).click();
+        assert.match(await page.evaluate(() => window.__copiedLink), /\/sub-plain\/router-/);
         assert.equal(await page.locator('#clientAppQr').isVisible(), false);
         await page.locator('#clientRouterNodes summary').click();
         await page.locator('#clientRouterNodeCopy').waitFor({ state: 'visible' });
+        await page.getByRole('button', { name: 'Обычная SUB', exact: true }).click();
+        await page.getByText(/Обычная HTTPS-подписка для Hiddify/).waitFor();
+        await page.getByRole('button', { name: 'Копировать подписку', exact: true }).click();
+        assert.match(await page.evaluate(() => window.__copiedLink), /\/sub-plain\/sub-/);
+        await page.getByRole('button', { name: 'Личный кабинет', exact: true }).click();
+        await page.getByText(/Клиент откроет кабинет/).waitFor();
+        await page.getByRole('button', { name: 'Копировать ссылку на кабинет', exact: true }).click();
+        assert.match(await page.evaluate(() => window.__copiedLink), /\/cabinet\/p/);
         await page.locator('#clientAppDialog').getByRole('button', { name: 'Закрыть' }).click();
         await page.getByRole('button', { name: 'Создать клиента', exact: true }).first().click();
         await page.locator('#createNexusClientForm [name=router_profile]').check();

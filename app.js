@@ -18727,10 +18727,16 @@ app.get('/sub/:slug', async (req, res) => {
 });
 
 
-function visiblePlainSubscriptionEntries(client, entries) {
+function visiblePlainSubscriptionEntries(client, entries, { includeFallbackNodes = false } = {}) {
   const { hiddenNodeIds } = buildAutoSelectJsonConfigs(client, entries, '');
   for (const row of db.prepare('SELECT id FROM nodes WHERE hide_standalone_json = 1').all()) hiddenNodeIds.add(row.id);
-  return entries.filter(entry => entry.nodeType !== 'notice' && !hiddenNodeIds.has(Number(entry.nodeId)));
+  const individuallyVisible = new Set(includeFallbackNodes
+    ? getAutoSelectProfiles({ enabledOnly: true }).flatMap(profile => profile.emergencyNodeIds)
+    : []);
+  return entries.filter(entry => {
+    const id = Number(entry.nodeId);
+    return entry.nodeType !== 'notice' && (!hiddenNodeIds.has(id) || individuallyVisible.has(id));
+  });
 }
 
 async function listRouterNodeLinks(client) {
@@ -18783,7 +18789,11 @@ app.get('/sub-plain/:slug', async (req, res) => {
     return res.send(Buffer.from(match[1],'base64url').toString('utf8'));
   }
   let visibleEntries = entries;
-  if (req.nexusKaring || plainProfile) visibleEntries = visiblePlainSubscriptionEntries(client, entries);
+  if (req.nexusKaring || plainProfile) {
+    visibleEntries = visiblePlainSubscriptionEntries(client, entries, {
+      includeFallbackNodes: req.nexusKaring && deviceState?.allowed && !isClientExpired(client)
+    });
+  }
   const lines = visibleEntries
     .map(entry => String(entry?.line || '').trim())
     .filter(line => req.nexusRouter ? /^vless:\/\//i.test(line) : req.nexusKaring || req.nexusPlainApp ? supportsKaringLink(line)
@@ -20568,7 +20578,8 @@ const subscriptionBilling = require('./lib_subscription_billing').createBilling(
   syncClient:async id=>{const client=db.prepare('SELECT * FROM clients WHERE id=?').get(id);const result=await updateClientEverywhere(client,{expiry_time:client.expiry_time,duration_days:client.duration_days,device_limit:client.device_limit});if(result.failed)throw Error('Срок сохранён; не удалось синхронизировать узлов: '+result.failed+'. Повторите синхронизацию заказа.');}
 });
 require('./lib_subscription_migration_routes').attachSubscriptionMigrationRoutes({
-  app, db, migration: subscriptionMigration, karingLinks, routerNodes: listRouterNodeLinks, requireAuth, render,
+  app, db, migration: subscriptionMigration, karingLinks, routerNodes: listRouterNodeLinks,
+  shortPortalUrl: portalAccess.shortUrl, requireAuth, render,
   subscriptionName: () => getSetting('subscription_name', DEFAULT_SUBSCRIPTION_NAME),
   billing: subscriptionBilling,
   supportUrl: () => getSubscriptionSupportMeta().url,
