@@ -1,5 +1,5 @@
 <%- include('partials_header', { pageTitle: 'Пользователи', pageSubtitle: 'Xray / Reality, подписки, лимиты и управление доступом', activePage: 'clients' }) %>
-<link rel="stylesheet" href="/css/client-pagination.css?v=20261126-1" />
+<link rel="stylesheet" href="/css/client-pagination.css?v=20261126-2" />
 <div class="client-account-hub"><a href="/subscription-migration" class="link-btn account-hub-link">Личные кабинеты · перенос Happ / INCY</a></div>
 <%
   function flagEmojiFromCode(code) {
@@ -731,7 +731,11 @@
   <div class="modal-card editor-modal client-editor-modal create-client-editor-modal" onclick="event.stopPropagation()">
     <button type="button" class="modal-close" onclick="event.preventDefault(); event.stopPropagation(); hideModalById('createClientModal'); return false;">×</button>
     <h2>Создать клиента</h2>
-    <form method="post" action="/clients" class="js-long-action" data-loading-title="Создаю клиента" data-loading-text="Клиент создаётся на выбранных узлах. Это может занять время.">
+    <form method="post" action="/clients" id="createNexusClientForm" class="js-long-action" data-loading-title="Создаю клиента" data-loading-text="Клиент создаётся на выбранных узлах. Это может занять время.">
+      <label class="switch-row compact router-profile">
+        <input type="checkbox" name="router_profile" value="1">
+        <span><strong>Подписка для роутера</strong><small>Выберите узлы VLESS. После создания откроется окно копирования. Срок начнётся сразу.</small></span>
+      </label>
       <div class="form-grid clean-form">
         <div class="field half">
           <label>Логин</label>
@@ -793,11 +797,12 @@
 
       <div class="checkbox-list node-list">
         <% nodes.forEach(node => { %>
-          <label class="node-item">
+          <label class="node-item" data-create-node-protocol="<%= node.inbound_protocol || '' %>" data-create-node-id="<%= node.id %>">
             <input class="node-check" type="checkbox" name="node_ids" value="<%= node.id %>" />
             <span class="node-info">
               <strong><%- flagIcon(node.country_code, node.country_flag, node.country_name_ru || node.name, node.node_type) %><span><%= nodeName(node) %></span></strong>
               <small><%= nodeEndpointLabel(node) %></small>
+              <small data-create-node-protocol-label><%= node.inbound_protocol ? [node.inbound_protocol, node.inbound_network, node.inbound_security].filter(Boolean).map(value => value.toUpperCase()).join(' / ') : 'Протокол уточняется по подписке узла' %></small>
               <% if (node.subscription_apps) { const apps = node.subscription_apps; %>
                 <small><%= [apps.happ && 'Happ', apps.incy && 'INCY', apps.karing && (apps.verifyKaring ? 'Karing · проверить' : 'Karing')].filter(Boolean).join(' / ') || 'Требуется другой клиент' %></small>
               <% } else { %><small>Совместимость зависит от конфигурации хоста</small><% } %>
@@ -1353,7 +1358,7 @@
 
 <%- include('client_app_links') %>
 <script src="/js/client-usage.js?v=273"></script>
-<script src="/js/client-workflows.js?v=20261126-1" defer></script>
+<script src="/js/client-workflows.js?v=20261126-2" defer></script>
 <script>
 const clientDirectoryMode = <%= clientType === 'xray' ? 'true' : 'false' %>;
 const clientUsageById = new Map(<%- JSON.stringify(clients.map(c => [String(c.id), { id: c.id, limitGb: c.traffic_gb || 0, nodes: (c.node_limits || []).filter(n => n.client_node_id).map(n => ({ id: n.node_id, name: n.country_name_ru || n.name, limitGb: n.traffic_gb || 0, usedBytes: n.used_bytes || 0 })) }])).replace(/</g, '\\u003c') %>);

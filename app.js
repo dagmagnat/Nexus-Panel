@@ -2911,6 +2911,13 @@ function detectSubscriptionAppName(userAgent) {
 function getSubscriptionDeviceFromRequest(req) {
   const hwid = normalizeSubscriptionHwid(req.get('x-hwid'));
   const userAgent = sanitizeSubscriptionDeviceText(req.get('user-agent'), 180);
+  if (req.nexusRouter || (req.nexusPlainApp && !hwid)) {
+    return {
+      hwid: req.nexusRouter ? 'nexus-router-v1' : 'nexus-plain-v1',
+      hwidHint: 'ссылка подписки', osName: '', osVersion: '', deviceModel: '',
+      appName: req.nexusRouter ? 'Роутер' : detectSubscriptionAppName(userAgent) || 'Обычная SUB'
+    };
+  }
   return {
     hwid,
     hwidHint: hwid ? `${hwid.slice(0, 4)}…${hwid.slice(-6)}` : '',
@@ -17250,6 +17257,49 @@ app.post('/clients/transfer/import', requireAuth, parseClientTransferJsonBody, a
   }
 });
 
+const routerNodeProtocolCache = new Map();
+
+app.get('/clients/node-protocols.json', requireAuth, async (req, res) => {
+  res.setHeader('Cache-Control', 'private, no-store');
+  const nodes = db.prepare('SELECT * FROM nodes WHERE enabled = 1 ORDER BY id').all();
+  const now = Date.now();
+  const clientForNode = db.prepare(`SELECT c.* FROM client_nodes cn JOIN clients c ON c.id=cn.client_id
+    WHERE cn.node_id=? AND cn.enabled=1 AND c.enabled=1 AND (c.expiry_time=0 OR c.expiry_time>?)
+      AND (c.start_on_activation=0 OR c.activation_started_at>0)
+    ORDER BY cn.id DESC LIMIT 1`);
+  const results = await runWithConcurrency(nodes, 4, async node => {
+    const cached = routerNodeProtocolCache.get(node.id);
+    if (cached?.expires > now) return cached.result;
+    const inbound = getCachedInbound(node);
+    let types = [];
+    if (inbound?.protocol) {
+      const info = getInboundTransportInfo(inbound);
+      types = [{ protocol: info.protocol, network: info.network, security: info.security }];
+    } else {
+      const client = clientForNode.get(node.id, now);
+      if (client) {
+        const entries = await buildSubscriptionEntries(client, true, {
+          onlyNodeIds: [node.id], excludePolicyOnly: true
+        });
+        types = entries.filter(entry => entry.nodeType !== 'notice').flatMap(({ line }) => {
+          try {
+            const url = new URL(line);
+            return [{ protocol: url.protocol.slice(0, -1), network: url.searchParams.get('type'), security: url.searchParams.get('security') }];
+          } catch (_) { return []; }
+        });
+      }
+    }
+    const result = {
+      id: node.id,
+      protocol: types.some(type => type.protocol === 'vless') ? 'vless' : types[0]?.protocol || '',
+      label: [...new Set(types.map(type => [type.protocol, type.network, type.security].filter(Boolean).join(' / ').toUpperCase()))].join(' · ')
+    };
+    routerNodeProtocolCache.set(node.id, { expires: now + (types.length ? 180000 : 30000), result });
+    return result;
+  });
+  res.json({ nodes: results.filter(item => item.status === 'fulfilled').map(item => item.value) });
+});
+
 app.get('/clients', requireAuth, async (req, res) => {
   try {
   const clientType = 'xray';
@@ -17516,6 +17566,18 @@ app.post('/clients', requireAuth, async (req, res) => {
     if (!Array.isArray(nodeIds)) nodeIds = [nodeIds];
     nodeIds = uniqueList(nodeIds.map(v => Number(v)).filter(v => Number.isInteger(v) && v > 0));
     if (!nodeIds.length) throw new Error('Нужно выбрать хотя бы один узел');
+    const routerProfile = req.body.router_profile === '1';
+    if (routerProfile) {
+      const findNode = db.prepare('SELECT * FROM nodes WHERE id = ? AND enabled = 1');
+      for (const id of nodeIds) {
+        const node = findNode.get(id);
+        if (!node) throw Error('Выбранный узел недоступен.');
+        const cachedProtocol = routerNodeProtocolCache.get(id);
+        const protocol = String(getCachedInbound(node)?.protocol
+          || (cachedProtocol?.expires > Date.now() ? cachedProtocol.result.protocol : '')).toLowerCase();
+        if (protocol && protocol !== 'vless') throw Error(`Узел ${getNodePublicName(node)} не выдаёт VLESS.`);
+      }
+    }
 
     const requestedLogin = String(login || '').trim();
     const remoteScan = await collectRemoteLoginsForNodes(nodeIds);
@@ -17547,7 +17609,7 @@ app.post('/clients', requireAuth, async (req, res) => {
     const cleanTrafficGb = Math.max(0, Number(traffic_gb || 0));
     const totalGbBytes = toTotalGbBytes(cleanTrafficGb);
     const groupId = normalizeClientGroupId(req.body.group_id);
-    const startOnActivation = req.body.start_on_activation === '1' && cleanDurationDays > 0 ? 1 : 0;
+    const startOnActivation = !routerProfile && req.body.start_on_activation === '1' && cleanDurationDays > 0 ? 1 : 0;
 
     const expiryTime = startOnActivation
       ? 0
@@ -17597,7 +17659,12 @@ app.post('/clients', requireAuth, async (req, res) => {
     const message = startOnActivation
       ? 'Клиент создан. Срок начнётся после первого добавления подписки в приложение с поддержкой HWID.'
       : 'Клиент создан на выбранных узлах';
-    res.redirect('/clients?message=' + encodeURIComponent(message));
+    const query = new URLSearchParams({ message });
+    if (routerProfile) {
+      query.set('q', cleanLogin);
+      query.set('router_client', String(clientId));
+    }
+    res.redirect('/clients?' + query.toString());
   } catch (err) {
     res.redirect('/clients?error=' + encodeURIComponent(String(err.message || err)));
   }
@@ -18660,6 +18727,30 @@ app.get('/sub/:slug', async (req, res) => {
 });
 
 
+function visiblePlainSubscriptionEntries(client, entries) {
+  const { hiddenNodeIds } = buildAutoSelectJsonConfigs(client, entries, '');
+  for (const row of db.prepare('SELECT id FROM nodes WHERE hide_standalone_json = 1').all()) hiddenNodeIds.add(row.id);
+  return entries.filter(entry => entry.nodeType !== 'notice' && !hiddenNodeIds.has(Number(entry.nodeId)));
+}
+
+async function listRouterNodeLinks(client) {
+  if (Number(client.enabled) !== 1 || isClientExpired(client) || isClientActivationPending(client)) return [];
+  const entries = await buildSubscriptionEntries(client, true, {
+    excludeNodeIds: getSubscriptionReservedNodeIds(), excludePolicyOnly: true
+  });
+  return visiblePlainSubscriptionEntries(client, entries).flatMap(({ line }) => {
+    if (!/^(?:vless|ss):\/\//i.test(line)) return [];
+    try {
+      const uri = new URL(line);
+      let name;
+      try { name = decodeURIComponent(uri.hash.slice(1)); } catch (_) { name = ''; }
+      const transport = [uri.protocol.slice(0, -1), uri.searchParams.get('type'), uri.searchParams.get('security')]
+        .filter(Boolean).map(value => value.toUpperCase()).join(' / ');
+      return [{ label: `${name || uri.hostname || 'Узел'} · ${transport}`, link: line }];
+    } catch (_) { return []; }
+  });
+}
+
 app.get('/sub-plain/:slug', async (req, res) => {
   const client = db.prepare('SELECT * FROM clients WHERE sub_slug = ? AND enabled = 1').get(req.params.slug);
 
@@ -18667,9 +18758,17 @@ app.get('/sub-plain/:slug', async (req, res) => {
     return res.status(404).send('Subscription not found');
   }
 
+  const plainProfile = req.nexusRouter || req.nexusPlainApp;
+  if (plainProfile && isClientActivationPending(client)
+      && (req.nexusRouter || !normalizeSubscriptionHwid(req.get('x-hwid')))) {
+    return res.status(409).send('Activate the subscription with an HWID-capable application first.');
+  }
   if (maybeRedirectToCurrentSubscriptionRevision(req, res)) return;
 
-  const { entries, subscriptionExpiryOverride } = await buildSubscriptionEntriesForRequest(req, res, client);
+  const { entries, deviceState, subscriptionExpiryOverride } = await buildSubscriptionEntriesForRequest(req, res, client);
+  if (plainProfile && (isClientExpired(client) || !deviceState?.allowed)) {
+    return res.status(403).send('Subscription expired or device slot unavailable.');
+  }
   if(req.query.download==='awg') {
     res.setHeader('Cache-Control','no-store');
     if(res.statusCode>=400)return res.send('Device access denied');
@@ -18684,15 +18783,10 @@ app.get('/sub-plain/:slug', async (req, res) => {
     return res.send(Buffer.from(match[1],'base64url').toString('utf8'));
   }
   let visibleEntries = entries;
-  if (req.nexusKaring) {
-    const { hiddenNodeIds } = buildAutoSelectJsonConfigs(client, entries, '');
-    for (const row of db.prepare('SELECT id FROM nodes WHERE hide_standalone_json = 1').all()) hiddenNodeIds.add(row.id);
-    visibleEntries = entries.filter(entry => entry.nodeType !== 'notice'
-      && !hiddenNodeIds.has(Number(entry.nodeId)) && supportsKaringLink(entry.line));
-  }
+  if (req.nexusKaring || plainProfile) visibleEntries = visiblePlainSubscriptionEntries(client, entries);
   const lines = visibleEntries
     .map(entry => String(entry?.line || '').trim())
-    .filter(line => req.nexusKaring ? supportsKaringLink(line)
+    .filter(line => req.nexusRouter ? /^vless:\/\//i.test(line) : req.nexusKaring || req.nexusPlainApp ? supportsKaringLink(line)
       : /^(?:vless|vmess|trojan|ss|socks|hysteria2?|hy2|tuic|wireguard|amneziawg|awg):\/\//i.test(line));
   const subscriptionName = getSetting('subscription_name', DEFAULT_SUBSCRIPTION_NAME);
   const subscriptionUserInfo = buildSubscriptionUserInfo(entries, client, { expiryTime: subscriptionExpiryOverride });
@@ -18703,6 +18797,7 @@ app.get('/sub-plain/:slug', async (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
+  if (req.nexusRouter && !lines.length && res.statusCode === 200) return res.status(404).send('No VLESS nodes available for this router.');
   res.send(lines.join('\n'));
 });
 
@@ -20473,7 +20568,7 @@ const subscriptionBilling = require('./lib_subscription_billing').createBilling(
   syncClient:async id=>{const client=db.prepare('SELECT * FROM clients WHERE id=?').get(id);const result=await updateClientEverywhere(client,{expiry_time:client.expiry_time,duration_days:client.duration_days,device_limit:client.device_limit});if(result.failed)throw Error('Срок сохранён; не удалось синхронизировать узлов: '+result.failed+'. Повторите синхронизацию заказа.');}
 });
 require('./lib_subscription_migration_routes').attachSubscriptionMigrationRoutes({
-  app, db, migration: subscriptionMigration, karingLinks, requireAuth, render,
+  app, db, migration: subscriptionMigration, karingLinks, routerNodes: listRouterNodeLinks, requireAuth, render,
   subscriptionName: () => getSetting('subscription_name', DEFAULT_SUBSCRIPTION_NAME),
   billing: subscriptionBilling,
   supportUrl: () => getSubscriptionSupportMeta().url,

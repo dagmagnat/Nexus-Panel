@@ -8,14 +8,21 @@
       <button type="button" class="btn-secondary" data-sub-app="happ" aria-pressed="false">Happ</button>
       <button type="button" class="btn-secondary" data-sub-app="incy" aria-pressed="false">INCY</button>
       <button type="button" class="btn-secondary" data-sub-app="karing" aria-pressed="false">Karing</button>
+      <button type="button" class="btn-secondary" data-sub-app="router" aria-pressed="false">Роутер</button>
+      <button type="button" class="btn-secondary" data-sub-app="sub" aria-pressed="false">Обычная SUB</button>
     </div>
+    <details id="clientRouterNodes" hidden>
+      <summary>Отдельный узел для Podkop</summary>
+      <p id="clientRouterNodesStatus" class="hint" role="status"></p>
+      <label id="clientRouterNodeField" hidden>Узел и протокол <select id="clientRouterNode"></select></label>
+      <button id="clientRouterNodeCopy" class="btn-secondary" type="button" hidden>Копировать ссылку узла</button>
+    </details>
     <div class="client-app-preview">
       <p id="clientAppStatus" role="status">Выберите приложение</p>
       <img id="clientAppQr" width="220" height="220" alt="" hidden>
     </div>
   </div>
   <footer class="client-workflow-footer">
-    <button type="button" class="btn-secondary" id="clientAppImportCopy" hidden>Скопировать URL вручную</button>
     <button type="button" class="btn-main" id="clientAppCopy" disabled>Копировать ссылку</button>
   </footer>
 </dialog>

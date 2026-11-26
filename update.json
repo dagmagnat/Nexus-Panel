@@ -1,11 +1,12 @@
 {
-  "version": "2.7.37",
-  "name": "Nexus Panel 2.7.37 — подписки приложений и массовые действия",
+  "version": "2.7.38",
+  "name": "Nexus Panel 2.7.38 — обычные подписки и режим роутера",
   "repository": "https://github.com/dagmagnat/Nexus-Panel",
   "archive_url": "https://github.com/dagmagnat/Nexus-Panel/archive/refs/heads/main.zip",
   "archive": "Nexus-Panel-main.zip",
   "filename": "Nexus-Panel-main.zip",
   "notes": [
+    "Подписки для роутеров и Hiddify, ссылки на отдельные узлы и HTTPS QR для Karing.",
     "Выдача подписки с отдельными QR и ссылками для Happ, INCY и Karing. Karing также доступен в кабинете клиента.",
     "Массовые действия по всей базе, группе, метке или отмеченным клиентам. Удаление требует подтверждения YES.",
     "Исправлены создание групп и меток, отступы пагинации и выбор подписки на мобильных.",

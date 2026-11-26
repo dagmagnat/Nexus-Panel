@@ -1,6 +1,6 @@
 'use strict';
 const QRCode=require('qrcode');
-function attachSubscriptionMigrationRoutes({ app, db, migration, karingLinks, requireAuth, render, subscriptionName, portalModel, billing, supportUrl=()=>'' }) {
+function attachSubscriptionMigrationRoutes({ app, db, migration, karingLinks, routerNodes, requireAuth, render, subscriptionName, portalModel, billing, supportUrl=()=>'' }) {
   let bulk = { running: false, total: 0, done: 0, errors: [] };
   const back = (res, message, error = false) => res.redirect('/subscription-migration?' + (error ? 'error=' : 'message=') + encodeURIComponent(message));
   app.get('/subscription-migration', requireAuth, (req, res) => {
@@ -45,11 +45,16 @@ function attachSubscriptionMigrationRoutes({ app, db, migration, karingLinks, re
     const client = db.prepare('SELECT * FROM clients WHERE id = ?').get(Number(req.params.id));
     if (!client) return res.status(404).json({ error: 'Клиент не найден.' });
     const appName = req.body.app;
-    if (!['happ', 'incy', 'karing'].includes(appName)) return res.status(400).json({ error: 'Выберите приложение.' });
+    if (!['happ', 'incy', 'karing', 'router', 'sub'].includes(appName)) return res.status(400).json({ error: 'Выберите приложение.' });
     try {
+      if (appName === 'router') {
+        if (req.body.detail === 'nodes') return res.json({ nodes: await routerNodes(client) });
+        return res.json({ link: karingLinks.routerUrl(client) });
+      }
+      if (appName === 'sub') return res.json({ link: karingLinks.plainUrl(client) });
       const karing = appName === 'karing' ? karingLinks.links(client) : null;
       const link = karing?.open || (migration.links(client) || await migration.prepare(client, null))[appName];
-      const qr = await QRCode.toDataURL(link, { width: 420, margin: 4, errorCorrectionLevel: 'L' });
+      const qr = await QRCode.toDataURL(karing?.url || link, { width: 420, margin: 4, errorCorrectionLevel: 'L' });
       res.json({ link, qr, ...(karing ? { importUrl: karing.url } : {}) });
     } catch (error) {
       console.error('Client application link:', error.message);
@@ -61,7 +66,7 @@ function attachSubscriptionMigrationRoutes({ app, db, migration, karingLinks, re
     const appName=req.query.app===undefined?'happ':req.query.app;
     if(!['happ','incy','karing'].includes(appName))return res.sendStatus(400);
     const links=migration.links(req.portalClient);
-    const link = appName === 'karing' ? karingLinks?.links(req.portalClient).open : links?.[appName];
+    const link = appName === 'karing' ? karingLinks?.links(req.portalClient).url : links?.[appName];
     if(!link)return res.sendStatus(404);
     try{
       const png=await QRCode.toBuffer(link,{type:'png',width:360,margin:4,errorCorrectionLevel:'L'});

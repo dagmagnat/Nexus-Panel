@@ -37,6 +37,9 @@ function updateApp(value) {
   install.setAttribute('aria-label', 'Установить ' + app.label);
   const src = '/account/connection-qr?app=' + value;
   if (qr.getAttribute('src') !== src) { qr.hidden = false; qrError.hidden = true; qr.src = src; }
+  $('#connection-qr-hint').textContent = value === 'karing'
+    ? 'Сканируйте в Karing и включите X-HWID при импорте.'
+    : 'Отсканируйте QR-код или отправьте ключ';
   qr.alt = 'QR-код подписки ' + app.label + ' для другого устройства';
   preference('app', value);
 }

@@ -684,6 +684,7 @@ test('client actions target the whole directory and app links serve a protected 
   assert.equal(protectedLink.status, 200, protectedLink.text);
   const { link, qr, importUrl } = JSON.parse(protectedLink.text);
   assert.match(qr, /^data:image\/png;base64,/);
+  assert.equal(qr, await require('qrcode').toDataURL(importUrl, { width: 420, margin: 4, errorCorrectionLevel: 'L' }));
   assert.equal(new URL(link).searchParams.get('url'), importUrl);
   assert.equal(new URL(link).searchParams.get('x-hwid'), 'true');
   assert.ok(!importUrl.includes(client.sub_slug));
@@ -693,8 +694,23 @@ test('client actions target the whole directory and app links serve a protected 
   const hwid = { 'X-HWID': 'test-karing-device', 'User-Agent': 'Karing' };
   assert.doesNotMatch((await request(route)).text, /vless:\/\//);
   assert.match((await request(route, null, hwid)).text, /vless:\/\//);
+  const router = JSON.parse((await request(appLinks, { app: 'router' })).text);
+  assert.match(router.link, /\/sub-plain\/router-/);
+  assert.equal(router.qr, undefined);
+  const routerPath = new URL(router.link).pathname;
+  const routerPayload = await request(routerPath);
+  assert.equal(routerPayload.status, 200);
+  assert.ok(routerPayload.text.split('\n').every(line => line.startsWith('vless://')));
+  assert.equal((await request(routerPath)).status, 200);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM subscription_devices WHERE app_name='Роутер'").get().n, 1);
+  const routerNodes = JSON.parse((await request(appLinks, { app: 'router', detail: 'nodes' })).text).nodes;
+  assert.ok(routerNodes[0].label.includes('VLESS') && routerNodes[0].link.startsWith('vless://'));
+  const ordinary = JSON.parse((await request(appLinks, { app: 'sub' })).text);
+  assert.match((await request(new URL(ordinary.link).pathname)).text, /vless:\/\//);
   db.prepare('UPDATE nodes SET hide_standalone_json = 1').run();
   assert.doesNotMatch((await request(route, null, hwid)).text, /vless:\/\//);
+  assert.equal((await request(routerPath)).status, 404);
+  db.prepare('UPDATE nodes SET hide_standalone_json = 0').run();
   db.prepare('UPDATE clients SET sub_slug = ? WHERE id = ?').run('new-token', client.id);
   assert.equal((await request(route, null, hwid)).status, 404);
 
@@ -729,6 +745,19 @@ test('client actions target the whole directory and app links serve a protected 
         await page.locator('#clientAppQr').waitFor({ state: 'visible' });
         assert.equal(await page.locator('#clientAppCopy').isEnabled(), true);
         assert.equal(await page.locator('#clientAppDialog').evaluate(el => el.scrollWidth > el.clientWidth + 1), false);
+        await page.getByRole('button', { name: 'Роутер', exact: true }).click();
+        await page.getByRole('button', { name: 'Копировать подписку', exact: true }).waitFor({ state: 'visible' });
+        assert.equal(await page.locator('#clientAppQr').isVisible(), false);
+        await page.locator('#clientRouterNodes summary').click();
+        await page.locator('#clientRouterNodeCopy').waitFor({ state: 'visible' });
+        await page.locator('#clientAppDialog').getByRole('button', { name: 'Закрыть' }).click();
+        await page.getByRole('button', { name: 'Создать клиента', exact: true }).first().click();
+        await page.locator('#createNexusClientForm [name=router_profile]').check();
+        assert.equal(await page.locator('#createNexusClientForm [name=start_on_activation]').isDisabled(), true);
+        if (width > 760) {
+          const card = await page.locator('#createClientModal .modal-card').boundingBox();
+          assert.ok(Math.abs(card.x - (width - card.x - card.width)) < 4);
+        }
       }
       assert.deepEqual(errors, []);
     } finally {

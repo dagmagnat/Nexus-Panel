@@ -46,7 +46,7 @@
 .client-workflow-body [data-bulk-modes="edit"] > .client-workflow-check { margin: 8px 0; }
 .client-workflow-body .client-workflow-danger { border-color: #d0596e; }
 .client-app-dialog { width: min(480px, calc(100% - 24px)); }
-.client-app-choices { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.client-app-choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(75px, 1fr)); gap: 8px; }
 .client-app-choices button[aria-pressed=true] { outline: 2px solid var(--accent, #7065ed); outline-offset: -2px; font-weight: 700; }
 .client-app-preview { display: grid; justify-items: center; gap: 10px; padding: 12px; text-align: center; border: 1px solid var(--line); border-radius: 12px; }
 .client-app-preview img { display: block; width: min(220px, 100%); height: auto; aspect-ratio: 1; background: #fff; border-radius: 8px; }
@@ -56,7 +56,18 @@
 .mobile-client-primary-actions [data-client-app-links] { display: grid; place-items: center; padding: 6px 9px; }
 .mobile-client-primary-actions svg { width: 16px; height: 16px; }
 .desktop-client-actions:has([data-client-app-links]) { grid-template-columns: 1fr; }
+#clientRouterNodes > * + * { margin-top: 8px; }
+#createClientModal [hidden] { display: none !important; }
+#createClientModal .router-profile { margin: 0 0 16px; }
+@media(min-width: 761px) {
+  [data-interface-theme] #createClientModal.modal { justify-items: center; align-items: center; padding: 18px; }
+  [data-interface-theme] #createClientModal.modal > .modal-card {
+    width: min(880px, 100%); height: auto; max-height: calc(100dvh - 36px);
+    margin: auto; border-radius: 16px; padding: 22px 26px;
+  }
+}
 @media(max-width: 520px) {
+  .client-app-choices { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .client-workflow-grid { grid-template-columns: minmax(0, 1fr); }
   .client-workflow-heading button, .client-app-choices button, .client-workflow-footer button { min-height: 42px; }
 }

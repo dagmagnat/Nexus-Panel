@@ -81,34 +81,82 @@
     });
   }
 
+  const createForm = document.getElementById('createNexusClientForm');
+  if (createForm) {
+    const profile = createForm.elements.router_profile;
+    const activation = createForm.elements.start_on_activation;
+    const rows = [...createForm.querySelectorAll('[data-create-node-protocol]')];
+    let protocolRequest;
+    function applyRouterFilter() {
+      activation.disabled = profile.checked;
+      for (const row of rows) {
+        const protocol = row.dataset.createNodeProtocol.toLowerCase();
+        const hide = profile.checked && protocol && protocol !== 'vless';
+        row.hidden = Boolean(hide);
+        for (const input of row.querySelectorAll('input')) {
+          input.disabled = Boolean(hide);
+          if (hide && input.type === 'checkbox') input.checked = false;
+        }
+      }
+    }
+    profile.addEventListener('change', async () => {
+      applyRouterFilter();
+      if (!profile.checked || !rows.some(row => !row.dataset.createNodeProtocol)) return;
+      protocolRequest ||= fetch('/clients/node-protocols.json').then(response => {
+        if (!response.ok) throw Error('Node protocols unavailable');
+        return response.json();
+      }).catch(() => { protocolRequest = null; });
+      const result = await protocolRequest;
+      if (!result) return;
+      const byId = new Map(result.nodes.map(node => [String(node.id), node]));
+      for (const row of rows) {
+        const node = byId.get(row.dataset.createNodeId);
+        if (!node?.protocol) continue;
+        row.dataset.createNodeProtocol = node.protocol;
+        row.querySelector('[data-create-node-protocol-label]').textContent = node.label;
+      }
+      applyRouterFilter();
+    });
+  }
+
   const dialog = document.getElementById('clientAppDialog');
   if (!dialog) return;
-  const apps = { happ: 'Happ', incy: 'INCY', karing: 'Karing' };
+  const apps = { happ: 'Happ', incy: 'INCY', karing: 'Karing', router: 'Роутер', sub: 'Обычная SUB' };
   const choices = document.getElementById('clientAppChoices');
   const buttons = choices.querySelectorAll('[data-sub-app]');
   const status = document.getElementById('clientAppStatus');
   const image = document.getElementById('clientAppQr');
   const copy = document.getElementById('clientAppCopy');
-  const copyImport = document.getElementById('clientAppImportCopy');
-  let clientId, pending, currentLink, currentImportUrl;
+  const routerDetails = document.getElementById('clientRouterNodes');
+  const routerStatus = document.getElementById('clientRouterNodesStatus');
+  const routerField = document.getElementById('clientRouterNodeField');
+  const routerNode = document.getElementById('clientRouterNode');
+  const copyNode = document.getElementById('clientRouterNodeCopy');
+  let clientId, pending, nodeRequest, currentLink, nodeLinks = [];
   function clearPreview(message) {
     if (pending) pending.abort();
-    currentLink = currentImportUrl = '';
+    if (nodeRequest) nodeRequest.abort();
+    currentLink = '';
+    nodeLinks = [];
+    routerDetails.hidden = true;
+    routerDetails.open = false;
+    routerField.hidden = copyNode.hidden = true;
     image.hidden = true;
     image.removeAttribute('src');
     status.textContent = message;
     copy.disabled = true;
-    copyImport.hidden = true;
     copy.textContent = 'Копировать ссылку';
   }
-  document.addEventListener('click', event => {
-    const trigger = event.target.closest('[data-client-app-links]');
-    if (!trigger) return;
+  function openAppLinks(trigger) {
     clientId = trigger.dataset.clientAppLinks;
     clearPreview(trigger.hasAttribute('data-copy-first') ? 'Выберите, какую ссылку скопировать' : 'Выберите приложение');
     buttons.forEach(button => button.setAttribute('aria-pressed', 'false'));
     document.getElementById('clientAppTitle').textContent = 'Подписка · ' + trigger.dataset.clientTitle;
     dialog.showModal();
+  }
+  document.addEventListener('click', event => {
+    const trigger = event.target.closest('[data-client-app-links]');
+    if (trigger) openAppLinks(trigger);
   });
   dialog.addEventListener('close', () => clearPreview(''));
   choices.addEventListener('click', async event => {
@@ -129,17 +177,44 @@
       const result = await response.json();
       if (controller.signal.aborted) return;
       if (!response.ok) throw new Error(result.error || 'Ссылка недоступна.');
-      currentLink = result.link;
-      currentImportUrl = result.importUrl || '';
-      status.textContent = 'QR-код для ' + name;
-      image.alt = status.textContent;
-      image.src = result.qr;
-      image.hidden = false;
-      copy.textContent = 'Копировать ссылку ' + name;
+      currentLink = result.importUrl || result.link;
+      status.textContent = {
+        router: 'HTTPS-подписка VLESS для RouteWolf и Forkop. Для Podkop выберите отдельный узел ниже.',
+        sub: 'Обычная HTTPS-подписка для Hiddify, Forkop и совместимых приложений.',
+        karing: 'Сканируйте в Karing. При подтверждении импорта включите X-HWID.',
+      }[app] || 'QR-код для ' + name;
+      if (result.qr) {
+        image.alt = 'QR-код для ' + name;
+        image.src = result.qr;
+        image.hidden = false;
+      }
+      routerDetails.hidden = app !== 'router';
+      copy.textContent = app === 'router' || app === 'sub' ? 'Копировать подписку' : 'Копировать ссылку ' + name;
       copy.disabled = false;
       copyImport.hidden = !currentImportUrl;
     } catch (error) {
       if (!controller.signal.aborted) status.textContent = error instanceof SyntaxError ? 'Ссылка недоступна. Обновите страницу.' : error.message;
+    }
+  });
+  routerDetails.addEventListener('toggle', async () => {
+    if (!routerDetails.open || routerDetails.hidden || nodeLinks.length) return;
+    if (nodeRequest) nodeRequest.abort();
+    const controller = new AbortController();
+    nodeRequest = controller;
+    routerStatus.textContent = 'Загружаю ссылки узлов…';
+    try {
+      const response = await fetch('/clients/' + encodeURIComponent(clientId) + '/app-subscription', {
+        method: 'POST', body: new URLSearchParams({ app: 'router', detail: 'nodes' }), signal: controller.signal,
+      });
+      const result = await response.json();
+      if (controller.signal.aborted) return;
+      if (!response.ok) throw Error(result.error || 'Ссылки узлов недоступны.');
+      nodeLinks = result.nodes;
+      routerNode.replaceChildren(...nodeLinks.map((item, index) => new Option(item.label, String(index))));
+      routerField.hidden = copyNode.hidden = !nodeLinks.length;
+      routerStatus.textContent = nodeLinks.length ? '' : 'Нет доступных узлов VLESS или Shadowsocks.';
+    } catch (error) {
+      if (!controller.signal.aborted) routerStatus.textContent = error.message;
     }
   });
   async function copyLink(value) {
@@ -165,5 +240,17 @@
     }
   }
   copy.addEventListener('click', () => copyLink(currentLink));
-  copyImport.addEventListener('click', () => copyLink(currentImportUrl));
+  copyNode.addEventListener('click', () => copyLink(nodeLinks[Number(routerNode.value)]?.link));
+
+  const params = new URLSearchParams(location.search);
+  const routerClient = params.get('router_client');
+  if (/^\d+$/.test(routerClient || '')) {
+    const trigger = document.querySelector('[data-client-app-links="' + routerClient + '"]');
+    if (trigger) {
+      openAppLinks(trigger);
+      choices.querySelector('[data-sub-app="router"]').click();
+    }
+    params.delete('router_client');
+    history.replaceState(null, '', location.pathname + (params.size ? '?' + params.toString() : ''));
+  }
 })();
