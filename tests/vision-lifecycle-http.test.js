@@ -90,7 +90,7 @@ for(const modern of [false,true])test('Vision lifecycle: '+(modern?'global clien
  assert.ok(!new URL(tlsNode.location,base).searchParams.has('error'),tlsNode.location+log);
  assert.equal(links.get('bob').get(3),vision);
  // Per-node removal keeps the user's other attachment.
- const removed=await request('/clients/bulk-remove-node',{client_ids:'2',bulk_node_id:'1',bulk_filter_node_id:'1',bulk_confirmation:'CONFIRMED'});
+ const removed=await request('/clients/bulk-remove-node',{client_ids:'2',bulk_node_id:'1',bulk_filter_node_id:'1',bulk_confirmation:'YES'});
  assert.equal(removed.status,200,removed.location+log);
  assert.equal(links.get('bob').has(1),false);assert.equal(links.get('bob').get(3),vision,'other remote inbound remains');
  // Whole-directory and group/tag operations do not depend on checkbox pagination.
@@ -104,10 +104,10 @@ for(const modern of [false,true])test('Vision lifecycle: '+(modern?'global clien
  await request('/clients/apply-to-node',{bulk_scope:'group',scope_group_id:'7',node_id:'2',traffic_gb:'7'});
  assert.equal(db.prepare('SELECT traffic_gb FROM client_nodes WHERE client_id=2 AND node_id=2').get().traffic_gb,7);
  assert.equal(db.prepare('SELECT traffic_gb FROM client_nodes WHERE client_id=1 AND node_id=2').get().traffic_gb,12);
- await request('/clients/bulk-remove-node',{bulk_scope:'tag',scope_tag_id:'9',bulk_node_id:'2',bulk_confirmation:'CONFIRMED'});
+ await request('/clients/bulk-remove-node',{bulk_scope:'tag',scope_tag_id:'9',bulk_node_id:'2',bulk_confirmation:'YES'});
  assert.equal(db.prepare('SELECT id FROM client_nodes WHERE client_id=1 AND node_id=2').get(),undefined);
  assert.ok(db.prepare('SELECT id FROM client_nodes WHERE client_id=2 AND node_id=2').get());
- await request('/clients/bulk-remove-node',{bulk_scope:'node',bulk_node_id:'2',bulk_confirmation:'CONFIRMED'});
+ await request('/clients/bulk-remove-node',{bulk_scope:'node',bulk_node_id:'2',bulk_confirmation:'YES'});
  assert.equal(db.prepare('SELECT COUNT(*) n FROM client_nodes WHERE node_id=2').get().n,0);
  assert.equal(db.prepare('SELECT COUNT(*) n FROM clients').get().n,3);
  const writesBefore=writes.length;

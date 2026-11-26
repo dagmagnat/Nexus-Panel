@@ -1,7 +1,62 @@
-.client-pagination{display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin-top:18px;padding:14px 0;border-top:1px solid var(--border,rgba(148,163,184,.2))}
+.client-pagination{display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin:18px clamp(12px,2vw,20px) 0;padding:14px 0;border-top:1px solid var(--border,rgba(148,163,184,.2))}
 .client-pagination label{display:flex;align-items:center;gap:8px;white-space:nowrap}
 .client-pagination select{width:auto;min-width:76px}
 .client-pagination>span{flex:1;min-width:180px;font-size:.85rem;opacity:.8}
 .client-pagination-links{display:flex;align-items:center;flex-wrap:wrap;gap:6px}
 .client-pagination-links [aria-current=page]{outline:1px solid #8196ff;background:#435de0;color:#fff!important}
 @media(max-width:600px){.client-pagination>span{flex-basis:100%}.client-pagination-links{width:100%}}
+
+.client-workflow-dialog {
+  box-sizing: border-box;
+  width: min(680px, calc(100% - 24px));
+  max-height: calc(100dvh - 24px);
+  padding: 0;
+  color: var(--text);
+  background: var(--card, var(--panel, Canvas));
+  border: 1px solid var(--line, #cbd5e1);
+  border-radius: 16px;
+  box-shadow: 0 20px 80px #0b102855;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.client-workflow-dialog::backdrop { background: #06102184; }
+.client-workflow-dialog [hidden] { display: none !important; }
+.client-workflow-heading, .client-workflow-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  padding: 14px clamp(14px, 3vw, 22px);
+}
+.client-workflow-heading { justify-content: space-between; border-bottom: 1px solid var(--line); }
+.client-workflow-heading h2 { margin: 0; font-size: 1.1rem; overflow-wrap: anywhere; }
+.client-workflow-heading button { padding-inline: 12px; font-size: 1.15rem; }
+.client-workflow-body { display: grid; gap: 14px; padding: 16px clamp(14px, 3vw, 22px); }
+.client-workflow-body p { margin: 0; }
+.client-workflow-footer { justify-content: flex-end; border-top: 1px solid var(--line); }
+.client-workflow-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.client-workflow-body fieldset { display: grid; gap: 10px; margin: 0; min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: 10px; }
+.client-workflow-body legend { padding: 0 6px; font-weight: 700; }
+.client-workflow-body label { display: grid; gap: 6px; min-width: 0; }
+.client-workflow-body input:not([type=checkbox]), .client-workflow-body select { width: 100%; min-width: 0; }
+.client-workflow-body .client-workflow-check, .client-workflow-picks label { display: flex; align-items: center; gap: 8px; }
+.client-workflow-check input, .client-workflow-picks input { margin: 0; flex: 0 0 auto; }
+.client-workflow-picks { display: grid; gap: 9px; padding: 10px 0; max-height: 16rem; overflow: auto; overflow-wrap: anywhere; }
+.client-workflow-body details summary { cursor: pointer; }
+.client-workflow-body [data-bulk-modes="edit"] > .client-workflow-check { margin: 8px 0; }
+.client-workflow-body .client-workflow-danger { border-color: #d0596e; }
+.client-app-dialog { width: min(480px, calc(100% - 24px)); }
+.client-app-choices { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.client-app-choices button[aria-pressed=true] { outline: 2px solid var(--accent, #7065ed); outline-offset: -2px; font-weight: 700; }
+.client-app-preview { display: grid; justify-items: center; gap: 10px; padding: 12px; text-align: center; border: 1px solid var(--line); border-radius: 12px; }
+.client-app-preview img { display: block; width: min(220px, 100%); height: auto; aspect-ratio: 1; background: #fff; border-radius: 8px; }
+.mobile-client-expiry { flex-wrap: wrap; gap: 6px; }
+.mobile-client-primary-actions { display: flex; align-items: center; gap: 6px; margin-inline-start: auto; }
+.mobile-client-primary-actions button { min-height: 34px; }
+.mobile-client-primary-actions [data-client-app-links] { display: grid; place-items: center; padding: 6px 9px; }
+.mobile-client-primary-actions svg { width: 16px; height: 16px; }
+.desktop-client-actions:has([data-client-app-links]) { grid-template-columns: 1fr; }
+@media(max-width: 520px) {
+  .client-workflow-grid { grid-template-columns: minmax(0, 1fr); }
+  .client-workflow-heading button, .client-app-choices button, .client-workflow-footer button { min-height: 42px; }
+}

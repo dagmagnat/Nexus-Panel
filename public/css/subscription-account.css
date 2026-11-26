@@ -15,3 +15,12 @@
 .shop-bar{display:none;padding-bottom:10px}body[data-view=shop] .shop-bar{display:block}body[data-view=shop]{--dock-height:150px}.shop-bar .button{justify-content:space-between}.shop-bar #dock-price{margin-left:auto;font-size:17px;font-weight:800}
 
 .expired-connect{display:flex;align-items:center;justify-content:center;gap:12px;width:100%;min-height:50px;background:var(--danger);color:var(--danger-text);border-radius:13px;font-weight:750;font-size:15px}body[data-expired="1"] #connect-app,body[data-expired="1"] #install-app{display:none}
+.karing-logo { background: linear-gradient(135deg, #665af2, #3775c4); }
+.app-choices:has([data-app=karing]) { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 520px) {
+  .app-choices:has([data-app=karing]) .app-choice { gap: 6px; padding-inline: 7px; }
+  .app-choices:has([data-app=karing]) .app-logo { width: 24px; height: 24px; font-size: 13px; }
+  .app-choices:has([data-app=karing]) .incy-logo { font-size: 7px; }
+  .app-choices:has([data-app=karing]) .choice-dot { display: none; }
+  .app-choices:has([data-app=karing]) strong { font-size: 12px; }
+}

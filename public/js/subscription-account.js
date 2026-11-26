@@ -4,19 +4,48 @@ const $=s=>document.querySelector(s),$$=s=>Array.from(document.querySelectorAll(
 const status=$('#portal-status');let toastTimer;
 function toast(text){status.textContent=text;status.classList.add('visible');clearTimeout(toastTimer);toastTimer=setTimeout(()=>status.classList.remove('visible'),4200);}
 function preference(key,value){try{if(value===undefined)return localStorage.getItem('aero-portal-'+key);localStorage.setItem('aero-portal-'+key,value);}catch{}}
-let selectedApp=preference('app')==='incy'?'incy':'happ';
+const apps = {
+  happ: { label: 'Happ', icon: 'H', install: 'https://www.happ.su/main' },
+  incy: { label: 'INCY', icon: 'INCY', install: 'https://incy.cc/' },
+  karing: { label: 'Karing', icon: 'K', install: 'https://karing.app/download' },
+};
+function appLink(app) { return document.getElementById(app + '-link'); }
+function copyValue(app) { const link = appLink(app); return link.dataset.importUrl || link.getAttribute('href'); }
+let selectedApp = appLink(preference('app')) ? preference('app') : 'happ';
 const platforms={ios:'iPhone / iPad',android:'Android',windows:'Windows',mac:'macOS',linux:'Linux'};
 const ua=navigator.userAgent,automatic=/Android/i.test(ua)?'android':/iPhone|iPad/i.test(ua)||(/Macintosh/i.test(ua)&&navigator.maxTouchPoints>1)?'ios':/Mac/i.test(ua)?'mac':/Linux/i.test(ua)?'linux':'windows';
 let selectedPlatform=platforms[preference('platform')]?preference('platform'):automatic;
 function updatePlatform(value){selectedPlatform=value;$$('[data-platform]').forEach(b=>{const on=b.dataset.platform===value;b.classList.toggle('selected',on);b.setAttribute('aria-pressed',String(on));});$('#platform-hint').textContent=platforms[value]+(value===automatic?' · определено':' · выбрано');preference('platform',value);}
 const qr=$('#connection-qr'),qrError=$('#qr-error');qr.addEventListener('error',()=>{qr.hidden=true;qrError.hidden=false;});qr.addEventListener('load',()=>{qr.hidden=false;qrError.hidden=true;});
-function updateApp(value){selectedApp=value;const label=value==='incy'?'INCY':'Happ',link=$('#'+value+'-link').getAttribute('href');$$('[data-app]').forEach(b=>{const on=b.dataset.app===value;b.classList.toggle('selected',on);b.setAttribute('aria-pressed',String(on));b.querySelector('small').textContent=on?'Выбрано':'Доступно';});$('#connect-app').setAttribute('href',link);$('#connect-label').textContent='Подключиться в '+label;const logo=$('#connect-logo');logo.textContent=value==='incy'?'INCY':'H';logo.className='app-logo '+(value==='incy'?'incy-logo':'happ-logo');const install=$('#install-app');install.href=value==='incy'?'https://incy.cc/':'https://www.happ.su/main';install.setAttribute('aria-label','Установить '+label);const src='/account/connection-qr?app='+value;if(qr.getAttribute('src')!==src){qr.hidden=false;qrError.hidden=true;qr.src=src;}qr.alt='QR-код подписки '+label+' для другого устройства';preference('app',value);}
+function updateApp(value) {
+  if (!appLink(value)) return;
+  selectedApp = value;
+  const app = apps[value];
+  $$('[data-app]').forEach(button => {
+    const on = button.dataset.app === value;
+    button.classList.toggle('selected', on);
+    button.setAttribute('aria-pressed', String(on));
+    button.querySelector('small').textContent = on ? 'Выбрано' : 'Доступно';
+  });
+  $('#connect-app').setAttribute('href', appLink(value).getAttribute('href'));
+  $('#connect-label').textContent = 'Подключиться в ' + app.label;
+  const logo = $('#connect-logo');
+  logo.textContent = app.icon;
+  logo.className = 'app-logo ' + value + '-logo';
+  const install = $('#install-app');
+  install.href = app.install;
+  install.setAttribute('aria-label', 'Установить ' + app.label);
+  const src = '/account/connection-qr?app=' + value;
+  if (qr.getAttribute('src') !== src) { qr.hidden = false; qrError.hidden = true; qr.src = src; }
+  qr.alt = 'QR-код подписки ' + app.label + ' для другого устройства';
+  preference('app', value);
+}
 $$('[data-platform]').forEach(b=>b.addEventListener('click',()=>updatePlatform(b.dataset.platform)));
 $$('[data-app]').forEach(b=>b.addEventListener('click',()=>updateApp(b.dataset.app)));
 updatePlatform(selectedPlatform);updateApp(selectedApp);
 async function copy(text,message){try{if(navigator.clipboard&&window.isSecureContext)await navigator.clipboard.writeText(text);else{const field=document.createElement('textarea');field.value=text;field.className='sr-only';document.body.append(field);field.focus();field.select();const ok=document.execCommand('copy');field.remove();if(!ok)throw Error('copy');}toast(message||'Скопировано');return true;}catch{toast('Не удалось скопировать. Нажмите и удерживайте кнопку подключения, чтобы скопировать ссылку.');return false;}}
-$('#copy-connection').addEventListener('click',()=>copy($('#'+selectedApp+'-link').getAttribute('href'),'Ключ скопирован. Импортируйте его в '+(selectedApp==='incy'?'INCY':'Happ')+'.'));
-$('#share-connection').addEventListener('click',async()=>{const text=$('#'+selectedApp+'-link').getAttribute('href');if(navigator.share){try{await navigator.share({title:document.title,text});}catch(e){if(e.name!=='AbortError')await copy(text,'Ключ скопирован — отправьте его на другое устройство.');}}else await copy(text,'Ключ скопирован — отправьте его на другое устройство.');});
+$('#copy-connection').addEventListener('click',()=>copy(copyValue(selectedApp), selectedApp === 'karing' ? 'Ссылка скопирована. При импорте в Karing включите X-HWID.' : 'Ключ скопирован. Импортируйте его в '+apps[selectedApp].label+'.'));
+$('#share-connection').addEventListener('click',async()=>{const text=appLink(selectedApp).getAttribute('href');if(navigator.share){try{await navigator.share({title:document.title,text});}catch(e){if(e.name!=='AbortError')await copy(text,'Ключ скопирован — отправьте его на другое устройство.');}}else await copy(text,'Ключ скопирован — отправьте его на другое устройство.');});
 $$('[data-payment-copy]').forEach(b=>b.addEventListener('click',()=>copy(b.dataset.paymentCopy,'Скопировано: '+b.dataset.paymentCopy)));
 $$('form[data-confirm]').forEach(f=>f.addEventListener('submit',e=>{if(!window.confirm(f.dataset.confirm))e.preventDefault();}));
 function viewFromHash(hash){return hash==='#devices'?'devices':hash==='#traffic'?'traffic':hash==='#renew'||hash.startsWith('#order-')?'shop':'subscription';}

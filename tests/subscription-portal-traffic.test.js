@@ -556,8 +556,8 @@ test('clean URL setting saves on/off, controls all client links, preserves route
     const json=clean?`/${slug}`:`/json/${slug}`,sub=clean?`/${slug}?format=sub`:`/sub/${slug}`;
     const page=await request('/clients?edit='+id);
     assert.equal(page.status,200);assert.ok(!page.text.includes('Страница не смогла отрисоваться'));
-    assert.ok(page.text.includes(`data-json-url="http://127.0.0.1:${app.port}${json}"`),json);
-    assert.ok(page.text.includes(`data-sub-url="http://127.0.0.1:${app.port}${sub}"`),sub);
+    assert.match(page.text, new RegExp(`data-client-app-links="${id}"`));
+    assert.doesNotMatch(page.text, /data-(?:json|sub)-url=/);
     const summary=JSON.parse((await request(`/clients/${id}/summary.json`)).text);
     assert.equal(summary.client.links.json,`http://127.0.0.1:${app.port}${json}`);
     assert.equal(summary.client.links.sub,`http://127.0.0.1:${app.port}${sub}`);
@@ -619,6 +619,122 @@ test('clean URL setting saves on/off, controls all client links, preserves route
   assert.equal(setting('subscription_clean_urls'),'0','disabled preference survives restart');
   const portal=await(await fetchAccount(`http://127.0.0.1:${app.port}/open/${slug}`)).text();assert.ok(portal.includes('/json/'+slug));
   assert.equal((await fetch(`http://127.0.0.1:${app.port}/${slug}`)).status,200,'clean URL still works after disabling and restarting');
+});
+
+test('client actions target the whole directory and app links serve a protected Karing subscription', { timeout: 60000 }, async t => {
+  const dataDir = fs.mkdtempSync(path.join(projectRoot, '.tmp-client-workflows-'));
+  const mock = await startMock3xui();
+  const app = await startApp(dataDir, 'production');
+  seedSubscription(dataDir, mock.port);
+  const db = new Database(path.join(dataDir, 'app.db'));
+  t.after(async () => {
+    db.close();
+    await stopApp(app);
+    await new Promise(resolve => mock.server.close(resolve));
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
+  const base = 'http://127.0.0.1:' + app.port;
+  const client = db.prepare('SELECT * FROM clients').get();
+  const cookies = new Map();
+  let csrf = '';
+  async function request(route, data, extraHeaders = {}) {
+    const headers = { 'X-Nexus-Workspace': 'main', ...extraHeaders };
+    if (cookies.size) headers.Cookie = [...cookies.values()].join('; ');
+    if (data) headers['Content-Type'] = 'application/x-www-form-urlencoded';
+    const body = data ? new URLSearchParams({ _csrf: csrf, ...data }) : undefined;
+    const response = await fetch(base + route, { method: data ? 'POST' : 'GET', headers, body, redirect: 'manual' });
+    for (const value of response.headers.getSetCookie()) cookies.set(value.split('=')[0], value.split(';')[0]);
+    const text = await response.text();
+    csrf = text.match(/name="csrf-token" content="([^"]+)"/)?.[1] || csrf;
+    return { status: response.status, headers: response.headers, text, location: response.headers.get('location') };
+  }
+  await request('/login');
+  assert.equal((await request('/login', { username: 'admin', password: 'test-password-strong' })).status, 302);
+  assert.equal((await request('/clients')).status, 200);
+  const insert = db.prepare('INSERT INTO clients (login, display_name, uuid, sub_slug, expiry_time) VALUES (?, ?, ?, ?, ?)');
+  for (let i = 0; i < 23; i++) insert.run('fixture-' + i, 'Fixture ' + i, 'uuid-' + i, 'fixture-' + i, client.expiry_time);
+  const group = await request('/clients/groups', { name: 'Платные', color: '#123456' });
+  const tag = await request('/clients/tags', { name: 'Проверка', color: '#123456' });
+  assert.match(group.location || group.text, /message=/, `Group response ${group.status}`);
+  assert.match(tag.location || tag.text, /message=/, `Tag response ${tag.status}`);
+  assert.match((await request('/client-groups', { name: 'Старый маршрут' })).location, /message=/);
+  const groupId = db.prepare('SELECT MIN(id) AS id FROM client_groups').get().id;
+  const tagId = db.prepare('SELECT id FROM client_tags').get().id;
+  const bulk = await request('/clients/bulk-change', {
+    bulk_scope: 'all', bulk_action: 'edit', group_id: groupId, tag_ids: tagId, device_limit: 3, extend_days: 2
+  });
+  assert.equal(bulk.status, 200, bulk.text);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM clients WHERE group_id = ? AND device_limit = 3 AND expiry_time = ?')
+    .get(groupId, client.expiry_time + 2 * 86400000).n, 24);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM client_tag_assignments WHERE tag_id = ?').get(tagId).n, 24);
+  const denied = await request('/clients/bulk-delete', { bulk_scope: 'tag', scope_tag_id: tagId, bulk_confirmation: 'yes' });
+  assert.match(denied.location, /error=/);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM clients').get().n, 24);
+
+  const appLinks = '/clients/' + client.id + '/app-subscription';
+  const happLink = 'happ://crypt5/dGVzdA==';
+  const incyLink = 'incy://crypt1/test';
+  db.prepare(`INSERT INTO subscription_migrations(client_id, source_hash, source_enc, happ_enc, incy_enc, mode)
+    VALUES (?, ?, ?, ?, ?, 'notify')`).run(client.id, 'fixture', encrypt('source-token', appSecret),
+    encrypt(happLink, appSecret), encrypt(incyLink, appSecret));
+  assert.equal(JSON.parse((await request(appLinks, { app: 'happ' })).text).link, happLink);
+  assert.equal(JSON.parse((await request(appLinks, { app: 'incy' })).text).link, incyLink);
+  assert.equal(db.prepare('SELECT mode FROM subscription_migrations WHERE client_id = ?').get(client.id).mode, 'notify');
+  const protectedLink = await request(appLinks, { app: 'karing' });
+  assert.equal(protectedLink.status, 200, protectedLink.text);
+  const { link, qr, importUrl } = JSON.parse(protectedLink.text);
+  assert.match(qr, /^data:image\/png;base64,/);
+  assert.equal(new URL(link).searchParams.get('url'), importUrl);
+  assert.equal(new URL(link).searchParams.get('x-hwid'), 'true');
+  assert.ok(!importUrl.includes(client.sub_slug));
+  const route = new URL(importUrl).pathname;
+  const portal = await fetchAccount(base + '/open/' + client.sub_slug);
+  assert.match(await portal.text(), /data-app="karing"/);
+  const hwid = { 'X-HWID': 'test-karing-device', 'User-Agent': 'Karing' };
+  assert.doesNotMatch((await request(route)).text, /vless:\/\//);
+  assert.match((await request(route, null, hwid)).text, /vless:\/\//);
+  db.prepare('UPDATE nodes SET hide_standalone_json = 1').run();
+  assert.doesNotMatch((await request(route, null, hwid)).text, /vless:\/\//);
+  db.prepare('UPDATE clients SET sub_slug = ? WHERE id = ?').run('new-token', client.id);
+  assert.equal((await request(route, null, hwid)).status, 404);
+
+  if (process.env.NEXUS_PLAYWRIGHT_MODULE) {
+    const { chromium } = require(process.env.NEXUS_PLAYWRIGHT_MODULE);
+    const browser = await chromium.launch({ headless: true, channel: 'msedge' });
+    try {
+      const page = await browser.newPage();
+      page.setDefaultTimeout(6000);
+      const errors = [];
+      page.on('pageerror', error => errors.push(error.message));
+      await page.goto(base + '/login');
+      await page.locator('[name=username]').fill('admin');
+      await page.locator('[name=password]').fill('test-password-strong');
+      await Promise.all([page.waitForURL('**/dashboard'), page.locator('button[type=submit]').click()]);
+      for (const width of [1440, 390]) {
+        await page.setViewportSize({ width, height: 900 });
+        await page.goto(base + '/clients?q=portal-user');
+        await page.locator('#openClientBulkDialog').click();
+        const dialog = page.locator('#clientBulkDialog');
+        assert.equal(await dialog.locator('[name=bulk_scope]').inputValue(), 'all');
+        assert.equal(await dialog.locator('#bulkPickedNodes').isVisible(), false);
+        await dialog.locator('#bulkAllNodes').uncheck();
+        assert.equal(await dialog.locator('#bulkPickedNodes').isVisible(), true);
+        await dialog.locator('[name=bulk_action]').selectOption('delete');
+        assert.equal(await dialog.locator('[name=bulk_confirmation]').isVisible(), true);
+        assert.equal(await dialog.locator('#bulkPickedNodes').isVisible(), false);
+        assert.equal(await dialog.evaluate(el => el.scrollWidth > el.clientWidth + 1), false);
+        await dialog.getByRole('button', { name: 'Отмена' }).click();
+        await page.locator('[data-client-app-links]:visible').first().click();
+        await page.getByRole('button', { name: 'Karing', exact: true }).click();
+        await page.locator('#clientAppQr').waitFor({ state: 'visible' });
+        assert.equal(await page.locator('#clientAppCopy').isEnabled(), true);
+        assert.equal(await page.locator('#clientAppDialog').evaluate(el => el.scrollWidth > el.clientWidth + 1), false);
+      }
+      assert.deepEqual(errors, []);
+    } finally {
+      await browser.close();
+    }
+  }
 });
 
 test('ordinary 3x-ui UDP443 migrates, saves per node and survives JSON, SUB, auto pools and restart', { timeout:60000 }, async t => {

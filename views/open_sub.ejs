@@ -120,6 +120,18 @@
           </div>
         </article>
 
+        <% } %>
+        <% if (typeof karing !== 'undefined' && karing) { %>
+        <article class="portal-app-card">
+          <span class="portal-app-icon">K</span>
+          <div><h3>Karing</h3><p>Android и iOS</p></div>
+          <div class="portal-app-actions">
+            <a class="link-btn" href="<%= karing.open %>">Добавить</a>
+            <a class="link-btn secondary" href="https://karing.app/download" target="_blank" rel="noopener">Скачать</a>
+          </div>
+        </article>
+        <% } %>
+        <% if (allowSub) { %>
         <article class="portal-app-card">
           <span class="portal-app-icon v2raytun">V</span>
           <div><h3>v2RayTun</h3><p>SUB · iOS и Android</p></div>

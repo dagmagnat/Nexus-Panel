@@ -1,4 +1,5 @@
 <%- include('partials_header', { pageTitle: 'Главная', pageSubtitle: 'Пользователи, сроки, онлайн и лимиты', activePage: 'dashboard' }) %>
+<link rel="stylesheet" href="/css/client-pagination.css?v=20261126-1">
 <%
   function daysLeft(ts) {
     const n = Number(ts || 0);
@@ -839,8 +840,6 @@ function renderClientQuickBody(c) {
     const usage = String(n && (n.usageText || (n.usedText ? `${n.usedText} / ${n.limitText || (trafficGb ? `${trafficGb} ГБ` : '∞')}` : '')) || '');
     return `<span class="client-quick-node-chip">${flag ? `<span class="client-quick-node-flag">${flag}</span>` : ''}<span><b>${escapeHtml(nodeLabelForClientQuick(n))}</b>${usage ? `<small>${escapeHtml(usage)}</small>` : ''}</span></span>`;
   }).join('') : '<span class="client-quick-node-chip empty">Узлы не назначены</span>';
-  const subLink = c.links && c.links.sub ? String(c.links.sub) : '';
-  const jsonLink = c.links && c.links.json ? String(c.links.json) : '';
   const openLink = c.links && c.links.open ? String(c.links.open) : '#';
   const editorLink = c.links && c.links.editor ? String(c.links.editor) : (c.links && c.links.search ? String(c.links.search) : '/clients');
   const clientId = String(c.id || '').trim();
@@ -885,8 +884,7 @@ function renderClientQuickBody(c) {
     <div class="client-quick-actions modern">
       <a class="btn-secondary" href="${escapeHtml(openLink)}" target="_blank">Открыть в панели</a>
       <form method="post" action="/clients/${encodeURIComponent(String(c.id || ''))}/toggle" class="client-quick-toggle-form js-long-action" onsubmit="return confirm('Изменить статус клиента?')"><input type="hidden" name="back" value="/dashboard"><button type="submit" class="btn-secondary danger-lite">${c.statusKey === 'offline' ? 'Включить' : 'Отключить'}</button></form>
-      ${subLink ? `<button type="button" class="btn-secondary" data-copy-client-link="${escapeHtml(subLink)}">▦ SUB</button>` : ''}
-      ${jsonLink ? `<button type="button" class="btn-secondary" data-copy-client-link="${escapeHtml(jsonLink)}">{ } JSON</button>` : ''}
+      <button type="button" class="btn-secondary" data-client-app-links="${escapeHtml(clientId)}" data-client-title="${escapeHtml(c.login || c.title || '')}">Ссылка и QR</button>
     </div>`;
 }
 async function openOnlineClientQuickDetail(id) {
@@ -1585,4 +1583,6 @@ function normalizeDashboardSearchText(value) {
 })();
 </script>
 
+<%- include('client_app_links') %>
+<script src="/js/client-workflows.js?v=20261126-1" defer></script>
 <%- include('partials_footer') %>

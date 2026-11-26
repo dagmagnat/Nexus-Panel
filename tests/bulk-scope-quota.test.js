@@ -1,6 +1,6 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),Database=require('better-sqlite3');
-const {createQuotaCycles,DAY}=require('../lib_quota_cycles'),{resolveBulkClientIds}=require('../lib_bulk_scope');
+const {createQuotaCycles,DAY}=require('../lib_quota_cycles'),{resolveBulkClientIds,resolveBulkNodes}=require('../lib_bulk_scope');
 test('bulk scope resolves all pages, groups, tags and node mappings, with explicit scope validation',()=>{
  const db=new Database(':memory:');
  db.exec('CREATE TABLE clients(id INTEGER PRIMARY KEY,group_id INTEGER);CREATE TABLE client_tag_assignments(client_id INTEGER,tag_id INTEGER);CREATE TABLE client_nodes(client_id INTEGER,node_id INTEGER)');
@@ -9,9 +9,19 @@ test('bulk scope resolves all pages, groups, tags and node mappings, with explic
  assert.equal(resolveBulkClientIds(db,{bulk_scope:'all'}).length,2100);
  assert.equal(resolveBulkClientIds(db,{bulk_scope:'group',scope_group_id:7}).length,1050);
  assert.deepEqual(resolveBulkClientIds(db,{bulk_scope:'tag',scope_tag_id:9}),[2,2001]);
+ assert.deepEqual(resolveBulkClientIds(db,{bulk_scope:'group-tag',scope_group_id:7,scope_tag_id:9}),[2001]);
  assert.deepEqual(resolveBulkClientIds(db,{bulk_scope:'node',bulk_node_id:3}),[2001]);
  assert.throws(()=>resolveBulkClientIds(db,{bulk_scope:'tag',scope_tag_id:'9 OR 1=1'}));
  assert.throws(()=>resolveBulkClientIds(db,{bulk_scope:'bogus'}));db.close();
+});
+test('bulk node scope includes exactly the explicitly selected nodes', () => {
+ const db = new Database(':memory:');
+ db.exec('CREATE TABLE nodes(id INTEGER PRIMARY KEY); INSERT INTO nodes VALUES (1), (2), (3)');
+ assert.deepEqual(resolveBulkNodes(db, { node_scope: 'all', node_ids: 2 }).map(node => node.id), [1, 2, 3]);
+ assert.deepEqual(resolveBulkNodes(db, { node_scope: 'picked', node_ids: [1, 3, 3] }).map(node => node.id), [1, 3]);
+ assert.throws(() => resolveBulkNodes(db, { node_scope: 'picked', node_ids: [] }));
+ assert.throws(() => resolveBulkNodes(db, { node_scope: 'picked', node_ids: [2, 4] }));
+ db.close();
 });
 test('30-day quota renewal is persistent, single-flight, grouped, retryable and does not catch up repeatedly',async()=>{
  const db=new Database(':memory:');let now=1000,enabled=30,calls=0,used=5,fail=false;

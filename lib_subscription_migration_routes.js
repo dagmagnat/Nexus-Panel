@@ -1,6 +1,6 @@
 'use strict';
 const QRCode=require('qrcode');
-function attachSubscriptionMigrationRoutes({ app, db, migration, requireAuth, render, subscriptionName, portalModel, billing, supportUrl=()=>'' }) {
+function attachSubscriptionMigrationRoutes({ app, db, migration, karingLinks, requireAuth, render, subscriptionName, portalModel, billing, supportUrl=()=>'' }) {
   let bulk = { running: false, total: 0, done: 0, errors: [] };
   const back = (res, message, error = false) => res.redirect('/subscription-migration?' + (error ? 'error=' : 'message=') + encodeURIComponent(message));
   app.get('/subscription-migration', requireAuth, (req, res) => {
@@ -40,14 +40,31 @@ function attachSubscriptionMigrationRoutes({ app, db, migration, requireAuth, re
     Promise.allSettled([worker(), worker(), worker()]).finally(() => { bulk.running = false; });
     back(res, 'Подготовка запущена. Обновляйте страницу для проверки прогресса. Отключение старых ссылок не включается.');
   });
+  app.post('/clients/:id/app-subscription', requireAuth, async (req, res) => {
+    res.setHeader('Cache-Control', 'private, no-store, max-age=0');
+    const client = db.prepare('SELECT * FROM clients WHERE id = ?').get(Number(req.params.id));
+    if (!client) return res.status(404).json({ error: 'Клиент не найден.' });
+    const appName = req.body.app;
+    if (!['happ', 'incy', 'karing'].includes(appName)) return res.status(400).json({ error: 'Выберите приложение.' });
+    try {
+      const karing = appName === 'karing' ? karingLinks.links(client) : null;
+      const link = karing?.open || (migration.links(client) || await migration.prepare(client, null))[appName];
+      const qr = await QRCode.toDataURL(link, { width: 420, margin: 4, errorCorrectionLevel: 'L' });
+      res.json({ link, qr, ...(karing ? { importUrl: karing.url } : {}) });
+    } catch (error) {
+      console.error('Client application link:', error.message);
+      res.status(503).json({ error: 'Не удалось подготовить ссылку приложения. Повторите позже.' });
+    }
+  });
   app.get('/open/:slug/connection-qr', async (req,res) => {
     if(!req.portalAccount||!req.portalClient)return res.sendStatus(403);
     const appName=req.query.app===undefined?'happ':req.query.app;
-    if(!['happ','incy'].includes(appName))return res.sendStatus(400);
+    if(!['happ','incy','karing'].includes(appName))return res.sendStatus(400);
     const links=migration.links(req.portalClient);
-    if(!links)return res.sendStatus(404);
+    const link = appName === 'karing' ? karingLinks?.links(req.portalClient).open : links?.[appName];
+    if(!link)return res.sendStatus(404);
     try{
-      const png=await QRCode.toBuffer(links[appName],{type:'png',width:360,margin:2,errorCorrectionLevel:'L'});
+      const png=await QRCode.toBuffer(link,{type:'png',width:360,margin:4,errorCorrectionLevel:'L'});
       res.setHeader('Cache-Control','private, no-store, max-age=0');
       res.setHeader('X-Content-Type-Options','nosniff');
       res.type('png').send(png);
@@ -62,7 +79,7 @@ function attachSubscriptionMigrationRoutes({ app, db, migration, requireAuth, re
       const account = await portalModel(client);
       res.setHeader('Cache-Control', 'private, no-store, max-age=0');
       res.setHeader('Referrer-Policy', 'no-referrer');
-      render(res, 'subscription_account', { portalClient:client, account, links, billing:await billing.portal(client), notice:String(req.portalNotice||req.query.notice||'').slice(0,500), subscriptionName: subscriptionName(), supportUrl: supportUrl() });
+      render(res, 'subscription_account', { portalClient:client, account, links: { ...links, karing: karingLinks?.links(client) }, billing:await billing.portal(client), notice:String(req.portalNotice||req.query.notice||'').slice(0,500), subscriptionName: subscriptionName(), supportUrl: supportUrl() });
     } catch (_) { res.status(503).send('Кабинет временно недоступен. Обновите страницу немного позже.'); }
   });
 }

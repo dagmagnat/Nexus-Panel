@@ -1,0 +1,104 @@
+<dialog id="clientBulkDialog" class="client-workflow-dialog" aria-labelledby="clientBulkTitle">
+  <header class="client-workflow-heading">
+    <h2 id="clientBulkTitle">Действия с клиентами</h2>
+    <button type="button" class="btn-secondary" aria-label="Закрыть" data-close-dialog>×</button>
+  </header>
+  <form id="clientBulkForm" method="post" action="/clients/bulk-change" class="js-long-action" data-loading-title="Выполняю массовое действие">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <div class="client-workflow-body">
+      <div class="client-workflow-grid">
+        <label>Кому применить
+          <select name="bulk_scope">
+            <option value="all">Всем клиентам</option>
+            <option value="group">Клиентам группы</option>
+            <option value="tag">Клиентам с меткой</option>
+            <option value="group-tag">Клиентам группы с меткой</option>
+            <option value="selected">Выбранным на странице</option>
+          </select>
+        </label>
+        <label>Что сделать
+          <select name="bulk_action">
+            <option value="edit">Изменить данные и лимиты</option>
+            <option value="disable">Отключить доступ</option>
+            <option value="reset">Сбросить трафик</option>
+            <option value="remove">Убрать из узлов</option>
+            <option value="delete">Удалить клиентов</option>
+            <option value="support">Настроить служебный доступ</option>
+          </select>
+        </label>
+        <label data-bulk-scope="group group-tag" hidden>Группа для отбора
+          <select name="scope_group_id" required><option value="">Выберите группу</option><% clientGroups.forEach(group => { %><option value="<%= group.id %>"><%= group.name %></option><% }) %></select>
+        </label>
+        <label data-bulk-scope="tag group-tag" hidden>Метка для отбора
+          <select name="scope_tag_id" required><option value="">Выберите метку</option><% clientTags.forEach(tag => { %><option value="<%= tag.id %>"><%= tag.name %></option><% }) %></select>
+        </label>
+      </div>
+      <p class="hint" id="bulkScopeHint"></p>
+      <fieldset data-bulk-modes="edit">
+        <legend>Подписка клиента</legend>
+        <div class="client-workflow-grid">
+          <label>Назначить группу
+            <select name="group_id"><option value="">Оставить текущую</option><option value="none">Убрать группу</option><% clientGroups.forEach(group => { %><option value="<%= group.id %>"><%= group.name %></option><% }) %></select>
+          </label>
+          <label>Лимит устройств
+            <input type="number" name="device_limit" min="0" step="1" placeholder="Оставить текущий">
+          </label>
+          <label>Добавить дней
+            <input type="number" name="extend_days" min="1" max="36500" step="1" placeholder="Например, 2">
+          </label>
+          <label>Или назначить дату окончания
+            <input type="date" name="expiry_date">
+          </label>
+        </div>
+        <small class="hint">Срок и лимит устройств действуют на всю подписку. 0 устройств означает безлимит. У бессрочных подписок продление в днях сохраняет бессрочный доступ. Указанная дата начинается в 00:00 МСК.</small>
+        <% if (clientTags.length) { %>
+          <details><summary>Добавить метки</summary><div class="client-workflow-picks"><% clientTags.forEach(tag => { %><label><input type="checkbox" name="tag_ids" value="<%= tag.id %>"><span><%= tag.name %></span></label><% }) %></div></details>
+        <% } %>
+      </fieldset>
+      <fieldset data-bulk-modes="edit disable reset remove">
+        <legend>На каких узлах</legend>
+        <label class="client-workflow-check"><input type="checkbox" id="bulkAllNodes" checked> Все узлы</label>
+        <input type="hidden" name="node_scope" value="all">
+        <details id="bulkPickedNodes" hidden>
+          <summary>Выбрать узлы</summary>
+          <div class="client-workflow-picks"><% nodes.forEach(node => { %><label><input type="checkbox" name="node_ids" value="<%= node.id %>"><span><%= nodeName(node) %></span></label><% }) %></div>
+        </details>
+        <div data-bulk-modes="edit">
+          <label>Лимит трафика на узел, ГБ
+            <input type="number" name="traffic_gb" min="0" step="any" placeholder="Оставить текущий">
+          </label>
+          <label class="client-workflow-check"><input type="checkbox" name="assign_nodes" value="1"> Добавить клиентов на выбранные узлы, где у них ещё нет доступа</label>
+          <small class="hint">0 ГБ означает безлимит. По умолчанию лимит меняется только для уже назначенных клиентов.</small>
+        </div>
+        <p class="hint" data-bulk-modes="disable" id="bulkDisableHint"></p>
+        <p class="hint" data-bulk-modes="remove">Клиенты сохранятся в Nexus. Доступ будет снят на выбранных узлах.</p>
+        <p class="hint" data-bulk-modes="reset">История расхода сохраняется. При выборе всех узлов сбрасывается и общий счётчик Remnawave.</p>
+      </fieldset>
+      <fieldset data-bulk-modes="support" hidden>
+        <legend>Служебный доступ после окончания подписки</legend>
+        <div class="client-workflow-grid">
+          <label>Режим<select name="support_mode" required><option value="renew">Возобновить на стандартный срок</option><option value="custom">Назначить число дней</option><option value="unlimited">Без ограничения срока</option><option value="reset">Вернуть общие настройки</option></select></label>
+          <label data-custom-support hidden>Дней<input name="support_days" type="number" min="1" max="36500" step="1" required></label>
+          <label>Служебный узел<select name="support_node_id"><option value="">Все служебные узлы</option><% nodes.filter(node => typeof expiredSupportNodeIds !== 'undefined' && expiredSupportNodeIds.includes(Number(node.id))).forEach(node => { %><option value="<%= node.id %>"><%= nodeName(node) %></option><% }) %></select></label>
+        </div>
+      </fieldset>
+      <fieldset class="client-workflow-danger" data-bulk-modes="delete remove" hidden>
+        <legend>Подтверждение удаления</legend>
+        <label data-bulk-modes="delete">Откуда удалить
+          <select name="delete_mode">
+            <option value="aggregator">Только из Nexus</option>
+            <option value="secondary">Из Nexus и вторичных узлов</option>
+            <option value="all">Из Nexus и всех узлов</option>
+          </select>
+        </label>
+        <label>Введите <strong>YES</strong>
+          <input name="bulk_confirmation" required pattern="YES" autocomplete="off" autocapitalize="characters" spellcheck="false">
+        </label>
+      </fieldset>
+    </div>
+    <footer class="client-workflow-footer">
+      <button type="button" class="btn-secondary" data-close-dialog>Отмена</button>
+      <button type="submit" class="btn-main" id="bulkSubmit">Применить</button>
+    </footer>
+  </form>
+</dialog>

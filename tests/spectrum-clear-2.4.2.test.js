@@ -20,14 +20,13 @@ test('desktop client workspace and dashboard use dense aligned layouts', () => {
 });
 
 test('client editor, QR and routing avoid the marked overlap regressions', () => {
-  const clients = read('views/clients.ejs');
+  const links = read('views/client_app_links.ejs');
   const css = read('public/css/spectrum-clear.css');
 
   assert.match(css, /\.existing-client-editor-modal \{[\s\S]{0,140}scrollbar-gutter: stable/);
   assert.match(css, /\.client-editor-form \.node-bulk-head \{[\s\S]{0,160}justify-content: space-between/);
-  assert.match(clients, /class="qr-format-badge is-json"/);
-  assert.doesNotMatch(clients, /class="qr-format-badge json"/);
-  assert.match(css, /\.qr-pair-card-head > div \{ display: grid/);
+  assert.match(links, /class="client-app-preview"/);
+  assert.match(links, /id="clientAppQr" width="220" height="220"/);
   assert.match(css, /\.routing-form \.preset-card > span \{ display: grid/);
 });
 

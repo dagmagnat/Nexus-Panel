@@ -34,7 +34,7 @@ function createSubscriptionMigration({ db, secret, baseUrl, name, portalUrl, fet
     return { portal: portal(client), happ: decrypt(row.happ_enc, secret), incy: decrypt(row.incy_enc, secret), mode: row.mode };
   }
   async function prepare(client, mode = 'notify') {
-    if (!MODES.includes(mode)) throw Error('Неизвестный режим переноса');
+    if (mode !== null && !MODES.includes(mode)) throw Error('Неизвестный режим переноса');
     if (pending.has(client.id)) return pending.get(client.id);
     const run = (async () => {
       let row = get(client.id);
@@ -56,7 +56,7 @@ function createSubscriptionMigration({ db, secret, baseUrl, name, portalUrl, fet
         db.prepare('UPDATE subscription_migrations SET happ_enc=?,incy_enc=? WHERE client_id=?')
           .run(encrypt(body.encrypted_link, secret), encrypt(incy, secret), client.id);
       }
-      db.prepare('UPDATE subscription_migrations SET mode=? WHERE client_id=?').run(mode, client.id);
+      if (mode !== null) db.prepare('UPDATE subscription_migrations SET mode=? WHERE client_id=?').run(mode, client.id);
       return links(client);
     })().finally(() => pending.delete(client.id));
     pending.set(client.id, run);

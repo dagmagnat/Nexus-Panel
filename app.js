@@ -1832,6 +1832,9 @@ function migrateSubscriptionDeviceLimitsOnce() {
 
 initDb();
 const portalAccess = require('./lib_portal_access').createPortalAccess({db,secret:APP_SECRET,baseUrl:getPublicSubBaseUrl});
+const { createKaringLinks, supportsKaringLink, supportsKaringProtocol } = require('./lib_karing');
+const karingLinks = createKaringLinks({ db, secret: APP_SECRET, baseUrl: getPublicSubBaseUrl,
+  name: () => getSetting('subscription_name', DEFAULT_SUBSCRIPTION_NAME) });
 const subscriptionMigration = require('./lib_subscription_migration').createSubscriptionMigration({
   db, secret: APP_SECRET, baseUrl: getPublicSubBaseUrl,
   name: () => getSetting('subscription_name', DEFAULT_SUBSCRIPTION_NAME),
@@ -1891,6 +1894,7 @@ app.use((req, res, next) => {
   next();
 });
 app.use((req, res, next) => { subscriptionMigration.rewrite(req); next(); });
+app.use(karingLinks.rewrite);
 app.use(portalAccess.middleware);
 const access = require('./lib_access').createAccess({ rootDir: CONTROL_DIR, localDb: db, legacyUsername: ADMIN_USERNAME, workspaceId: WORKSPACE_ID });
 // Normalize legacy sessions without looking up or launching separate databases.
@@ -1926,12 +1930,14 @@ app.post('/clients/traffic/reset-selected',requireAuth,async(req,res) => {
   try {
     const ids = require('./lib_bulk_scope').resolveBulkClientIds(db,req.body);
     if (!ids.length || ids.length>30000 || ids.some(id=>!Number.isInteger(id)||id<=0)) throw new Error('Выберите от 1 до 30000 пользователей.');
-    const allNodes = req.body.reset_node_id==='all';
+    const allNodes = req.body.node_scope ? req.body.node_scope === 'all' : req.body.reset_node_id==='all';
     const nodeId=Number(req.body.reset_node_id);
-    if (!allNodes && (!Number.isInteger(nodeId)||nodeId<=0 || !db.prepare('SELECT id FROM nodes WHERE id=?').get(nodeId))) throw new Error('Выберите узел или все узлы.');
+    const picked = req.body.node_scope ? new Set(require('./lib_bulk_scope').resolveBulkNodes(db, req.body).map(node => node.id)) : null;
+    if (!picked && !allNodes && (!Number.isInteger(nodeId)||nodeId<=0 || !db.prepare('SELECT id FROM nodes WHERE id=?').get(nodeId))) throw new Error('Выберите узел или все узлы.');
     const missing=ids.filter(id=>!db.prepare('SELECT id FROM clients WHERE id=?').get(id));
     if (missing.length) throw new Error('Часть выбранных пользователей удалена. Обновите страницу.');
-    const maps=db.prepare(`SELECT * FROM client_nodes WHERE client_id IN (${ids.map(()=>'?').join(',')})${allNodes?'':' AND node_id=?'} ORDER BY client_id,node_id`).all(...ids,...(allNodes?[]:[nodeId]));
+    const getMappings = db.prepare('SELECT * FROM client_nodes WHERE client_id = ? ORDER BY node_id');
+    const maps = ids.flatMap(id => getMappings.all(id)).filter(map => allNodes || (picked ? picked.has(map.node_id) : map.node_id === nodeId));
     if (!maps.length) throw new Error('Выбранные пользователи не назначены этому узлу.');
     await finishLongPost(req,res,'/node-traffic',async action => {
     const errors=[]; let success=0;
@@ -2895,6 +2901,7 @@ function detectSubscriptionAppName(userAgent) {
   const ua = String(userAgent || '').toLowerCase();
   if (ua.includes('v2raytun') || ua.includes('v2ray tun')) return 'v2RayTun';
   if (ua.includes('incy')) return 'INCY';
+  if (ua.includes('karing')) return 'Karing';
   if (ua.includes('happ')) return 'Happ';
   if (ua.includes('hiddify')) return 'Hiddify';
   if (ua.includes('shadowrocket')) return 'Shadowrocket';
@@ -2910,7 +2917,7 @@ function getSubscriptionDeviceFromRequest(req) {
     osName: sanitizeSubscriptionDeviceText(req.get('x-device-os'), 40),
     osVersion: sanitizeSubscriptionDeviceText(req.get('x-ver-os'), 40),
     deviceModel: sanitizeSubscriptionDeviceText(req.get('x-device-model'), 80),
-    appName: detectSubscriptionAppName(userAgent)
+    appName: req.nexusKaring ? 'Karing' : detectSubscriptionAppName(userAgent)
   };
 }
 
@@ -6456,6 +6463,12 @@ function enrichNodeWithCachedTransport(node) {
     transport_security: info.security,
     transport_label: inbound ? info.label : 'не загружено',
     transport_loaded: inbound ? 1 : 0,
+    subscription_apps: !inbound ? null : {
+      happ: ['vless', 'hysteria2', 'hy2'].includes(info.protocol),
+      incy: ['vless', 'hysteria2', 'hy2', 'amneziawg'].includes(info.protocol),
+      karing: supportsKaringProtocol(info.protocol),
+      verifyKaring: ['xhttp', 'splithttp'].includes(info.network) || info.security === 'reality'
+    },
     inbound_fingerprint: inboundFingerprint,
     inbound_sni: inboundSni,
     inbound_port: inboundPort,
@@ -17380,7 +17393,8 @@ app.get('/clients', requireAuth, async (req, res) => {
   }
 
   const nodes = clientType === 'xray'
-    ? db.prepare(`SELECT * FROM nodes WHERE enabled = 1 ORDER BY ${nodeOrderSql()}`).all().map(enrichNodeFlagFields).filter(isClientManagedNode)
+    ? db.prepare(`SELECT * FROM nodes WHERE enabled = 1 ORDER BY ${nodeOrderSql()}`).all()
+      .map(enrichNodeFlagFields).filter(isClientManagedNode).map(enrichNodeWithCachedTransport)
     : [];
   const vpnData = { clients: [], services: [], aggregatorClients: [], protocolLabels: {} };
   const vpnProtocolMatch = client => clientType === 'wireguard'
@@ -17439,7 +17453,7 @@ app.get('/clients', requireAuth, async (req, res) => {
   }
 });
 
-app.post('/client-groups', requireAuth, (req, res) => {
+app.post(['/clients/groups', '/client-groups'], requireAuth, (req, res) => {
   try {
     const name = normalizeClientMetaName(req.body.name, 'Название группы');
     const color = normalizeClientMetaColor(req.body.color, '#64748b');
@@ -17451,7 +17465,7 @@ app.post('/client-groups', requireAuth, (req, res) => {
   }
 });
 
-app.post('/client-groups/:id/delete', requireAuth, (req, res) => {
+app.post(['/clients/groups/:id/delete', '/client-groups/:id/delete'], requireAuth, (req, res) => {
   try {
     const id = Number(req.params.id);
     const group = db.prepare('SELECT name FROM client_groups WHERE id = ?').get(id);
@@ -17466,7 +17480,7 @@ app.post('/client-groups/:id/delete', requireAuth, (req, res) => {
   }
 });
 
-app.post('/client-tags', requireAuth, (req, res) => {
+app.post(['/clients/tags', '/client-tags'], requireAuth, (req, res) => {
   try {
     const name = normalizeClientMetaName(req.body.name, 'Название метки');
     const color = normalizeClientMetaColor(req.body.color, '#3b82f6');
@@ -17478,7 +17492,7 @@ app.post('/client-tags', requireAuth, (req, res) => {
   }
 });
 
-app.post('/client-tags/:id/delete', requireAuth, (req, res) => {
+app.post(['/clients/tags/:id/delete', '/client-tags/:id/delete'], requireAuth, (req, res) => {
   try {
     const id = Number(req.params.id);
     const tag = db.prepare('SELECT name FROM client_tags WHERE id = ?').get(id);
@@ -17717,6 +17731,122 @@ app.post('/clients/apply-to-node', requireAuth, async (req, res) => {
 });
 
 
+app.post('/clients/bulk-change', requireAuth, async (req, res) => {
+  try {
+    const { resolveBulkClientIds, resolveBulkNodes } = require('./lib_bulk_scope');
+    const { body } = req;
+    const getClient = db.prepare('SELECT * FROM clients WHERE id = ?');
+    const clients = resolveBulkClientIds(db, body).map(id => getClient.get(id)).filter(Boolean);
+    if (!clients.length) throw Error('В этой области нет клиентов.');
+    const mode = String(body.bulk_action || '');
+    if (mode === 'support') {
+      const nodes = body.support_node_id ? [Number(body.support_node_id)] : getSubscriptionExpiredGraceNodeIds();
+      const count = assignSupportDays(clients.map(client => client.id), nodes, String(body.support_mode || ''), body.support_days);
+      return res.redirect('/clients?message=' + encodeURIComponent(`Служебный доступ обновлён для ${count} клиентов.`));
+    }
+    if (!['edit', 'disable'].includes(mode)) throw Error('Выберите действие.');
+    const isEdit = mode === 'edit';
+    const numberField = (key, label, maximum = Number.MAX_SAFE_INTEGER) => {
+      if (!isEdit || body[key] === undefined || body[key] === '') return null;
+      const value = Number(body[key]);
+      if (!/^\d+$/.test(String(body[key])) || !Number.isSafeInteger(value) || value > maximum) throw Error(label);
+      return value;
+    };
+    const devices = numberField('device_limit', 'Укажите целый лимит устройств.');
+    const days = numberField('extend_days', 'Укажите целый срок от 1 до 36500 дней.', 36500);
+    if (days === 0) throw Error('Укажите срок от 1 до 36500 дней.');
+    const date = isEdit ? String(body.expiry_date || '') : '';
+    const expiryDate = date ? Date.parse(date + 'T00:00:00+03:00') : null;
+    if (date && (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isSafeInteger(expiryDate) || expiryDate <= 0
+      || new Date(expiryDate + 10800000).toISOString().slice(0, 10) !== date)) throw Error('Укажите действительную дату окончания.');
+    if (date && days !== null) throw Error('Выберите продление в днях или точную дату.');
+    const groupValue = isEdit ? String(body.group_id || '') : '';
+    const groupId = groupValue && groupValue !== 'none' ? normalizeClientGroupId(groupValue) : null;
+    if (groupValue && groupValue !== 'none' && !groupId) throw Error('Группа не найдена.');
+    const tags = isEdit && body.tag_ids !== undefined ? [...new Set([body.tag_ids].flat().map(Number))] : [];
+    const tagExists = db.prepare('SELECT 1 FROM client_tags WHERE id = ?');
+    if (tags.some(id => !Number.isSafeInteger(id) || id <= 0 || !tagExists.get(id))) throw Error('Метка не найдена.');
+    const traffic = isEdit && body.traffic_gb !== undefined && body.traffic_gb !== ''
+      ? clientNodeTrafficGbFromForm(body.traffic_gb, 0) : null;
+    const assign = isEdit && body.assign_nodes === '1';
+    const globalDisable = mode === 'disable' && body.node_scope === 'all';
+    const targets = traffic !== null || assign || mode === 'disable' ? resolveBulkNodes(db, body) : [];
+    const globalChanges = Boolean(groupValue || tags.length || devices !== null || days !== null || date || globalDisable);
+    if (!globalChanges && !targets.length) throw Error('Выберите хотя бы одно изменение и, для изменения на узлах, нужные узлы.');
+    const ids = clients.map(client => client.id);
+    const now = Date.now();
+    const dayMs = 86400000;
+    const getMap = db.prepare('SELECT * FROM client_nodes WHERE client_id = ? AND node_id = ?');
+    const update = db.prepare(`UPDATE clients SET group_id = ?, device_limit = ?, expiry_time = ?, duration_days = ?,
+      start_on_activation = ?, enabled = ? WHERE id = ?`);
+    const tagClient = db.prepare('INSERT OR IGNORE INTO client_tag_assignments (client_id, tag_id) VALUES (?, ?)');
+
+    await finishLongPost(req, res, '/clients', async operation => {
+      let updated = 0;
+      const errors = [];
+      if (globalChanges) {
+        for (const id of ids) {
+          if (operation.isCancelled()) break;
+          const result = db.transaction(() => {
+            const client = getClient.get(id);
+            if (!client) return null;
+            const pending = isClientActivationPending(client);
+            const expiry = date ? expiryDate : days !== null && client.expiry_time > 0
+              ? Math.max(client.expiry_time, now) + days * dayMs : client.expiry_time;
+            const duration = days !== null && pending ? Number(client.duration_days) + days : client.duration_days;
+            update.run(groupValue ? groupId : client.group_id, devices ?? client.device_limit, expiry, duration,
+              date && pending ? 0 : client.start_on_activation, globalDisable ? 0 : client.enabled, id);
+            for (const tag of tags) tagClient.run(id, tag);
+            return getClient.get(id);
+          })();
+          if (!result) continue;
+          updated++;
+          operation.setProgress(updated, ids.length, result.login);
+          const sync = globalDisable || devices !== null || date || days !== null;
+          if (sync) {
+            const resultSync = await updateClientEverywhere(result, {
+              ...(globalDisable ? { enabled: false } : {}),
+              ...(devices !== null ? { device_limit: devices } : {}),
+              ...(date || days !== null ? { expiry_time: result.expiry_time, duration_days: result.duration_days } : {}),
+            });
+            if (resultSync.failed) errors.push(`${result.login}: ошибок синхронизации — ${resultSync.failed}`);
+          }
+        }
+      }
+      let nodeChanges = 0;
+      for (const node of globalDisable ? [] : targets) {
+        if (operation.isCancelled()) break;
+        const assigned = ids.filter(id => getMap.get(id, node.id));
+        try {
+          if (mode === 'disable') {
+            for (const id of assigned) {
+              if (operation.isCancelled()) break;
+              try {
+                const map = getMap.get(id, node.id), client = getClient.get(id);
+                if (!map || !client || !map.enabled) continue;
+                await updateClientOnNode(node, map, client, { node_enabled: false });
+                nodeChanges++;
+              } catch (error) {
+                errors.push(`${node.name}: ${error.message}`);
+              }
+            }
+          } else if ((assign ? ids : assigned).length) {
+            const result = await applyNodeLimitsToSelectedClients(node, assign ? ids : assigned, { traffic_gb: traffic }, operation);
+            nodeChanges += (result.remoteCreated || 0) + (result.remoteUpdated || 0);
+            errors.push(...result.errors);
+          }
+        } catch (error) {
+          errors.push(`${node.name}: ${error.message}`);
+        }
+      }
+      return { updated, nodeChanges, errors, cancelled: operation.isCancelled() };
+    }, result => `Клиентов обновлено: ${result.updated}. Изменений на узлах: ${result.nodeChanges}. Ошибок: ${result.errors.length}.`,
+    { label: 'Массовое действие с клиентами' });
+  } catch (err) {
+    res.redirect('/clients?error=' + encodeURIComponent(String(err.message || err)));
+  }
+});
+
 app.post('/clients/refresh-subscriptions', requireAuth, async (req, res) => {
   try {
     const sourceNodeId = Number(req.body.node_id);
@@ -17736,7 +17866,7 @@ app.post('/clients/refresh-subscriptions', requireAuth, async (req, res) => {
 
 app.post('/clients/delete-all', requireAuth, async (req, res) => {
   try {
-    if (String(req.body.delete_all_confirmation || '').trim().toUpperCase() !== 'YES') {
+    if (req.body.delete_all_confirmation !== 'YES') {
       throw new Error('Удаление всех клиентов отменено: требуется подтверждение YES');
     }
     const deleteMode = String(req.body.delete_mode || 'aggregator');
@@ -17766,11 +17896,26 @@ app.post('/clients/delete-all', requireAuth, async (req, res) => {
 
 app.post('/clients/bulk-remove-node', requireAuth, async (req, res) => {
   try {
+    if (req.body.bulk_confirmation !== 'YES') throw Error('Для удаления введите YES.');
     const ids = require('./lib_bulk_scope').resolveBulkClientIds(db,req.body);
     if (!ids.length) throw new Error('Сначала выберите хотя бы одного клиента');
-
-    if (String(req.body.bulk_confirmation || '').trim().toUpperCase() !== 'CONFIRMED') {
-      throw new Error('Удаление из узла отменено: подтверждение не получено');
+    if (req.body.node_scope) {
+      const nodes = require('./lib_bulk_scope').resolveBulkNodes(db, req.body);
+      if (!nodes.length) throw Error('Нет узлов для удаления.');
+      return await finishLongPost(req, res, '/clients', async operation => {
+        let removed = 0;
+        const errors = [];
+        for (const node of nodes) {
+          if (operation.isCancelled()) break;
+          try {
+            const result = await removeSelectedClientsFromNode(node, ids, operation);
+            removed += result.removed;
+            errors.push(...result.errors);
+          } catch (error) { errors.push(`${node.name}: ${error.message}`); }
+        }
+        return { removed, errors, cancelled: operation.isCancelled() };
+      }, result => `Удалено связей с узлами: ${result.removed}. Ошибок: ${result.errors.length}.`,
+      { label: 'Удаление клиентов из узлов' });
     }
 
     const nodeId = Number(req.body.bulk_node_id || 0);
@@ -17795,11 +17940,10 @@ app.post('/clients/bulk-remove-node', requireAuth, async (req, res) => {
 
 app.post('/clients/bulk-delete', requireAuth, async (req, res) => {
   try {
-    let ids = req.body.client_ids || [];
+    if (req.body.bulk_confirmation !== 'YES') throw Error('Для удаления введите YES.');
+    const ids = require('./lib_bulk_scope').resolveBulkClientIds(db, req.body);
     const deleteMode = String(req.body.delete_mode || 'aggregator');
-
-    if (!Array.isArray(ids)) ids = [ids];
-    ids = uniqueList(ids.map(Number).filter(id => Number.isInteger(id) && id > 0));
+    if (!['aggregator', 'secondary', 'all'].includes(deleteMode)) throw Error('Выберите режим удаления.');
     if (!ids.length) throw new Error('Сначала выберите хотя бы одного клиента');
 
     let deleted = 0;
@@ -18539,9 +18683,17 @@ app.get('/sub-plain/:slug', async (req, res) => {
     res.setHeader('Content-Disposition','attachment; filename="awg-client-'+client.id+'-node-'+nodeId+'.conf"');
     return res.send(Buffer.from(match[1],'base64url').toString('utf8'));
   }
-  const lines = entries
+  let visibleEntries = entries;
+  if (req.nexusKaring) {
+    const { hiddenNodeIds } = buildAutoSelectJsonConfigs(client, entries, '');
+    for (const row of db.prepare('SELECT id FROM nodes WHERE hide_standalone_json = 1').all()) hiddenNodeIds.add(row.id);
+    visibleEntries = entries.filter(entry => entry.nodeType !== 'notice'
+      && !hiddenNodeIds.has(Number(entry.nodeId)) && supportsKaringLink(entry.line));
+  }
+  const lines = visibleEntries
     .map(entry => String(entry?.line || '').trim())
-    .filter(line => /^(?:vless|vmess|trojan|ss|socks|hysteria2?|hy2|tuic|wireguard|amneziawg|awg):\/\//i.test(line));
+    .filter(line => req.nexusKaring ? supportsKaringLink(line)
+      : /^(?:vless|vmess|trojan|ss|socks|hysteria2?|hy2|tuic|wireguard|amneziawg|awg):\/\//i.test(line));
   const subscriptionName = getSetting('subscription_name', DEFAULT_SUBSCRIPTION_NAME);
   const subscriptionUserInfo = buildSubscriptionUserInfo(entries, client, { expiryTime: subscriptionExpiryOverride });
 
@@ -20321,7 +20473,7 @@ const subscriptionBilling = require('./lib_subscription_billing').createBilling(
   syncClient:async id=>{const client=db.prepare('SELECT * FROM clients WHERE id=?').get(id);const result=await updateClientEverywhere(client,{expiry_time:client.expiry_time,duration_days:client.duration_days,device_limit:client.device_limit});if(result.failed)throw Error('Срок сохранён; не удалось синхронизировать узлов: '+result.failed+'. Повторите синхронизацию заказа.');}
 });
 require('./lib_subscription_migration_routes').attachSubscriptionMigrationRoutes({
-  app, db, migration: subscriptionMigration, requireAuth, render,
+  app, db, migration: subscriptionMigration, karingLinks, requireAuth, render,
   subscriptionName: () => getSetting('subscription_name', DEFAULT_SUBSCRIPTION_NAME),
   billing: subscriptionBilling,
   supportUrl: () => getSubscriptionSupportMeta().url,
@@ -20346,6 +20498,7 @@ app.get('/open/:slug', async (req, res) => {
     jsonUrl: buildPublicJsonUrl(client.sub_slug),
     jsonRawUrl: addQueryParam(buildPublicJsonUrl(client.sub_slug), 'raw', '1'),
     happUrl: buildPublicHappUrl(client.sub_slug),
+    karing: karingLinks.links(client),
     statusUrl: `${getPublicSubBaseUrl()}/open/${encodeURIComponent(client.sub_slug)}/status`,
     baseUrl: getPublicSubBaseUrl(),
     hasH1CloudSub: false,

@@ -23,8 +23,8 @@ test('dashboard prioritizes online clients and expiry without the large node-sta
 
 test('client directory refreshes only online state and keeps bulk actions compact', () => {
   const clients = read('views/clients.ejs');
-  assert.match(clients, /class="bulk-node-action-row"/);
-  assert.match(clients, /class="bulk-row compact-bulk-row"/);
+  assert.match(clients, /id="openClientBulkDialog"/);
+  assert.match(clients, /include\('client_bulk_actions'/);
   assert.match(clients, /id="clientOnlineAutoRefresh"/);
   assert.match(clients, /id="clientOnlineRefreshInterval"/);
   assert.match(clients, /id="clientOnlineRefreshNow"/);

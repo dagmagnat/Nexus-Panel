@@ -6,6 +6,8 @@ const RESERVED = new Set(('access api auto-select-profiles backup clients css da
 RESERVED.add('subscription-migration');
 RESERVED.add('subscription-billing');
 RESERVED.add('telegram-bot');
+RESERVED.add('client-groups');
+RESERVED.add('client-tags');
 const CLEAN_SLUG = /^[A-Za-z0-9_-]{12,128}$/;
 
 function cleanSlug(slug) {

@@ -644,8 +644,8 @@
                   <span class="node-mobile-edit-hint" aria-hidden="true">Изменить</span>
                 </button>
                 <div class="node-mobile-quick-actions" aria-label="Действия с узлом" onclick="event.stopPropagation()">
-                  <form method="post" action="/clients/bulk-remove-node" class="inline-form node-remove-clients-form" onsubmit="return confirm('Удалить всех назначенных этому узлу клиентов Nexus из выбранного подключения? Остальные узлы и пользователи Nexus сохранятся.');">
-                    <input type="hidden" name="bulk_scope" value="node" /><input type="hidden" name="bulk_node_id" value="<%= node.id %>" /><input type="hidden" name="bulk_confirmation" value="CONFIRMED" />
+                  <form method="post" action="/clients/bulk-remove-node" class="inline-form node-remove-clients-form" onsubmit="this.elements.bulk_confirmation.value = prompt('Чтобы снять доступ у всех клиентов этого узла, введите YES'); return this.elements.bulk_confirmation.value === 'YES';">
+                    <input type="hidden" name="bulk_scope" value="node" /><input type="hidden" name="bulk_node_id" value="<%= node.id %>" /><input type="hidden" name="bulk_confirmation" value="" />
                     <button type="submit" class="danger">Удалить всех клиентов из узла</button>
                   </form>
                   <form method="post" action="/nodes/<%= node.id %>/check" class="inline-form js-long-action" data-loading-title="Проверяю узел" data-loading-text="Проверяю доступность узла."><button type="submit" class="secondary">Проверить</button></form>
@@ -736,8 +736,8 @@
               </div>
 
               <div class="node-detail-actions node-detail-actions-top"> 
-                <form method="post" action="/clients/bulk-remove-node" class="inline-form node-remove-clients-form" onsubmit="return confirm('Удалить всех назначенных этому узлу клиентов Nexus из выбранного подключения? Остальные узлы и пользователи Nexus сохранятся.');">
-                  <input type="hidden" name="bulk_scope" value="node" /><input type="hidden" name="bulk_node_id" value="<%= node.id %>" /><input type="hidden" name="bulk_confirmation" value="CONFIRMED" />
+                <form method="post" action="/clients/bulk-remove-node" class="inline-form node-remove-clients-form" onsubmit="this.elements.bulk_confirmation.value = prompt('Чтобы снять доступ у всех клиентов этого узла, введите YES'); return this.elements.bulk_confirmation.value === 'YES';">
+                  <input type="hidden" name="bulk_scope" value="node" /><input type="hidden" name="bulk_node_id" value="<%= node.id %>" /><input type="hidden" name="bulk_confirmation" value="" />
                   <button type="submit" class="danger">Удалить всех клиентов из узла</button>
                 </form>
 
@@ -782,6 +782,14 @@
               </section>
 
               <div class="node-detail-kv">
+                <div class="node-detail-kv-row">
+                  <span>Приложения подписки</span>
+                  <% if (!node.subscription_apps) { %>
+                    <strong>По конфигурации хоста</strong>
+                  <% } else { const apps = node.subscription_apps; %>
+                    <strong><%= [apps.happ && 'Happ', apps.incy && 'INCY', apps.karing && (apps.verifyKaring ? 'Karing · проверить' : 'Karing')].filter(Boolean).join(' / ') || '—' %></strong>
+                  <% } %>
+                </div>
                 <div class="node-detail-kv-row">
                   <span>API / Panel URL</span>
                   <code><%= apiValue %></code>

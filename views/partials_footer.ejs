@@ -877,9 +877,6 @@
       const trafficLimitText = c.trafficGb && Number(c.trafficGb) > 0 ? c.trafficGb + ' ГБ' : '∞';
       const trafficText = String(c.trafficUsedText || '0 Б') + ' / ' + trafficLimitText;
       const limitIpText = c.limitIp && Number(c.limitIp) > 0 ? String(c.limitIp) : '∞';
-      const subLink = c.links && c.links.sub ? String(c.links.sub) : '';
-      const jsonLink = c.links && c.links.json ? String(c.links.json) : '';
-      const happLink = c.links && c.links.happ ? String(c.links.happ) : '';
       const openLink = c.links && c.links.open ? String(c.links.open) : '#';
       const editorLink = c.links && c.links.editor ? String(c.links.editor) : (c.links && c.links.search ? String(c.links.search) : '/clients');
       const avatarLetter = String(c.login || c.title || 'U').trim().slice(0,1).toUpperCase() || 'U';
@@ -929,9 +926,7 @@
         '<div class="client-quick-section-title">Устройства</div>' +
         '<div class="client-quick-devices-grid">' + devicesHtml + '</div>' +
         '<div class="client-quick-actions modern">' +
-          (subLink ? '<button type="button" class="btn-main client-quick-copy-sub" data-copy-value="' + htmlEscapeClientModal(subLink) + '" onclick="copyClientText(this.dataset.copyValue, this)">Копировать SUB</button>' : '') +
-          (jsonLink ? '<button type="button" class="btn-secondary client-quick-copy-json" data-copy-value="' + htmlEscapeClientModal(jsonLink) + '" onclick="copyClientText(this.dataset.copyValue, this)">Копировать JSON</button>' : '') +
-          ((subLink || jsonLink || happLink) ? '<button type="button" class="btn-secondary client-quick-wide-action" data-client-link-title="' + htmlEscapeClientModal(c.login || c.title || '') + '" data-json-link="' + htmlEscapeClientModal(jsonLink) + '" data-sub-link="' + htmlEscapeClientModal(subLink) + '" data-happ-link="' + htmlEscapeClientModal(happLink) + '" onclick="openClientLinkPicker(this, &quot;qr&quot;)">Все ссылки и QR-коды</button>' : '') +
+          '<button type="button" class="btn-secondary client-quick-wide-action" data-client-app-links="' + htmlEscapeClientModal(c.id) + '" data-client-title="' + htmlEscapeClientModal(c.login || c.title || '') + '">Ссылка и QR</button>' +
         '</div>';
       bodyEl.querySelectorAll('form.js-long-action').forEach(function(form){
         form.addEventListener('submit', function(){

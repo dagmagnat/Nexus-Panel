@@ -1,0 +1,21 @@
+<dialog id="clientAppDialog" class="client-workflow-dialog client-app-dialog" aria-labelledby="clientAppTitle">
+  <header class="client-workflow-heading">
+    <h2 id="clientAppTitle">Подписка клиента</h2>
+    <button type="button" class="btn-secondary" aria-label="Закрыть" data-close-dialog>×</button>
+  </header>
+  <div class="client-workflow-body">
+    <div id="clientAppChoices" class="client-app-choices" role="group" aria-label="Приложение">
+      <button type="button" class="btn-secondary" data-sub-app="happ" aria-pressed="false">Happ</button>
+      <button type="button" class="btn-secondary" data-sub-app="incy" aria-pressed="false">INCY</button>
+      <button type="button" class="btn-secondary" data-sub-app="karing" aria-pressed="false">Karing</button>
+    </div>
+    <div class="client-app-preview">
+      <p id="clientAppStatus" role="status">Выберите приложение</p>
+      <img id="clientAppQr" width="220" height="220" alt="" hidden>
+    </div>
+  </div>
+  <footer class="client-workflow-footer">
+    <button type="button" class="btn-secondary" id="clientAppImportCopy" hidden>Скопировать URL вручную</button>
+    <button type="button" class="btn-main" id="clientAppCopy" disabled>Копировать ссылку</button>
+  </footer>
+</dialog>

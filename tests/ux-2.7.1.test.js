@@ -37,7 +37,7 @@ test('2.7.1 separates client information from editing and aligns client actions'
   assert.match(footer, /client-quick-devices-grid/);
   assert.doesNotMatch(footer, /const localEditor = document\.getElementById\('clientEditor-' \+ id\)/);
   assert.match(clients, /client-summary-links-card/);
-  assert.match(clients, /client-summary-qr-card/);
+  assert.match(clients, /include\('client_app_links'\)/);
   assert.match(css, /\.client-summary-action-card/);
 });
 

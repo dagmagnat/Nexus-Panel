@@ -8,16 +8,15 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 const read = relative => fs.readFileSync(path.join(root, relative), 'utf8');
 
-test('mobile client selection reveals compact actions only after a selection', () => {
+test('mobile clients have a compact actions dialog without requiring selection', () => {
   const clients = read('views/clients.ejs');
-  const css = read('public/css/spectrum-clear.css');
+  const dialog = read('views/client_bulk_actions.ejs');
+  const css = read('public/css/client-pagination.css');
 
-  assert.match(clients, /id="bulkActionsToggle"[\s\S]{0,180}hidden>Действия<\/button>/);
-  assert.match(clients, /id="bulkActionDetails" hidden/);
-  assert.match(clients, /function toggleBulkActions\(\)/);
-  assert.match(clients, /toggle\.hidden = !hasSelection/);
-  assert.match(css, /\.bulk-action-details\[hidden\], \.bulk-actions-toggle\[hidden\]/);
-  assert.match(css, /\.bulk-node-action-row, \.compact-bulk-row \{ grid-template-columns: minmax\(0, 1fr\) 104px/);
+  assert.match(clients, /id="openClientBulkDialog" aria-haspopup="dialog">Действия<\/button>/);
+  assert.match(dialog, /<dialog id="clientBulkDialog"/);
+  assert.match(dialog, /name="bulk_scope">\s*<option value="all">/);
+  assert.match(css, /\.client-workflow-grid \{ grid-template-columns: minmax\(0, 1fr\)/);
 });
 
 test('phone client list keeps one search, four fitted filters and status rails', () => {

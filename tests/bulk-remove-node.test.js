@@ -271,7 +271,7 @@ test('selected-node mass removal uses linear 3x-ui bulkDetach and keeps the app 
   const csrf = extractCsrf(await response.text());
   const form = new URLSearchParams({
     _csrf: csrf,
-    bulk_confirmation: 'CONFIRMED',
+    bulk_confirmation: 'YES',
     bulk_node_id: String(fixture.nodeId),
     bulk_filter_node_id: String(fixture.nodeId)
   });
