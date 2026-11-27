@@ -196,7 +196,7 @@ function createNodeTraffic({ db, get, patch, baseUrl, getUser, getIdentity, titl
     const accessible = (data.response ?? data)?.accessibleNodes;
     const physical = s.scope_key.split('|')[1];
     if ((limit > 0 || s.blocked) && (sharedSquad || !Array.isArray(accessible) || accessible.length!==1 || String(accessible[0].uuid).toLowerCase()!==physical)) {
-      throw new Error('Расход раздельный, но независимое ограничение требует сквад, доступный только выбранной физической ноде. Общий сквад не отключён.');
+      throw new Error('Трафик учитывается отдельно. Для ограничения доступа только на этом узле назначьте ему внутренний сквад Remnawave с inbound, доступным только на этой физической ноде.');
     }
     const fresh = await getUser(node,getIdentity(user));
     if (!fresh) throw new Error('Пользователь исчез из Remnawave.');
@@ -243,9 +243,9 @@ function createNodeTraffic({ db, get, patch, baseUrl, getUser, getIdentity, titl
       try {
         await reconcile(node,user,{...map,used_bytes:0});
       } catch(e) {
-        const warning = 'Счётчик Nexus обнулён, но доступ на узле не восстановлен: '+e.message;
+        const warning = 'Счётчик Nexus обнулён. Проверка применения лимита: ' + e.message;
         db.prepare('UPDATE node_usage_state SET error=? WHERE client_id=? AND node_id=?').run(warning,map.client_id,map.node_id);
-        throw new Error(warning);
+        return {warning};
       }
     });
   }

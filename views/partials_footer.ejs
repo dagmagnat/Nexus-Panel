@@ -145,7 +145,7 @@
     if (!isPhone) return;
 
     const path = location.pathname;
-    const densePages = /\/(dashboard|diagnostics|telegram-bot|settings|routing|redirects|nodes|clients)/.test(path);
+    const densePages = /\/(dashboard|diagnostics|telegram-bot|settings|routing|nodes|clients)/.test(path);
     const skipSelectors = [
       '.stats-card', '.modal-card', '.clients-toolbar', '.clients-card', '.modal',
       '.mobile-never-collapse', '.node-card', '.node-row', '.node-item'
@@ -1351,7 +1351,7 @@
     if (!form.querySelector('input,select,textarea')) return false;
     if (!safeSubmit(form)) return false;
     const path = location.pathname;
-    return /\/(routing|redirects|settings|telegram-bot|nodes|clients|diagnostics)/.test(path);
+    return /\/(routing|settings|telegram-bot|nodes|clients|diagnostics)/.test(path);
   }
   function serialize(form){
     return Array.from(new FormData(form).entries()).map(function(pair){ return pair[0] + '=' + pair[1]; }).sort().join('&');
@@ -1519,7 +1519,7 @@
     try { return Array.from(new FormData(form).entries()).map(p => p[0] + '=' + p[1]).sort().join('&'); } catch(_) { return ''; }
   }
   function bindUniversalDirtySave(){
-    const pathOk = /\/(routing|redirects|settings|telegram-bot|nodes|clients|diagnostics)/.test(location.pathname);
+    const pathOk = /\/(routing|settings|telegram-bot|nodes|clients|diagnostics)/.test(location.pathname);
     if (!pathOk) return;
     const forms = Array.from(document.querySelectorAll('main form[method="post"]')).filter(function(form){
       if (form.matches('.logout-form,.sidebar-logout,.bulk-delete-form,.inline-form,.mini-extend-form,.extend-form')) return false;
@@ -1582,7 +1582,7 @@
     }) || null;
   }
   function trackableForms(){
-    if (!/\/(routing|redirects|settings|telegram-bot|nodes|clients|diagnostics)/.test(location.pathname)) return [];
+    if (!/\/(routing|settings|telegram-bot|nodes|clients|diagnostics)/.test(location.pathname)) return [];
     return Array.from(document.querySelectorAll('main form[method="post"]')).filter(function(form){
       if (form.matches('.logout-form,.sidebar-logout,.bulk-delete-form,.inline-form,.mini-extend-form,.extend-form')) return false;
       if (form.dataset.globalFloatingSave === 'off') return false;
@@ -1734,7 +1734,7 @@
     }) || null;
   }
   function trackableForms(){
-    if (!/\/(routing|redirects|settings|telegram-bot|nodes|clients|diagnostics)/.test(location.pathname)) return [];
+    if (!/\/(routing|settings|telegram-bot|nodes|clients|diagnostics)/.test(location.pathname)) return [];
     return Array.from(document.querySelectorAll('main form[method="post"]')).filter(function(form){
       if (form.matches('.logout-form,.sidebar-logout,.bulk-delete-form,.inline-form,.mini-extend-form,.extend-form')) return false;
       if (form.dataset.globalFloatingSave === 'off') return false;
@@ -1932,7 +1932,7 @@
     }) || null;
   }
   function trackableForms(){
-    if (!/\/(routing|redirects|settings|telegram-bot|nodes|clients|diagnostics)/.test(location.pathname)) return [];
+    if (!/\/(routing|settings|telegram-bot|nodes|clients|diagnostics)/.test(location.pathname)) return [];
     return Array.from(document.querySelectorAll('main form[method="post"]')).filter(form => {
       if (form.matches('.logout-form,.sidebar-logout,.bulk-delete-form,.inline-form,.mini-extend-form,.extend-form')) return false;
       if (form.dataset.globalFloatingSave === 'off') return false;

@@ -1940,12 +1940,14 @@ app.post('/clients/traffic/reset-selected',requireAuth,async(req,res) => {
     const maps = ids.flatMap(id => getMappings.all(id)).filter(map => allNodes || (picked ? picked.has(map.node_id) : map.node_id === nodeId));
     if (!maps.length) throw new Error('Выбранные пользователи не назначены этому узлу.');
     await finishLongPost(req,res,'/node-traffic',async action => {
-    const errors=[]; let success=0;
+    const errors=[]; const warnings=new Set(); let success=0;
     const remoteGlobals=new Set();
     for (let i=0;i<maps.length;i++) {
       if (action.isCancelled()) break;
       const map=maps[i],node=db.prepare('SELECT * FROM nodes WHERE id=?').get(map.node_id),client=db.prepare('SELECT * FROM clients WHERE id=?').get(map.client_id);
+      const label = `${client?.login || `Клиент #${map.client_id}`} / ${node?.name || `Узел #${map.node_id}`}`;
       try {
+        if (!client || !node) throw new Error('Клиент или узел удалён.');
         if(awgDevicesEnabled() && require('./lib_amneziawg').isAmneziaWG(getCachedInbound(node))) {
           await awgDevices.sweep();awgDevices.reset(client.id,node.id);
           zeroClientNodeTraffic(map.id,client.id,node.id);setImmediate(scheduleAwgDeviceReconcile);
@@ -1954,10 +1956,11 @@ app.post('/clients/traffic/reset-selected',requireAuth,async(req,res) => {
           if (!user) throw new Error('Пользователь не найден в Remnawave.');
           // Only an explicit all-node reset may touch a shared native account counter.
           const key=normalizeRemnawaveBaseUrl(node.panel_url)+'|'+getRemnawaveUserRemoteId(user);
-          await nodeTraffic.resetMapping(node,user,map,{resetNative:allNodes && !remoteGlobals.has(key) ? async()=>{
+          const result = await nodeTraffic.resetMapping(node,user,map,{resetNative:allNodes && !remoteGlobals.has(key) ? async()=>{
             await remnawaveApiPost(node,`/api/users/${encodeURIComponent(getRemnawaveUserRemoteId(user))}/actions/reset-traffic`,undefined);
             remoteGlobals.add(key);
           } : undefined});
+          if (result?.warning) warnings.add(`${node.name}: ${result.warning}`);
         } else {
           const request=buildClientTrafficResetRequest({node,map,client,h1cloud:isH1CloudNode(node)||isH1Cloud3xuiNode(node),modern3xui:is3xuiV3Mode(node)});
           const result=await apiPost(node,request.path,{},false);
@@ -1965,12 +1968,12 @@ app.post('/clients/traffic/reset-selected',requireAuth,async(req,res) => {
           zeroClientNodeTraffic(map.id,map.client_id,map.node_id);
         }
         success++;
-      } catch(e) { errors.push(`${client.login} / ${node.name}: ${e.message}`); }
-      action.setProgress(i+1,maps.length,`${client.login} / ${node.name}`);
+      } catch(e) { errors.push(`${label}: ${e.message}`); }
+      action.setProgress(i+1,maps.length,label);
     }
     recordTrafficSnapshot(true,'reset');
-    return {success,total:maps.length,errors,cancelled:action.isCancelled()};
-    },result => `Сброшено счётчиков: ${result.success} из ${result.total}. История расхода сохранена.`,{label:'Сброс трафика выбранных пользователей'});
+    return {success,total:maps.length,errors,warnings:[...warnings],cancelled:action.isCancelled()};
+    },result => [`Сброшено счётчиков: ${result.success} из ${result.total}. История расхода сохранена.`, ...result.warnings.slice(0, 3)].join(' '),{label:'Сброс трафика выбранных пользователей'});
   } catch(e) { res.redirect('/clients?error='+encodeURIComponent(e.message)); }
 });
 initNexusNodeControlSchema(db);
@@ -2210,15 +2213,16 @@ function renderClientsFallbackPage(res, params, err) {
 function render(res, view, params = {}) {
   const accountInterfaceTheme = getAccountInterfaceTheme(res.req?.session?.userId);
   const defaultPanelInterfaceTheme = getPanelInterfaceTheme();
-  let currentAdminUsername = '';
-  try {
-    currentAdminUsername = access.user(res.req?.session?.userId)?.username || '';
-  } catch (_) {}
+  const account = access.user(res.req?.session?.userId);
+  const currentAdminUsername = account?.username || '';
   // Resolve once per render, not for each copy/QR action in every client row.
   const linkBase = getPublicSubBaseUrl();
   const cleanLinks = cleanSubscriptionUrlsEnabled();
+  const workspace = res.req?.session?.workspaceId || 'main';
   const data = {
     ...params,
+    canOpenPanelSettings: Boolean(account && access.allowsRoute(account, workspace, 'GET', '/settings')),
+    canOpenPreferences: Boolean(account && access.allowsRoute(account, workspace, 'GET', '/preferences')),
     isDevelopment: !IS_PRODUCTION,
     nexusNodeEnabled: NEXUS_NODE_ENABLED,
     expiredSupportNodeIds: getSubscriptionExpiredGraceNodeIds(),
@@ -7942,49 +7946,6 @@ function clientHasActiveH1CloudSubscription(clientId) {
 }
 
 
-const REDIRECT_RULES_FILE = path.join(DATA_DIR, 'redirect_rules.json');
-const REDIRECT_STATUS_FILE = path.join(DATA_DIR, 'redirect_status.json');
-const REDIRECT_HOST_IPS_FILE = path.join(DATA_DIR, 'redirect_host_ips.json');
-const REDIRECT_RESTART_FILE = path.join(DATA_DIR, 'redirect_helper_restart.request');
-
-function normalizeRedirectProtocol(value) {
-  const proto = String(value || 'tcp').toLowerCase().trim();
-  return ['tcp', 'udp', 'both'].includes(proto) ? proto : 'tcp';
-}
-
-function isValidIpv4(value) {
-  const parts = String(value || '').trim().split('.');
-  if (parts.length !== 4) return false;
-  return parts.every(p => /^\d+$/.test(p) && Number(p) >= 0 && Number(p) <= 255);
-}
-
-function normalizeRedirectPublicHost(value) {
-  let raw = String(value || '').trim();
-  if (!raw) return '';
-  try {
-    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(raw)) raw = new URL(raw).hostname;
-  } catch (_) { return ''; }
-  raw = raw.replace(/^\[|\]$/g, '').replace(/\.$/, '').toLowerCase();
-  if (isValidIpv4(raw)) return raw;
-  if (raw.length > 253 || !raw.includes('.')) return '';
-  const labels = raw.split('.');
-  if (!labels.every(label => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(label))) return '';
-  return raw;
-}
-
-function isPrivateOrServiceIpv4(value) {
-  if (!isValidIpv4(value)) return true;
-  const [a, b] = String(value).split('.').map(Number);
-  if (a === 10) return true;
-  if (a === 127) return true;
-  if (a === 169 && b === 254) return true;
-  if (a === 172 && b >= 16 && b <= 31) return true;
-  if (a === 192 && b === 168) return true;
-  if (a === 100 && b >= 64 && b <= 127) return true;
-  if (a === 0) return true;
-  return false;
-}
-
 function readJsonFileSafe(filePath, fallback) {
   try {
     if (!fs.existsSync(filePath)) return fallback;
@@ -7997,68 +7958,6 @@ function readJsonFileSafe(filePath, fallback) {
 function writeJsonFileSafe(filePath, value) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, JSON.stringify(value, null, 2));
-}
-
-function getRedirectRules(includeDisabled = true) {
-  const rows = db.prepare(`
-    SELECT rr.*, n.name, n.country_code, n.country_name_ru, n.country_flag, n.label_suffix, n.panel_url, n.inbound_id, n.enabled AS node_enabled
-    FROM redirect_rules rr
-    JOIN nodes n ON n.id = rr.node_id
-    ${includeDisabled ? '' : 'WHERE rr.enabled = 1'}
-    ORDER BY rr.enabled DESC, rr.updated_at DESC, rr.id DESC
-  `).all();
-  return rows.map(row => ({
-    ...row,
-    nodeLabel: getNodeDisplayName(row),
-    nodeDisplayName: getNodePublicName(row),
-    metrics: safeParseJsonField(row.metrics_json, {})
-  }));
-}
-
-function getRedirectStatus() {
-  const status = readJsonFileSafe(REDIRECT_STATUS_FILE, { ok: false, message: 'Статус helper пока не создан', rules: [], updatedAt: null });
-  try {
-    if (fs.existsSync(REDIRECT_RULES_FILE) && fs.existsSync(REDIRECT_STATUS_FILE)) {
-      const rulesMtime = fs.statSync(REDIRECT_RULES_FILE).mtimeMs;
-      const statusMtime = fs.statSync(REDIRECT_STATUS_FILE).mtimeMs;
-      status.stale = rulesMtime > statusMtime + 1000;
-      if (status.stale) {
-        status.staleMessage = 'Правила сохранены позже последнего запуска helper. Подожди несколько секунд или перезапусти helper.';
-      }
-    }
-  } catch (_) {}
-  return status;
-}
-
-function getDetectedHostIps() {
-  const fromHelper = readJsonFileSafe(REDIRECT_HOST_IPS_FILE, []);
-  const helperIps = Array.isArray(fromHelper) ? fromHelper.filter(isValidIpv4) : [];
-  const envIps = String(process.env.REDIRECT_BIND_IPS || INSTALL_BIND_IP || '')
-    .split(/[,;\s]+/).map(v => v.trim()).filter(isValidIpv4);
-  const osIps = [];
-  try {
-    const nets = os.networkInterfaces();
-    for (const entries of Object.values(nets)) {
-      for (const item of entries || []) {
-        if (item.family === 'IPv4' && !item.internal && isValidIpv4(item.address)) osIps.push(item.address);
-      }
-    }
-  } catch (_) {}
-  const all = [...new Set([...envIps, ...helperIps, ...osIps])];
-  const publicIps = all.filter(ip => !isPrivateOrServiceIpv4(ip));
-  const showPrivate = String(process.env.REDIRECT_SHOW_PRIVATE_IPS || '').trim() === '1';
-  if (showPrivate) return all;
-  return publicIps.length ? publicIps : all;
-}
-
-function getRedirectReplacementHost(nodeId, fallbackHost) {
-  const row = db.prepare(`
-    SELECT COALESCE(NULLIF(public_host, ''), bind_ip) AS replacement_host FROM redirect_rules
-    WHERE node_id = ? AND enabled = 1 AND rewrite_enabled = 1
-    ORDER BY updated_at DESC, id DESC
-    LIMIT 1
-  `).get(Number(nodeId));
-  return row?.replacement_host || fallbackHost;
 }
 
 function getNodeTargetHost(node) {
@@ -8076,13 +7975,13 @@ function getNodeInboundPort(node, inbound = null) {
   return 443;
 }
 
-function getRedirectTargetPort(node, inbound = null) {
+function getClientEndpointPort(node, inbound = null) {
   const fromInbound = Number(inbound?.port || 0);
   if (Number.isInteger(fromInbound) && fromInbound > 0 && fromInbound <= 65535) return fromInbound;
   return 0;
 }
 
-function getRemnawaveRedirectTarget(hostDescriptor) {
+function getRemnawaveClientEndpoint(hostDescriptor) {
   if (!hostDescriptor || typeof hostDescriptor !== 'object') return { host: '', port: 0 };
   let host = String(hostDescriptor.address || hostDescriptor.serverAddress || hostDescriptor.hostname || '').trim();
   try {
@@ -8093,16 +7992,16 @@ function getRemnawaveRedirectTarget(hostDescriptor) {
   return { host, port };
 }
 
-async function resolveRedirectTarget(node, inbound = null) {
+async function resolveClientEndpoint(node, inbound = null) {
   if (isRemnawaveNode(node)) {
     const descriptor = await getRemnawaveHostDescriptor(node);
-    return { ...getRemnawaveRedirectTarget(descriptor), inbound: null, descriptor };
+    return { ...getRemnawaveClientEndpoint(descriptor), inbound: null, descriptor };
   }
   let selectedInbound = inbound || getCachedInbound(node);
   if (!selectedInbound) selectedInbound = await getInboundFast(node);
   return {
-    host: getNodeTargetHost(node),
-    port: getRedirectTargetPort(node, selectedInbound),
+    host: getInboundShareHost(node, selectedInbound) || getNodeTargetHost(node),
+    port: getClientEndpointPort(node, selectedInbound),
     inbound: selectedInbound,
     descriptor: null
   };
@@ -8157,77 +8056,6 @@ function assertInboundPortAllowed(port, exceptNodeId = 0) {
   }
   return p;
 }
-
-function assertRedirectListenPortAllowed(bindIp, port, protocol, exceptNodeId = 0) {
-  const p = assertReservedPanelPortFree(port, 'Перенаправление');
-  const proto = normalizeRedirectProtocol(protocol || 'tcp');
-  const conflicts = db.prepare(`
-    SELECT rr.*, n.name, n.country_name_ru, n.label_suffix
-    FROM redirect_rules rr
-    LEFT JOIN nodes n ON n.id = rr.node_id
-    WHERE rr.enabled = 1
-      AND rr.bind_ip = ?
-      AND rr.target_port = ?
-      AND rr.node_id != ?
-      AND (rr.protocol = ? OR rr.protocol = 'both' OR ? = 'both')
-    ORDER BY rr.updated_at DESC, rr.id DESC
-  `).all(String(bindIp || ''), p, Number(exceptNodeId || 0), proto, proto);
-  if (conflicts.length) {
-    const first = conflicts[0];
-    throw new Error(`Перенаправление: порт ${p}/${proto.toUpperCase()} на IP ${bindIp} уже занят правилом для «${getNodePublicName(first)}». Удали старое правило или выбери другой порт inbound.`);
-  }
-  const nodeConflict = collectKnownNodeInboundPorts(exceptNodeId).find(item => Number(item.port) === p);
-  if (nodeConflict) {
-    throw new Error(`Перенаправление: порт ${p} уже используется узлом «${nodeConflict.label}». Нельзя повесить два назначения на один порт.`);
-  }
-  return p;
-}
-
-function serializeRedirectDesiredState() {
-  const rules = db.prepare(`
-    SELECT rr.id, rr.bind_ip, rr.public_host, rr.helper_enabled, rr.node_id, rr.target_host, rr.target_port, rr.protocol, rr.rewrite_enabled, rr.enabled,
-           n.country_name_ru, n.name, n.label_suffix
-    FROM redirect_rules rr
-    JOIN nodes n ON n.id = rr.node_id
-    WHERE rr.enabled = 1
-    ORDER BY rr.id ASC
-  `).all().map(row => ({
-    id: Number(row.id),
-    bind_ip: String(row.bind_ip || ''),
-    public_host: String(row.public_host || row.bind_ip || ''),
-    helper_enabled: Number(row.helper_enabled) === 1,
-    node_id: Number(row.node_id),
-    target_host: String(row.target_host || ''),
-    target_port: Number(row.target_port || 0),
-    protocol: normalizeRedirectProtocol(row.protocol),
-    rewrite_enabled: Number(row.rewrite_enabled) === 1,
-    label: getNodePublicName(row)
-  })).filter(r => r.helper_enabled && normalizeRedirectPublicHost(r.public_host) && r.target_host && r.target_port > 0);
-
-  return {
-    version: 1,
-    generatedAt: new Date().toISOString(),
-    appDir: APP_DIR_HINT,
-    rules
-  };
-}
-
-function exportRedirectRulesForHelper() {
-  const desired = serializeRedirectDesiredState();
-  writeJsonFileSafe(REDIRECT_RULES_FILE, desired);
-  return desired;
-}
-
-function updateRedirectRulesFromStatus() {
-  const status = getRedirectStatus();
-  const rules = Array.isArray(status.rules) ? status.rules : [];
-  const update = db.prepare(`UPDATE redirect_rules SET last_status = ?, last_error = ?, metrics_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`);
-  for (const rule of rules) {
-    if (!rule || !rule.id) continue;
-    update.run(rule.status || (status.ok ? 'active' : 'error'), rule.error || '', JSON.stringify(rule.metrics || {}), Number(rule.id));
-  }
-}
-
 
 function tcpProbe(host, port, timeoutMs = 3000) {
   return new Promise(resolve => {
@@ -8411,89 +8239,37 @@ function buildInboundRealityWarnings(inbound, node = null) {
   return warnings;
 }
 
+async function probeClientEndpoint(node) {
+  const { host, port, inbound, descriptor } = await resolveClientEndpoint(node, getCachedInbound(node));
+  const stream = safeParseJsonField(inbound?.streamSettings, {});
+  const transport = [inbound?.protocol, stream.network, descriptor?.protocol, descriptor?.network, node.transport_label].filter(Boolean).join(' ');
+  if (/hysteria|wireguard|amnezia/i.test(transport)) {
+    return { host, port, ok: null, message: 'Для UDP нужна проверка через VPN-клиент.', inbound, stream };
+  }
+  if (descriptor?.isDisabled === true) return { host, port, ok: false, message: 'Хост отключён в Remnawave.', inbound, stream };
+  if (!host || !port) return { host, port, ok: null, message: 'В настройках узла не найден адрес клиентского подключения.', inbound, stream };
+  const probe = await tcpProbe(host, port, 3000);
+  return { host, port, ...probe, message: probe.ok ? `TCP отвечает · ${probe.latencyMs} мс` : `TCP недоступен · ${probe.message}`, inbound, stream };
+}
+
 async function buildNodeConnectivityProbe(nodeId) {
   const node = db.prepare('SELECT * FROM nodes WHERE id = ?').get(Number(nodeId || 0));
   if (!node) return null;
-  let inbound = getCachedInbound(node);
-  let resolvedTarget = { host: getNodeTargetHost(node), port: getRedirectTargetPort(node, inbound), inbound };
-  try { resolvedTarget = await resolveRedirectTarget(node, inbound); } catch (_) {}
-  inbound = resolvedTarget.inbound || inbound;
-  const targetHost = resolvedTarget.host;
-  const targetPort = resolvedTarget.port;
-  const activeRule = db.prepare(`
-    SELECT * FROM redirect_rules
-    WHERE node_id = ? AND enabled = 1 AND rewrite_enabled = 1
-    ORDER BY updated_at DESC, id DESC LIMIT 1
-  `).get(Number(node.id));
-  const redirectHost = activeRule?.public_host || activeRule?.bind_ip || '';
-  const direct = targetHost && targetPort ? await tcpProbe(targetHost, targetPort, 4500) : { ok: false, message: 'нет host/port', latencyMs: 0 };
-  const redirect = redirectHost && targetPort ? await tcpProbe(redirectHost, targetPort, 4500) : null;
-  const stream = safeParseJsonField(inbound?.streamSettings, {});
+  const { inbound, stream, ...direct } = await probeClientEndpoint(node);
   const reality = stream.realitySettings || {};
-  const realityInner = reality.settings || {};
-  const sni = getEffectiveNodeSni(node, reality, realityInner);
+  const sni = getEffectiveNodeSni(node, reality, reality.settings || {});
   let sniCheck = null;
   if (sni) {
-    try { sniCheck = await checkSniHost(sni, 6000); }
+    try { sniCheck = await checkSniHost(sni, 5000); }
     catch (err) { sniCheck = { ok: false, host: sni, error: err.message || String(err) }; }
   }
   return {
-    generatedAt: new Date().toISOString(),
-    node: { id: node.id, name: getNodePublicName(node), panelUrl: node.panel_url },
-    inbound: inbound ? extractInboundEditorValues(inbound) : null,
-    direct: { host: targetHost, port: targetPort, ...direct },
-    redirect: redirect ? { host: redirectHost, label: activeRule?.bind_label || '', port: targetPort, protocol: activeRule?.protocol || '', ...redirect } : null,
+    direct,
     sni,
     sniCheck,
-    warnings: inbound ? buildInboundRealityWarnings(inbound, node) : ['Inbound-кэш не найден. Сначала загрузи параметры узла из 3x-ui.']
+    warnings: inbound ? buildInboundRealityWarnings(inbound, node) : []
   };
 }
-
-async function buildRedirectProbeResults(nodeIds = [], bindIp = '') {
-  const ids = [...new Set((nodeIds || []).map(v => Number(v)).filter(Number.isFinite))];
-  if (!ids.length) return [];
-  const placeholders = ids.map(() => '?').join(',');
-  const nodes = db.prepare(`SELECT * FROM nodes WHERE id IN (${placeholders})`).all(...ids);
-  const byId = new Map(nodes.map(n => [Number(n.id), n]));
-  const results = [];
-  for (const id of ids) {
-    const node = byId.get(id);
-    if (!node) continue;
-    let inbound = getCachedInbound(node);
-    let resolvedTarget = { host: getNodeTargetHost(node), port: getRedirectTargetPort(node, inbound), inbound };
-    try { resolvedTarget = await resolveRedirectTarget(node, inbound); } catch (_) {}
-    const targetHost = resolvedTarget.host;
-    const targetPort = resolvedTarget.port;
-    let probe = { ok: false, message: 'нет target host/port', latencyMs: 0 };
-    if (targetHost && targetPort) probe = await tcpProbe(targetHost, targetPort, 3500);
-    results.push({
-      nodeId: id,
-      nodeName: getNodePublicName(node),
-      nodeLabel: getNodeDisplayName(node),
-      countryCode: node.country_code || '',
-      countryFlag: getNodeFlag(node),
-      bindIp,
-      targetHost,
-      targetPort,
-      ok: !!probe.ok,
-      message: probe.message,
-      latencyMs: probe.latencyMs
-    });
-  }
-  return results;
-}
-
-function saveRedirectCheckReport(results) {
-  const file = path.join(DATA_DIR, 'redirect_check_report.json');
-  writeJsonFileSafe(file, { generatedAt: new Date().toISOString(), results: results || [] });
-}
-
-function getRedirectCheckReport() {
-  const file = path.join(DATA_DIR, 'redirect_check_report.json');
-  return readJsonFileSafe(file, { generatedAt: null, results: [] });
-}
-
-
 
 function getShareLinkProtocol(line) {
   const match = String(line || '').trim().match(/^([a-z][a-z0-9+.-]*):\/\//i);
@@ -9260,7 +9036,7 @@ function buildOutboundShareLinksFromInbound(node, inbound, uuid, email, displayN
     // Native AWG embeds its endpoint inside the encoded .conf. Apply the same
     // subscription redirect as other protocols before encoding that config.
     return endpoints.map(endpoint => require('./lib_amneziawg').shareLink(inbound, uuid, email,
-      manual ? endpoint.dest : getRedirectReplacementHost(node.node_id || node.id, endpoint.dest), endpoint.port, nodeName)).filter(Boolean);
+      endpoint.dest, endpoint.port, nodeName)).filter(Boolean);
   }
   const protocol = normalizeInboundProtocol(inbound?.protocol || 'vless');
   if (protocol === 'vless') {
@@ -9300,7 +9076,7 @@ function buildVlessRealityLink(node, inbound, uuid, displayName, nodeName, email
 
   const panelUrl = new URL(node.panel_url);
   const originalHost = getInboundShareHost(node, inbound) || panelUrl.hostname;
-  const host = getRedirectReplacementHost(node.node_id || node.id, originalHost);
+  const host = originalHost;
   const port = inbound.port || panelUrl.port || 443;
 
   const security = String(streamSettings.security || 'none').toLowerCase() || 'none';
@@ -9362,7 +9138,7 @@ function buildTrojanLink(node, inbound, uuid, email, nodeName) {
   const password = String(client.password || client.pass || client.id || uuid || '').trim();
   if (!password) return '';
   const panelUrl = new URL(node.panel_url);
-  const host = getRedirectReplacementHost(node.node_id || node.id, getInboundShareHost(node, inbound) || panelUrl.hostname);
+  const host = getInboundShareHost(node, inbound) || panelUrl.hostname;
   const port = inbound.port || panelUrl.port || 443;
   const security = String(streamSettings.security || 'tls').toLowerCase() || 'tls';
   const network = normalizeInboundNetwork(streamSettings.network || 'raw');
@@ -9382,7 +9158,7 @@ function buildShadowsocksLink(node, inbound, uuid, email, nodeName) {
   const password = String(client.password || client.pass || settings.password || uuid || '').trim();
   if (!method || !password) return '';
   const panelUrl = new URL(node.panel_url);
-  const host = getRedirectReplacementHost(node.node_id || node.id, getInboundShareHost(node, inbound) || panelUrl.hostname);
+  const host = getInboundShareHost(node, inbound) || panelUrl.hostname;
   const port = inbound.port || panelUrl.port || 443;
   const network = normalizeInboundNetwork(streamSettings.network || 'raw');
   const user = Buffer.from(`${method}:${password}`, 'utf8').toString('base64url');
@@ -14313,24 +14089,36 @@ async function buildIosSafetyReport() {
 function buildHealthOverview() {
   const nodes = db.prepare(`SELECT * FROM nodes ORDER BY ${nodeOrderSql()}`).all();
   const clientsCount = db.prepare('SELECT COUNT(*) AS c FROM clients').get().c;
-  const offlineNodes = nodes.filter(n => String(n.last_status || '').toLowerCase() === 'offline');
-  const unknownNodes = nodes.filter(n => !n.last_status || String(n.last_status).toLowerCase() === 'unknown');
-  const redirectStatus = (() => {
-    try { return getRedirectStatus(); } catch (err) { return { ok: false, message: String(err.message || err) }; }
-  })();
+  const enabledNodes = nodes.filter(n => Number(n.enabled) !== 0);
+  const offlineNodes = enabledNodes.filter(n => String(n.last_status || '').toLowerCase() === 'offline');
+  const unknownNodes = enabledNodes.filter(n => !n.last_status || String(n.last_status).toLowerCase() === 'unknown');
   const missingMaps = db.prepare(`
-    SELECT COUNT(*) AS c
-    FROM clients c
-    JOIN nodes n ON n.enabled = 1
-    LEFT JOIN client_nodes cn ON cn.client_id = c.id AND cn.node_id = n.id
-    WHERE c.enabled = 1 AND cn.id IS NULL
+    SELECT COUNT(*) AS c FROM clients c
+    WHERE c.enabled = 1 AND NOT EXISTS (
+      SELECT 1 FROM client_nodes cn JOIN nodes n ON n.id = cn.node_id
+      WHERE cn.client_id = c.id AND cn.enabled = 1 AND n.enabled = 1
+    )
   `).get().c;
+  const orphanMaps = db.prepare(`
+    SELECT COUNT(*) AS c FROM client_nodes cn
+    LEFT JOIN clients c ON c.id = cn.client_id LEFT JOIN nodes n ON n.id = cn.node_id
+    WHERE c.id IS NULL OR n.id IS NULL
+  `).get().c;
+  const traffic = db.prepare(`
+    SELECT COUNT(*) AS c, COUNT(DISTINCT s.node_id) AS nodes FROM node_usage_state s
+    JOIN client_nodes cn ON cn.client_id=s.client_id AND cn.node_id=s.node_id
+    JOIN clients c ON c.id=s.client_id JOIN nodes n ON n.id=s.node_id
+    WHERE COALESCE(s.error,'') != '' AND n.enabled = 1 AND c.enabled = 1 AND cn.enabled = 1
+  `).get();
   const checks = [
-    { name: 'База данных', ok: true, message: 'доступна' },
-    { name: 'Узлы', ok: nodes.length > 0 && offlineNodes.length === 0, message: `${nodes.length} всего, offline: ${offlineNodes.length}, unknown: ${unknownNodes.length}` },
-    { name: 'Клиенты', ok: clientsCount > 0, message: `${clientsCount} клиентов` },
-    { name: 'Связи клиентов с узлами', ok: Number(missingMaps || 0) === 0, message: missingMaps ? `отсутствующих связей: ${missingMaps}` : 'расхождений по отсутствующим связям не найдено' },
-    { name: 'Helper перенаправления', ok: redirectStatus.ok !== false, message: redirectStatus.message || redirectStatus.state || 'статус прочитан' }
+    { name: 'База данных', ok: true, message: 'Доступна' },
+    { name: 'API узлов', ok: enabledNodes.length > 0 && offlineNodes.length + unknownNodes.length === 0,
+      message: `Включено: ${enabledNodes.length}. Ошибок API: ${offlineNodes.length}. Ожидают проверки: ${unknownNodes.length}.` },
+    { name: 'Клиенты', ok: true, message: `Клиентов в базе: ${clientsCount}` },
+    { name: 'Назначения клиентов', ok: missingMaps + orphanMaps === 0,
+      message: `Включённых клиентов без включённого узла: ${missingMaps}. Связей с удалёнными записями: ${orphanMaps}.` },
+    { name: 'Трафик и лимиты', ok: traffic.c === 0,
+      message: traffic.c ? `Предупреждений: ${traffic.c} на ${traffic.nodes} узлах. Причины указаны в «Расходе трафика по узлам».` : 'Ошибок учёта и лимитов нет.' }
   ];
   return {
     ok: checks.every(c => c.ok),
@@ -14409,43 +14197,7 @@ async function runDashboardHealthSweep(options = {}) {
       }
     }
 
-    const redirectRules = (() => {
-      try { return getRedirectRules(false); } catch (_) { return []; }
-    })();
-    const rawRedirectStatus = (() => {
-      try { return getRedirectStatus(); } catch (err) { return { ok: false, error: String(err?.message || err) }; }
-    })();
-    const redirectConfigured = redirectRules.length > 0;
-    const redirectProblem = String(
-      rawRedirectStatus.staleMessage ||
-      rawRedirectStatus.error ||
-      rawRedirectStatus.message ||
-      ''
-    ).trim();
-    const redirectOk = !redirectConfigured || (rawRedirectStatus.ok !== false && !rawRedirectStatus.stale);
-    const redirectNetwork = rawRedirectStatus.systemNetwork || {};
-    const redirectTotalMbps = Math.max(0, Number(redirectNetwork.totalMbps || 0));
-    const redirectRuleCount = redirectRules.length;
-    const redirectRuntimeSummary = `${redirectRuleCount} прав. · ${redirectTotalMbps.toFixed(2)} Мбит/с`;
-    const redirect = {
-      configured: redirectConfigured,
-      ok: redirectOk,
-      status: !redirectConfigured ? 'not-configured' : (redirectOk ? 'online' : 'offline'),
-      statusLabel: !redirectConfigured ? 'Не настроено' : (redirectOk ? 'Работает' : 'Ошибка'),
-      message: !redirectConfigured
-        ? 'Активных правил перенаправления нет.'
-        : (redirectOk
-          ? `${redirectRuntimeSummary}${redirectProblem ? ` · ${redirectProblem}` : ''}`
-          : humanizeOperationalError(redirectProblem || 'Helper не подтвердил применение правил.')),
-      technicalError: redirectOk ? '' : redirectProblem,
-      url: '/redirects',
-      updatedAt: rawRedirectStatus.updatedAt || rawRedirectStatus.generatedAt || null,
-      rulesCount: redirectRuleCount,
-      totalMbps: redirectTotalMbps,
-      backend: rawRedirectStatus.backend || rawRedirectStatus.iptables || ''
-    };
-
-    return { ok: true, generatedAt: new Date().toISOString(), checks, redirect };
+    return { ok: true, generatedAt: new Date().toISOString(), checks };
   })();
 
   if (detailed) dashboardHealthDetailedSweepPromise = sweepPromise;
@@ -14480,20 +14232,32 @@ app.get('/dashboard/panel-check.json', requireAuth, async (req, res) => {
     const nodes = db.prepare(`SELECT * FROM nodes ORDER BY ${nodeOrderSql()}`).all();
     add('Узлы', nodes.length > 0, nodes.length ? `Добавлено узлов: ${nodes.length}` : 'Узлы не добавлены');
     for (const node of nodes) {
-      const nodeCheckStarted = Date.now();
-      try {
-        const probe = await checkNode(node);
-        add(`Узел: ${getNodeDisplayName(node)}`, !!probe.ok, probe.ok ? 'OK' : (probe.error || 'ошибка проверки'), { nodeId: node.id, ms: Date.now() - nodeCheckStarted });
-      } catch (err) {
-        add(`Узел: ${getNodeDisplayName(node)}`, false, err.message || err, { nodeId: node.id, ms: Date.now() - nodeCheckStarted });
+      const title = getNodeDisplayName(node);
+      if (Number(node.enabled) === 0) {
+        add(title, true, 'Отключён в панели', { skipped: true });
+        continue;
+      }
+      const startedAt = Date.now();
+      const [api, endpoint] = await Promise.allSettled([
+        checkNode(node, { timeoutMs: Math.min(NODE_HEALTHCHECK_TIMEOUT_MS, 5000), lightweight: true }),
+        probeClientEndpoint(node)
+      ]);
+      const details = { nodeId: node.id, ms: Date.now() - startedAt };
+      const apiOk = api.status === 'fulfilled' && api.value.ok;
+      add(`${title} · API`, apiOk, apiOk ? 'Панель ответила' : api.reason?.message || api.value?.error || 'Ошибка проверки', details);
+      if (endpoint.status === 'rejected') {
+        add(`${title} · клиентский порт`, false, endpoint.reason?.message || 'Ошибка проверки', details);
+      } else {
+        const { host, port, message, ok } = endpoint.value;
+        add(`${title} · клиентский порт`, ok !== false, host && port ? `${host}:${port} · ${message}` : message,
+          { ...details, skipped: ok === null });
       }
     }
     const routing = getRoutingConfig();
-    add('Маршрутизация', true, routing.enabled ? `Включена, режим: ${routing.mode || 'proxy-selected'}` : 'Выключена');
-    const redirectStatus = getRedirectStatus();
-    add('Перенаправление/helper', redirectStatus.ok !== false, redirectStatus.message || redirectStatus.state || 'статус прочитан', { updatedAt: redirectStatus.updatedAt || redirectStatus.lastUpdate || '' });
-    const clientsCount = db.prepare('SELECT COUNT(*) AS c FROM clients').get().c;
-    add('Клиенты', true, `Клиентов в агрегаторе: ${clientsCount}`);
+    add('Маршрутизация', true, routing.enabled ? `Включена. Правил по списку: ${routing.ruleGroups?.length || 0}.` : 'Выключена');
+    for (const item of buildHealthOverview().checks) {
+      if (item.name !== 'API узлов') add(item.name, item.ok, item.message);
+    }
     result.durationMs = Date.now() - started;
     res.json(result);
   } catch (err) {
@@ -14829,9 +14593,6 @@ app.get('/dashboard', requireAuth, async (req, res) => {
   const topClientUsageReport = { period: topPeriod, periodLabel: TOP_CLIENT_USAGE_PERIODS[topPeriod].label, rows: [], deferred: true };
   const topClientUsageRows = topClientUsageReport.rows;
   const dashboardHealth = null; // Health UI uses cached node state and its API.
-  const redirectStatus = (() => {
-    try { return getRedirectStatus(); } catch (err) { return { ok: false, message: String(err.message || err) }; }
-  })();
 
   render(res, 'dashboard', {
     stats,
@@ -14842,7 +14603,6 @@ app.get('/dashboard', requireAuth, async (req, res) => {
     topClientUsageReport,
     topClientUsageRows,
     dashboardHealth,
-    redirectStatus,
     expiringClients,
     limitedClients,
     showOnlineClients,
@@ -15128,282 +14888,6 @@ function isUpdateRunningStatus(status) {
   return ['queued', 'running', 'downloading', 'installing'].includes(state);
 }
 
-
-
-app.get('/redirects', requireAuth, async (req, res) => {
-  updateRedirectRulesFromStatus();
-  const rawNodes = db.prepare(`SELECT * FROM nodes ORDER BY ${nodeOrderSql()}`).all();
-  const nodes = await Promise.all(rawNodes.map(async node => {
-    const cachedInbound = getCachedInbound(node);
-    let target = { host: getNodeTargetHost(node), port: getRedirectTargetPort(node, cachedInbound), inbound: cachedInbound };
-    try { target = await resolveRedirectTarget(node, cachedInbound); } catch (_) {}
-    return {
-      ...node,
-      redirect_target_host: target.host,
-      redirect_target_port: target.port,
-      redirect_has_inbound_cache: target.inbound || target.descriptor ? 1 : 0,
-      transport_label: isRemnawaveNode(node)
-        ? (target.host && target.port ? `Remnawave Host · ${target.host}:${target.port}` : 'Host не выбран или недоступен')
-        : (target.inbound ? getInboundTransportInfo(target.inbound).label : 'не загружено')
-    };
-  }));
-  const rules = getRedirectRules(true);
-  const status = getRedirectStatus();
-  const hostIps = getDetectedHostIps();
-  render(res, 'redirects', {
-    pageTitle: 'Перенаправление',
-    nodes,
-    rules,
-    status,
-    hostIps,
-    checkReport: getRedirectCheckReport(),
-    message: req.query.message || '',
-    error: req.query.error || ''
-  });
-});
-
-
-app.post('/redirects/helper/refresh.json', requireAuth, (req, res) => {
-  try {
-    // Кнопка ручного обновления должна не просто перезагружать страницу,
-    // а повторно выгрузить желаемые правила для host-helper и прочитать свежий статус.
-    // Сам iptables применяет host-helper; этот endpoint синхронизирует UI с его status-файлом.
-    let desired = { rules: [] };
-    try { desired = exportRedirectRulesForHelper(); } catch (_) {}
-    updateRedirectRulesFromStatus();
-    const status = getRedirectStatus();
-    return res.json({ ok: true, generatedAt: new Date().toISOString(), rulesCount: Array.isArray(desired.rules) ? desired.rules.length : 0, status });
-  } catch (err) {
-    return res.status(500).json({ ok: false, error: String(err.message || err) });
-  }
-});
-
-app.post('/redirects/helper/restart.json', requireAuth, async (req, res) => {
-  try {
-    const desired = exportRedirectRulesForHelper();
-    const requestedAt = Date.now();
-    writeJsonFileSafe(REDIRECT_RESTART_FILE, {
-      requestedAt: new Date(requestedAt).toISOString(),
-      requestedBy: req.session?.userId || 'panel',
-      rulesCount: Array.isArray(desired.rules) ? desired.rules.length : 0
-    });
-
-    let status = getRedirectStatus();
-    let applied = false;
-    for (let attempt = 0; attempt < 12; attempt += 1) {
-      await sleepMs(500);
-      status = getRedirectStatus();
-      try {
-        const statusMtime = fs.existsSync(REDIRECT_STATUS_FILE) ? fs.statSync(REDIRECT_STATUS_FILE).mtimeMs : 0;
-        applied = statusMtime >= requestedAt && !status.stale;
-      } catch (_) {
-        applied = false;
-      }
-      if (applied) break;
-    }
-    updateRedirectRulesFromStatus();
-
-    if (!applied) {
-      return res.status(202).json({
-        ok: false,
-        pending: true,
-        message: 'Команда передана helper, но новый статус ещё не получен. Проверь состояние через несколько секунд.',
-        status
-      });
-    }
-    return res.json({
-      ok: status.ok !== false,
-      message: status.message || 'Helper перезапущен, правила применены повторно.',
-      status
-    });
-  } catch (err) {
-    return res.status(500).json({ ok: false, error: String(err.message || err) });
-  }
-});
-
-
-app.post('/redirects/check', requireAuth, async (req, res) => {
-  try {
-    let bindIp = normalizeRedirectPublicHost(req.body.bind_ip_custom || req.body.bind_ip || '');
-    let nodeIds = req.body.node_ids || [];
-    if (!Array.isArray(nodeIds)) nodeIds = [nodeIds];
-    nodeIds = nodeIds.map(v => Number(v)).filter(Number.isFinite);
-    if (!nodeIds.length) {
-      const activeRows = db.prepare("SELECT DISTINCT node_id, COALESCE(NULLIF(public_host, ''), bind_ip) AS public_host FROM redirect_rules WHERE enabled = 1 ORDER BY id ASC").all();
-      nodeIds = activeRows.map(r => Number(r.node_id)).filter(Number.isFinite);
-      if (!bindIp) bindIp = String(activeRows.find(r => r && r.public_host)?.public_host || '');
-    }
-    if (!nodeIds.length) throw new Error('Выбери хотя бы один узел для проверки.');
-    const results = await buildRedirectProbeResults(nodeIds, bindIp);
-    saveRedirectCheckReport(results);
-    const okCount = results.filter(r => r.ok).length;
-    const failCount = results.length - okCount;
-    return res.redirect('/redirects?message=' + encodeURIComponent(`Проверка завершена: OK ${okCount}, ошибок ${failCount}. Подробности ниже.`));
-  } catch (err) {
-    return res.redirect('/redirects?error=' + encodeURIComponent(err.message || String(err)));
-  }
-});
-
-
-app.get('/redirects/check/refresh.json', requireAuth, async (req, res) => {
-  try {
-    // Always re-check the current active redirect rules first. The old behavior reused
-    // the previous report and therefore mobile could keep showing only the two nodes
-    // that were checked earlier, even after new rules were added.
-    let rows = db.prepare("SELECT DISTINCT node_id, COALESCE(NULLIF(public_host, ''), bind_ip) AS public_host FROM redirect_rules WHERE enabled = 1 ORDER BY id ASC").all();
-    let nodeIds = rows.map(r => Number(r.node_id)).filter(Number.isFinite);
-    let bindIp = String(rows.find(r => r && r.public_host)?.public_host || '');
-    if (!nodeIds.length) {
-      rows = db.prepare(`SELECT id AS node_id, '' AS bind_ip FROM nodes WHERE enabled = 1 ORDER BY ${nodeOrderSql()}`).all();
-      nodeIds = rows.map(r => Number(r.node_id)).filter(Number.isFinite);
-      bindIp = '';
-    }
-    nodeIds = [...new Set(nodeIds)];
-    if (!nodeIds.length) return res.status(400).json({ ok: false, error: 'Нет узлов для повторной проверки.' });
-    const results = await buildRedirectProbeResults(nodeIds, bindIp);
-    saveRedirectCheckReport(results);
-    const okCount = results.filter(r => r.ok).length;
-    return res.json({ ok: true, generatedAt: new Date().toISOString(), okCount, failCount: results.length - okCount, results });
-  } catch (err) {
-    return res.status(500).json({ ok: false, error: err.message || String(err) });
-  }
-});
-
-app.post('/redirects/apply', requireAuth, async (req, res) => {
-  try {
-    const bindMode = String(req.body.bind_ip_mode || 'detected');
-    const runtimeMode = String(req.body.redirect_runtime || 'local') === 'external' ? 'external' : 'local';
-    const customPublicHost = normalizeRedirectPublicHost(req.body.bind_ip_custom || '');
-    const selectedDetectedIp = String(req.body.bind_ip || '').trim();
-    const publicHost = bindMode === 'custom' ? customPublicHost : normalizeRedirectPublicHost(selectedDetectedIp);
-    if (!publicHost) throw new Error('Укажи корректный IPv4 или домен входной точки перенаправления.');
-    const detectedIps = getDetectedHostIps();
-    let bindIp = '';
-    if (runtimeMode === 'local') {
-      if (isValidIpv4(publicHost) && detectedIps.includes(publicHost)) bindIp = publicHost;
-      if (!bindIp && bindMode !== 'custom' && isValidIpv4(selectedDetectedIp)) bindIp = selectedDetectedIp;
-      if (!bindIp && !isValidIpv4(publicHost)) {
-        try {
-          const resolved = await dns.lookup(publicHost, { all: true, family: 4 });
-          bindIp = String((resolved || []).find(item => detectedIps.includes(String(item.address || '')))?.address || '');
-        } catch (_) {}
-      }
-      // Empty bind_ip intentionally means “match this inbound port on any local
-      // IPv4”. This is required on cloud VMs where the public IP/domain is NATed
-      // to a private interface address before the packet reaches PREROUTING.
-    }
-    const bindLabel = String(req.body.bind_label || '').trim().slice(0, 80);
-
-    let nodeIds = req.body.node_ids || [];
-    if (!Array.isArray(nodeIds)) nodeIds = [nodeIds];
-    nodeIds = nodeIds.map(v => Number(v)).filter(Number.isFinite);
-    if (!nodeIds.length) throw new Error('Выбери хотя бы один узел для перенаправления.');
-
-    const selectedProtocol = normalizeRedirectProtocol(req.body.protocol || 'tcp');
-    const selectedProtocols = selectedProtocol === 'both' ? ['tcp', 'udp'] : [selectedProtocol];
-    const rewriteEnabled = req.body.rewrite_enabled === '1' ? 1 : 0;
-    const placeholders = nodeIds.map(() => '?').join(',');
-    const nodes = db.prepare(`SELECT * FROM nodes WHERE id IN (${placeholders})`).all(...nodeIds);
-    if (!nodes.length) throw new Error('Выбранные узлы не найдены.');
-    const nodeById = new Map(nodes.map(n => [Number(n.id), n]));
-    const orderedNodes = nodeIds.map(id => nodeById.get(Number(id))).filter(Boolean);
-
-    const helperEnabled = runtimeMode === 'local' ? 1 : 0;
-    const upsert = db.prepare(`
-      INSERT INTO redirect_rules (bind_ip, public_host, helper_enabled, bind_label, node_id, target_host, target_port, protocol, rewrite_enabled, enabled, last_status, last_error, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, '', CURRENT_TIMESTAMP)
-      ON CONFLICT(bind_ip, node_id, target_port, protocol) DO UPDATE SET
-        public_host = excluded.public_host,
-        helper_enabled = excluded.helper_enabled,
-        target_host = excluded.target_host,
-        bind_label = excluded.bind_label,
-        rewrite_enabled = excluded.rewrite_enabled,
-        enabled = 1,
-        last_status = excluded.last_status,
-        last_error = '',
-        updated_at = CURRENT_TIMESTAMP
-    `);
-
-    const skipped = [];
-    let applied = 0;
-    for (const node of orderedNodes) {
-      let inbound = getCachedInbound(node);
-      let resolvedTarget = { host: getNodeTargetHost(node), port: getRedirectTargetPort(node, inbound), inbound };
-      try { resolvedTarget = await resolveRedirectTarget(node, inbound); }
-      catch (err) { console.error('Redirect target refresh failed:', getNodePublicName(node), err.message); }
-      inbound = resolvedTarget.inbound || inbound;
-      const targetHost = resolvedTarget.host;
-      const targetPort = resolvedTarget.port;
-      if (!targetHost) {
-        skipped.push(`${getNodePublicName(node)}: не найден IP/host панели узла`);
-        continue;
-      }
-      if (!targetPort) {
-        skipped.push(`${getNodePublicName(node)}: ${isRemnawaveNode(node) ? 'не удалось получить порт выбранного Remnawave Host' : 'не удалось получить порт inbound из 3x-ui или кэша. Открой узел/загрузи inbound и повтори'}.`);
-        continue;
-      }
-      try {
-        if (helperEnabled) assertRedirectListenPortAllowed(bindIp, targetPort, selectedProtocol, Number(node.id));
-      } catch (portErr) {
-        skipped.push(`${getNodePublicName(node)}: ${portErr.message || portErr}`);
-        continue;
-      }
-      const probe = await tcpProbe(targetHost, targetPort, 2500);
-      const initialStatus = probe.ok ? 'pending' : 'warning';
-      const initialError = probe.ok ? '' : `Проверка цели: ${probe.message}`;
-      // Keep only the protocol(s) selected in the form for this exact bind/node/port.
-      // Previously an old TCP+UDP row could remain and make the mobile UI look as if
-      // only BOTH rules were active. Now TCP, UDP and TCP+UDP are represented explicitly.
-      const keepPlaceholders = selectedProtocols.map(() => '?').join(',');
-      db.prepare(`DELETE FROM redirect_rules WHERE bind_ip = ? AND node_id = ? AND target_port = ? AND protocol NOT IN (${keepPlaceholders})`)
-        .run(bindIp, Number(node.id), targetPort, ...selectedProtocols);
-      for (const proto of selectedProtocols) {
-        upsert.run(bindIp, publicHost, helperEnabled, bindLabel, Number(node.id), targetHost, targetPort, proto, rewriteEnabled, helperEnabled ? 'pending' : 'external');
-        db.prepare('UPDATE redirect_rules SET last_status = ?, last_error = ? WHERE bind_ip = ? AND node_id = ? AND target_port = ? AND protocol = ?')
-          .run(helperEnabled ? initialStatus : 'external', helperEnabled ? initialError : '', bindIp, Number(node.id), targetPort, proto);
-        applied += 1;
-      }
-      if (!probe.ok) skipped.push(`${getNodePublicName(node)}: цель ${targetHost}:${targetPort} сейчас недоступна (${probe.message}), правило сохранено, но работать не будет до восстановления доступа`);
-    }
-
-    if (!applied) throw new Error('Не удалось создать ни одного правила. Проверь доступность узлов и кэш inbound. ' + skipped.join('; '));
-    exportRedirectRulesForHelper();
-    let msg = helperEnabled
-      ? `Правила сохранены: ${applied}. Локальный helper применит их автоматически.`
-      : `Правила сохранены: ${applied}. В подписке будет адрес ${publicHost}; внешний сервер должен быть настроен отдельно.`;
-    if (skipped.length) msg += ` Пропущено: ${skipped.join('; ')}`;
-    return res.redirect('/redirects?message=' + encodeURIComponent(msg));
-  } catch (err) {
-    return res.redirect('/redirects?error=' + encodeURIComponent(err.message || String(err)));
-  }
-});
-
-app.post('/redirects/:id/toggle', requireAuth, (req, res) => {
-  const id = Number(req.params.id);
-  const row = db.prepare('SELECT enabled FROM redirect_rules WHERE id = ?').get(id);
-  if (row) {
-    db.prepare("UPDATE redirect_rules SET enabled = CASE WHEN enabled = 1 THEN 0 ELSE 1 END, last_status = 'pending', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
-    exportRedirectRulesForHelper();
-  }
-  res.redirect('/redirects?message=' + encodeURIComponent('Статус правила изменён.'));
-});
-
-app.post('/redirects/:id/delete', requireAuth, (req, res) => {
-  db.prepare('DELETE FROM redirect_rules WHERE id = ?').run(Number(req.params.id));
-  exportRedirectRulesForHelper();
-  res.redirect('/redirects?message=' + encodeURIComponent('Правило удалено.'));
-});
-
-app.post('/redirects/delete-all', requireAuth, (req, res) => {
-  db.prepare('DELETE FROM redirect_rules').run();
-  exportRedirectRulesForHelper();
-  res.redirect('/redirects?message=' + encodeURIComponent('Все правила перенаправления удалены.'));
-});
-
-app.post('/redirects/export', requireAuth, (req, res) => {
-  const desired = exportRedirectRulesForHelper();
-  res.json({ ok: true, rules: desired.rules.length, file: REDIRECT_RULES_FILE });
-});
 
 
 app.get('/settings/project-update/status.json', requireAuth, async (req, res) => {
@@ -16871,7 +16355,6 @@ app.post('/nodes/:id/edit', requireAuth, async (req, res) => {
     const nodeId = Number(req.params.id);
     const existingNode = db.prepare('SELECT * FROM nodes WHERE id = ?').get(nodeId);
     if (!existingNode) return res.redirect('/nodes?tab=list&error=' + encodeURIComponent('Узел не найден'));
-    const existingCachedInbound = getCachedInbound(existingNode);
 
     const {
       node_type,
@@ -17135,16 +16618,8 @@ app.post('/nodes/:id/edit', requireAuth, async (req, res) => {
     setExpiredSupportNode(updatedNode, req.body.expired_support === '1');
     if (preflightInbound) saveInboundCache(updatedNode, preflightInbound);
     else if (normalizedNodeType !== NODE_TYPE_3XUI) db.prepare('DELETE FROM node_inbound_cache WHERE node_id = ?').run(nodeId);
-    let inboundPortWarning = '';
     const shouldApplyInbound = req.body.apply_inbound_settings === '1' || req.body.apply_inbound_advanced_json === '1';
     if (normalizedNodeType === NODE_TYPE_3XUI && shouldApplyInbound) {
-      const beforeInbound = existingCachedInbound;
-      const oldInboundPort = normalizePortNumber(beforeInbound?.port || 0);
-      const newInboundPort = normalizePortNumber(req.body.inbound_port || oldInboundPort);
-      if (oldInboundPort && newInboundPort && oldInboundPort !== newInboundPort) {
-        const activeRedirect = db.prepare('SELECT id FROM redirect_rules WHERE enabled = 1 AND node_id = ? AND target_port = ? LIMIT 1').get(nodeId, oldInboundPort);
-        if (activeRedirect) inboundPortWarning = ` У этого узла есть активное перенаправление на старый порт ${oldInboundPort}. Обнови правило на ${newInboundPort}.`;
-      }
       const inboundForm = { ...req.body };
       const forcedSni = getNodeSniOverride(updatedNode);
       if (forcedSni) {
@@ -17160,7 +16635,7 @@ app.post('/nodes/:id/edit', requireAuth, async (req, res) => {
       : ` Проверка не прошла: ${check.error || 'узел офлайн'}.`;
     const editMsg = (normalizedNodeType === NODE_TYPE_3XUI && shouldApplyInbound
       ? 'Узел и параметры inbound обновлены.'
-      : 'Узел обновлён.') + checkSuffix + inboundPortWarning;
+      : 'Узел обновлён.') + checkSuffix;
     res.redirect('/nodes?tab=list&message=' + encodeURIComponent(editMsg));
   } catch (err) {
     res.redirect('/nodes/' + req.params.id + '/edit?error=' + encodeURIComponent(String(err.message || err)));
@@ -18336,6 +17811,7 @@ app.post('/clients/:id/traffic/reset', requireAuth, async (req, res) => {
     if (maps.length !== selectedIds.length) throw new Error('Один или несколько выбранных узлов не назначены этому пользователю. Обновите страницу.');
 
     const successNames = [];
+    const warnings = [];
     const failures = [];
     const zeroedMaps = new Set();
     for (const map of maps) {
@@ -18355,7 +17831,8 @@ app.post('/clients/:id/traffic/reset', requireAuth, async (req, res) => {
         } else if (request.kind === 'remnawave') {
           const user = await getRemnawaveUserByUuid(node, map.remote_uuid);
           if (!user) throw new Error('Пользователь не найден в Remnawave.');
-          await nodeTraffic.resetMapping(node,user,map);
+          const result = await nodeTraffic.resetMapping(node,user,map);
+          if (result?.warning) warnings.push(`${title}: ${result.warning}`);
         } else {
           const result = await apiPost(node, request.path, {}, false);
           if (result?.success === false) throw new Error(String(result.msg || result.message || 'панель отклонила сброс'));
@@ -18371,7 +17848,7 @@ app.post('/clients/:id/traffic/reset', requireAuth, async (req, res) => {
       ? `Сброс трафика выполнен на узлах: ${successNames.join(', ')}.`
       : 'Трафик не сброшен ни на одном узле.';
     const error = failures.length ? `Не удалось сбросить: ${failures.slice(0, 4).join(' | ')}` : '';
-    res.redirect(appendMessageToBackUrl(back, message, error, '/clients'));
+    res.redirect(appendMessageToBackUrl(back, [message, ...warnings.slice(0, 3)].join(' '), error, '/clients'));
   } catch (err) {
     res.redirect(appendMessageToBackUrl(back, '', String(err.message || err), '/clients'));
   }
@@ -18399,7 +17876,8 @@ const quotaCycles = require('./lib_quota_cycles').createQuotaCycles({
    awgDevices.reset(client.id,node.id);zeroClientNodeTraffic(map.id,client.id,node.id);commit();
   }else if(isRemnawaveNode(node)){
    const user=await getRemnawaveUserByUuid(node,map.remote_uuid);if(!user)throw Error('Пользователь не найден в Remnawave.');
-   await nodeTraffic.resetMapping(node,user,map,{onResetCommitted:commit});
+   const result = await nodeTraffic.resetMapping(node,user,map,{onResetCommitted:commit});
+   if (result?.warning) throw new Error(result.warning);
   }else{
    const request=buildClientTrafficResetRequest({node,map,client,h1cloud:isH1CloudNode(node)||isH1Cloud3xuiNode(node),modern3xui:is3xuiV3Mode(node)});
    const result=await apiPost(node,request.path,{},false);if(result?.success===false)throw Error('Панель отклонила сброс.');

@@ -1453,74 +1453,29 @@ local_panels_flow() {
   fi
 }
 
-install_forwarder_service() {
-  if [ ! -f "$APP_DIR/scripts/forwarder.sh" ]; then
-    warn "Host-helper перенаправления не найден: $APP_DIR/scripts/forwarder.sh"
-    return 0
+retire_forwarder_service() {
+  local service="${FORWARDER_SERVICE_NAME}.service"
+  local restart_path="${FORWARDER_RESTART_SERVICE_NAME}.path"
+  local unit_file="/etc/systemd/system/$service"
+  local had_service=0
+  [ ! -f "$unit_file" ] || had_service=1
+
+  systemctl disable --now "$restart_path" >/dev/null 2>&1 || true
+  if [ "$had_service" -eq 1 ]; then
+    if ! systemctl stop "$service"; then
+      warn "Не удалось остановить старый helper: $service"
+      return 1
+    fi
+    systemctl disable "$service" >/dev/null 2>&1 || true
   fi
-
-  say "Устанавливаю host-helper перенаправления..."
-  chmod +x "$APP_DIR/scripts/forwarder.sh" || true
-  mkdir -p "$APP_DIR/data"
-
-  # Убираем старые варианты сервиса, чтобы обновление не оставляло сломанную oneshot-версию.
-  systemctl stop "${FORWARDER_SERVICE_NAME}.service" >/dev/null 2>&1 || true
-  systemctl disable "${FORWARDER_SERVICE_NAME}.service" >/dev/null 2>&1 || true
-  systemctl disable --now "${FORWARDER_RESTART_SERVICE_NAME}.path" >/dev/null 2>&1 || true
-  rm -f "/etc/systemd/system/${FORWARDER_SERVICE_NAME}.service"
-  rm -f "/etc/systemd/system/${FORWARDER_RESTART_SERVICE_NAME}.service" "/etc/systemd/system/${FORWARDER_RESTART_SERVICE_NAME}.path"
-
-  cat > "/etc/systemd/system/${FORWARDER_SERVICE_NAME}.service" <<EOF
-[Unit]
-Description=Nexus Panel traffic redirect helper (${INSTANCE_NAME})
-After=network-online.target docker.service
-Wants=network-online.target
-
-[Service]
-Type=simple
-WorkingDirectory=$APP_DIR
-EnvironmentFile=-$APP_DIR/.env
-Environment=APP_DIR=$APP_DIR
-Environment=SLEEP_SEC=3
-ExecStart=$APP_DIR/scripts/forwarder.sh loop
-ExecReload=$APP_DIR/scripts/forwarder.sh apply
-Restart=always
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-  # Если основной helper остановлен, создание request-файла из панели всё равно
-  # запустит его через systemd. При работающем helper файл обрабатывается самим loop.
-  cat > "/etc/systemd/system/${FORWARDER_RESTART_SERVICE_NAME}.service" <<EOF
-[Unit]
-Description=Restart Nexus Panel traffic redirect helper (${INSTANCE_NAME})
-
-[Service]
-Type=oneshot
-ExecStart=/bin/systemctl restart ${FORWARDER_SERVICE_NAME}.service
-EOF
-
-  cat > "/etc/systemd/system/${FORWARDER_RESTART_SERVICE_NAME}.path" <<EOF
-[Unit]
-Description=Watch Nexus Panel redirect helper restart request (${INSTANCE_NAME})
-
-[Path]
-PathExists=$APP_DIR/data/redirect_helper_restart.request
-Unit=${FORWARDER_RESTART_SERVICE_NAME}.service
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
+  rm -f "$unit_file" "/etc/systemd/system/${FORWARDER_RESTART_SERVICE_NAME}.service" "/etc/systemd/system/$restart_path"
   systemctl daemon-reload || true
-  systemctl enable --now "${FORWARDER_RESTART_SERVICE_NAME}.path" >/dev/null 2>&1 || true
-  if systemctl enable --now "${FORWARDER_SERVICE_NAME}.service" >/dev/null 2>&1; then
-    say "Host-helper установлен и запущен: ${FORWARDER_SERVICE_NAME}.service"
-  else
-    warn "Не удалось запустить ${FORWARDER_SERVICE_NAME}.service. Можно запустить вручную: systemctl restart ${FORWARDER_SERVICE_NAME}"
-    journalctl -u "${FORWARDER_SERVICE_NAME}.service" --no-pager -n 20 || true
+
+  # Legacy helpers used the same managed iptables chains across instances.
+  if [ "$had_service" -eq 1 ] && [ -f "$APP_DIR/scripts/forwarder.sh" ]; then
+    if ! systemctl list-units '3xui-aggregator*forwarder.service' --state=active --no-legend | grep -q 'forwarder.service'; then
+      APP_DIR="$APP_DIR" bash "$APP_DIR/scripts/forwarder.sh" clear || warn "Не удалось очистить старые цепочки Nexus."
+    fi
   fi
 }
 
@@ -1936,7 +1891,7 @@ restore_from_backup() {
 
   cd "$APP_DIR"
   compose_up_build
-  install_forwarder_service
+  retire_forwarder_service
 
   say "Восстановление завершено."
   load_existing_config
@@ -2287,7 +2242,7 @@ prepare_config_and_run() {
   ui_run "Подготовка локального VPN-доступа" install_vpn_local_ssh_access
   start_stack
   ui_section "Системные службы"
-  install_forwarder_service
+  retire_forwarder_service
   install_web_update_service
   install_shortcut_command
 }
@@ -2550,77 +2505,32 @@ delete_project() {
 
 run_diagnostics_and_repair() {
   say "Диагностика и восстановление панели"
-  warn "Проверяю контейнеры, Caddy, доступность приложения и опасные перенаправления."
+  warn "Проверяю контейнеры, Caddy и доступность приложения."
 
   if [ ! -d "$APP_DIR" ]; then
     err "Каталог проекта не найден: $APP_DIR"
     return 1
   fi
 
-  mkdir -p "$APP_DIR/data/backup"
+  retire_forwarder_service || true
 
-  if [ -f "$APP_DIR/data/redirect_rules.json" ]; then
-    cp -a "$APP_DIR/data/redirect_rules.json" "$APP_DIR/data/backup/redirect_rules.json.$(date +%F-%H%M%S).bak" 2>/dev/null || true
-  fi
-
-  say "1/6 Очищаю managed iptables-цепочки агрегатора, чтобы убрать случайный редирект 80/443..."
-  systemctl stop "$FORWARDER_SERVICE_NAME" 2>/dev/null || true
-  if [ -x "$APP_DIR/scripts/forwarder.sh" ]; then
-    APP_DIR="$APP_DIR" bash "$APP_DIR/scripts/forwarder.sh" clear || true
-  fi
-
-  say "2/6 Удаляю из правил перенаправления опасные порты 80/443 и дубли портов..."
-  python3 - "$APP_DIR/data/redirect_rules.json" <<'PYDIAG' || true
-import json, sys, pathlib
-path=pathlib.Path(sys.argv[1])
-if not path.exists():
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text('{"rules":[]}', encoding='utf-8')
-    raise SystemExit
-try:
-    data=json.loads(path.read_text(encoding='utf-8') or '{"rules":[]}')
-except Exception:
-    data={'rules':[]}
-rules=[]
-seen=set()
-removed=[]
-for r in data.get('rules',[]) or []:
-    try:
-        port=int(r.get('target_port') or 0)
-    except Exception:
-        port=0
-    bind=str(r.get('bind_ip') or '')
-    proto=str(r.get('protocol') or 'tcp')
-    key=(bind, port, proto)
-    if port in (80,443) or port <= 0 or key in seen:
-        removed.append(r)
-        continue
-    seen.add(key)
-    rules.append(r)
-data['rules']=rules
-path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
-print(f"Удалено опасных/дублирующихся правил: {len(removed)}")
-PYDIAG
-
-  say "3/6 Перегенерирую compose/Caddy по текущим настройкам и запускаю контейнеры..."
+  say "1/4 Перегенерирую compose/Caddy по текущим настройкам и запускаю контейнеры..."
   build_urls "$(get_public_server_ip)" || true
   write_runtime_files || true
   (cd "$APP_DIR" && docker compose up -d) || true
 
-  say "4/6 Перезапускаю helper и updater..."
-  install_forwarder_service || true
+  say "2/4 Перезапускаю службу обновления..."
   install_web_update_service || true
-  systemctl restart "$FORWARDER_SERVICE_NAME" 2>/dev/null || true
   systemctl restart "$UPDATER_SERVICE_NAME" 2>/dev/null || true
 
-  say "5/6 Проверяю контейнеры и локальный порт приложения..."
+  say "3/4 Проверяю контейнеры и локальный порт приложения..."
   (cd "$APP_DIR" && docker compose ps) || true
   if command -v docker >/dev/null 2>&1; then
     docker logs --tail=50 "$AGG_CONTAINER_NAME" 2>/dev/null || true
     docker logs --tail=30 "$CADDY_CONTAINER_NAME" 2>/dev/null || true
   fi
 
-  say "6/6 Адреса входа:"
+  say "4/4 Адреса входа:"
   load_existing_config || true
   local public_url="${PANEL_PUBLIC_URL:-}"
   if [ -z "$public_url" ] && [ -f "$ENV_FILE" ]; then
@@ -2967,7 +2877,7 @@ main() {
 
   # На всякий случай повторно ставим helper после любого сценария установки/обновления.
   # Это нужно, если обновление заменило файлы проекта или systemd-сервис был удалён.
-  install_forwarder_service
+  retire_forwarder_service
   install_web_update_service
 
   print_result
@@ -3049,7 +2959,7 @@ if [ "${1:-}" = "update" ] || [ "${1:-}" = "--update-files-only" ]; then
   ensure_dir
   load_existing_config
   update_files_only
-  install_forwarder_service
+  retire_forwarder_service
   install_web_update_service
   install_shortcut_command
   print_result

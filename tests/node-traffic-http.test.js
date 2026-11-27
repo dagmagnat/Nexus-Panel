@@ -69,6 +69,14 @@ test('real HTTP: scoped reporting, individual/bulk/all reset, CSRF and viewer pr
   const outcome=text=>new URL(text.match(/location.replace\("([^"]+)"/)[1],'http://localhost').searchParams.get('message');
   r=await request('/clients/traffic/reset-selected',{client_ids:[1,1],reset_node_id:2});assert.equal(r.status,200,r.text);assert.match(outcome(r.text),/Сброшено счётчиков: 1 из 1/);assert.equal(db.prepare('SELECT used_bytes FROM client_nodes WHERE client_id=2 AND node_id=2').get().used_bytes,GB);assert.deepEqual(resets,[]);
   r=await request('/clients/traffic/reset-selected',{client_ids:[1],reset_node_id:'all'});assert.match(outcome(r.text),/Сброшено счётчиков: 2 из 2/);assert.deepEqual(resets,[17]);
+  // An old mapping with a missing node must not abort the other resets.
+  db.pragma('foreign_keys=OFF');
+  db.prepare('INSERT INTO client_nodes(client_id,node_id,remote_email,remote_uuid) VALUES(1,999,?,?)').run('stale','stale');
+  r=await request('/clients/traffic/reset-selected',{client_ids:[1],reset_node_id:'all'});
+  assert.match(outcome(r.text),/Сброшено счётчиков: 2 из 3/);
+  assert.match(new URL(r.text.match(/location.replace\("([^"]+)"/)[1],'http://localhost').searchParams.get('error'),/Клиент или узел удалён/);
+  db.prepare('DELETE FROM client_nodes WHERE node_id=999').run();
+  db.pragma('foreign_keys=ON');
   data=JSON.parse((await request('/node-traffic/data.json?from='+today+'&to='+today)).text);assert.equal(data.nodes[0].totalBytes,50*GB);assert.equal(data.nodes[1].totalBytes,3*GB);
   // Routing saved in Nexus must apply to Remnawave JSON entries, not change
   // server profiles or their XHTTP/TLS transport settings.

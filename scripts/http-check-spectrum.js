@@ -79,7 +79,7 @@ function csrfFrom(html) {
 
   const routes = [
     '/dashboard', '/nodes', '/clients', '/clients?q=nexus01&edit=1', '/nodes/1/edit',
-    '/routing', '/redirects', '/diagnostics', '/telegram-bot', '/settings', '/more'
+    '/routing', '/diagnostics', '/telegram-bot', '/settings', '/more'
   ];
   const report = [];
   for (const pathname of routes) {

@@ -92,15 +92,20 @@
   .geodata-toolbar input { flex:1 1 220px; min-width:0; }
   .geodata-status { font-size:12px; color: var(--muted); margin: 6px 0 10px; }
   .geodata-lists { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
-  .geodata-list-box { border:1px solid rgba(130,170,220,.2); border-radius:16px; background:rgba(8,23,42,.26); overflow:hidden; }
+  .geodata-list-box { border:1px solid rgba(130,170,220,.2); border-radius:16px; background:var(--input); overflow:hidden; }
   .geodata-list-head { display:flex; justify-content:space-between; gap:8px; align-items:center; padding:10px 12px; border-bottom:1px solid rgba(130,170,220,.16); }
   .geodata-list-head strong { font-size:14px; }
   .geodata-list-head small { color:var(--muted); white-space:nowrap; }
   .geodata-scroll { max-height:420px; overflow:auto; padding:8px; }
-  .geodata-row { display:grid; grid-template-columns:minmax(0,1fr) auto auto auto auto; gap:6px; align-items:center; padding:7px; border-radius:12px; }
+  .geodata-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:6px; align-items:center; padding:7px; border-radius:12px; }
   .geodata-row:hover { background:rgba(96,165,250,.12); }
   .geodata-token { font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer; }
-  .geodata-mini { border:1px solid rgba(130,170,220,.25); background:rgba(15,38,70,.75); color:var(--text); border-radius:10px; padding:5px 7px; font-size:11px; cursor:pointer; }
+  .geodata-row-actions { display:grid; grid-template-columns:repeat(4, minmax(4.5rem, 1fr)); gap:5px; }
+  .geodata-row .geodata-mini { border:1px solid rgba(130,170,220,.25); background:#293c59; color:#fff; border-radius:10px; padding:5px 7px; font-size:11px; cursor:pointer; white-space:nowrap; min-width:0; }
+  @media (max-width: 560px) {
+    .geodata-row { grid-template-columns:1fr; gap:4px; }
+    .geodata-row-actions { grid-template-columns:repeat(4, minmax(0,1fr)); }
+  }
   .geodata-mini:hover { border-color:rgba(96,165,250,.75); }
   .geodata-mini.copy-ok { border-color:rgba(52,211,153,.75); }
   .geodata-help { margin-top:10px; font-size:12px; color:var(--muted); line-height:1.45; }
@@ -336,7 +341,7 @@
       </div>
 
       <div class="actions">
-        <button type="submit">Сохранить и применить</button>
+        <button type="submit" class="btn-main">Сохранить и применить</button>
       </div>
     </form>
   </section>
@@ -592,20 +597,23 @@ function makeGeoRow(item, kind) {
   token.textContent = value;
   token.onclick = () => copyGeodataToken(value, null);
   row.appendChild(token);
+  const actions = document.createElement('div');
+  actions.className = 'geodata-row-actions';
+  row.appendChild(actions);
 
   const copy = document.createElement('button');
   copy.type = 'button';
   copy.className = 'geodata-mini';
-  copy.textContent = 'copy';
+  copy.textContent = 'Копия';
   copy.onclick = () => copyGeodataToken(value, copy);
-  row.appendChild(copy);
+  actions.appendChild(copy);
 
   const vpn = document.createElement('button');
   vpn.type = 'button';
   vpn.className = 'geodata-mini';
   vpn.textContent = 'VPN';
   vpn.onclick = () => appendRoutingLine(kind === 'geosite' ? 'custom_domains' : 'custom_ips', value);
-  row.appendChild(vpn);
+  actions.appendChild(vpn);
 
   const direct = document.createElement('button');
   direct.type = 'button';
@@ -617,14 +625,14 @@ function makeGeoRow(item, kind) {
     if (!card) { alert('Выберите правило в списке над справочником.'); return; }
     appendRoutingLine(card.querySelector(kind === 'geosite' ? '[data-rule-domains]' : '[data-rule-ips]'), value);
   };
-  row.appendChild(direct);
+  actions.appendChild(direct);
 
   const block = document.createElement('button');
   block.type = 'button';
   block.className = 'geodata-mini';
   block.textContent = 'BLOCK';
   block.onclick = () => appendRoutingLine(kind === 'geosite' ? 'adblock_domains' : 'adblock_ips', value);
-  row.appendChild(block);
+  actions.appendChild(block);
 
   return row;
 }

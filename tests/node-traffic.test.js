@@ -55,7 +55,15 @@ test('global unlimited repairs LIMITED even if independent stats fail; real exha
 });
 test('shared squad never disables another node; scoped statistics still saved with warning',async t=>{
   const f=fixture(t);f.shared=true;f.db.prepare('UPDATE client_nodes SET traffic_gb=5 WHERE id=1').run();
-  await assert.rejects(f.sync(1),/Общий сквад не отключён/);assert.equal(f.map(1).used_bytes,30*GB);assert.equal(f.writes.length,0);assert.match(f.api.state(1,1).error,/независимое/);
+  await assert.rejects(f.sync(1),/только на этой физической ноде/);
+  assert.equal(f.map(1).used_bytes,30*GB);
+  assert.equal(f.writes.length,0);
+  assert.match(f.api.state(1,1).error,/внутренний сквад/);
+  const result=await f.api.resetMapping(f.nodes[0],f.user,f.map(1));
+  assert.match(result.warning,/Счётчик Nexus обнулён/);
+  assert.equal(f.map(1).used_bytes,0);
+  assert.equal(f.api.total(1,1),30*GB);
+  assert.equal(f.writes.length,0);
 });
 test('unsupported stats fail closed; known counts retained, no aggregate fallback or quota patch',async t=>{
   const f=fixture(t);await f.sync(1);f.broken=true;await assert.rejects(f.sync(1),/общий счётчик не используется/);

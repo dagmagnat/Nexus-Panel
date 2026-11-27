@@ -25,7 +25,6 @@
 | `/nodes/:id/edit` | `views/node_edit.ejs` | поиск `/nodes/:id/edit` |
 | `/vpn` | `views/vpn.ejs` | маршруты в `app.js`, бизнес-логика в `lib_vpn_manager.js` |
 | `/routing` | `views/routing.ejs` | поиск `app.get('/routing'` и `app.post('/routing'` |
-| `/redirects` | `views/redirects.ejs` | поиск `/redirects` |
 | `/diagnostics` | `views/diagnostics.ejs` | поиск `/diagnostics` и `/dashboard/panel-check.json` |
 | `/telegram-bot` | `views/telegram_bot.ejs` | поиск `/telegram-bot` и Telegram-функций в `app.js` |
 | `/settings` | `views/settings.ejs` | поиск `/settings` |

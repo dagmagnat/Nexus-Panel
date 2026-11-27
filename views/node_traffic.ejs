@@ -1,5 +1,5 @@
 <%- include('partials_header', {pageTitle:'Расход трафика по узлам',pageSubtitle:'Отдельные серверы, клиенты и календарный период',activePage:'dashboard'}) %>
-<link rel="stylesheet" href="/css/node-traffic.css">
+<link rel="stylesheet" href="/css/node-traffic.css?v=2">
 <div class="nt-page">
   <div class="nt-heading"><a href="/dashboard">← Главная</a><a href="/clients">Пользователи →</a></div>
   <% if (message) { %><div class="notice success"><%= message %></div><% } %>
@@ -20,7 +20,7 @@
       <div class="nt-bulk"><input type="search" id="ntSearch" placeholder="Поиск клиента" aria-label="Поиск клиента"><button type="button" id="ntSelectAll">Выбрать всех по фильтру</button><button type="button" id="ntSelectNone">Снять выбор</button><span id="ntSelected">Выбрано: 0</span></div>
       <div class="nt-scroll"><table class="nt-table"><thead><tr><th>Выбор</th><th>Клиент</th><th>За период</th><th>Счётчик лимита</th><th>Состояние</th><th>Действие</th></tr></thead><tbody id="ntClients"></tbody></table></div>
       <div class="nt-bulk nt-reset-controls"><label>Сбросить на<select name="reset_node_id" id="ntResetNode" required></select></label><button type="submit" class="btn-danger" id="ntResetButton" disabled>Сбросить выбранным</button></div>
-      <p class="muted">Один узел Remnawave: обнуляется только его счётчик Nexus. «Все узлы» также сбрасывает общий счётчик пользователя Remnawave. Для независимого ограничения и восстановления доступа нужен отдельный сквад выбранной физической ноды. Это не сброс биллинга CDN или хостера.</p>
+      <p class="muted">Один узел Remnawave: обнуляется только его счётчик Nexus. «Все узлы» также сбрасывает общий счётчик пользователя Remnawave. Для отдельной квоты создайте в Remnawave внутренний сквад с inbound, доступным только на этой физической ноде, и укажите его в настройках узла Nexus. Это не сброс биллинга CDN или хостера.</p>
     </form>
   </section>
 </div>

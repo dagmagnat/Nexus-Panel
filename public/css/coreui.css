@@ -1370,3 +1370,35 @@ html[data-interface-theme="coreui"][data-color-mode="dark"] {
     display: none;
   }
 }
+
+[data-interface-theme="coreui"] .page-routing .routing-node-checkboxes > label {
+  display: flex;
+  min-height: 44px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--input);
+}
+[data-interface-theme="coreui"] .page-routing .routing-node-checkboxes > label:has(input:checked) {
+  border-color: color-mix(in srgb, var(--coreui-action) 45%, var(--line));
+}
+[data-interface-theme="coreui"] .page-routing .routing-node-checkboxes > label > span {
+  flex-wrap: wrap;
+  column-gap: 6px;
+  row-gap: 2px;
+}
+[data-interface-theme="coreui"] .page-routing .routing-node-checkboxes > label > span small {
+  margin-left: 0;
+  white-space: normal;
+}
+[data-interface-theme="coreui"] .page-routing .geodata-row .geodata-mini {
+  min-height: 34px;
+  padding: 5px 4px;
+  background: #293c59;
+  color: #fff;
+}
+[data-interface-theme="coreui"] .page-routing button.btn-main[type="submit"],
+[data-interface-theme="coreui"] .nt-page :is(.nt-presets button, .btn-main, .btn-danger) {
+  color: #fff;
+}

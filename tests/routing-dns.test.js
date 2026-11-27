@@ -97,3 +97,18 @@ test('fast DNS fallback keeps matching rules, explicit timeouts and the last res
   assert.equal(dns.servers[2].tag, DIRECT_DNS_TAG);
   assert.equal(dns.servers[2].address, 'https+local://common.dot.dns.yandex.net/dns-query');
 });
+
+test('list DNS uses the selected VPN while the main DNS stays direct', () => {
+  const cfg = config();
+  cfg.dns.tag = 'dns_out';
+  cfg.routing.rules.unshift({ type: 'field', ip: ['geoip:google'], outboundTag: 'proxy' });
+  applyJsonRoutingDns(cfg, { ...settings, directDnsPreset: 'google' }, {
+    active: true, mode: 'node-selective', listProxyDomains: ['geosite:youtube']
+  });
+  assert.equal(cfg.dns.servers[0].address, '8.8.8.8');
+  assert.equal(cfg.dns.servers[0].tag, 'nexus-dns-list');
+  assert.deepEqual(cfg.routing.rules.slice(0, 2).map(r => [r.inboundTag[0], r.outboundTag]), [
+    ['nexus-dns-list', 'proxy'],
+    ['dns_out', 'direct']
+  ]);
+});

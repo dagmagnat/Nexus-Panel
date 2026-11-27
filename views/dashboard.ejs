@@ -83,12 +83,6 @@
     return remaining !== null && remaining <= 7;
   }).length;
   const initialNodeProblemCount = (pulseNodes || []).filter(node => Number(node.enabled) === 1 && String(node.last_status || '') === 'offline').length;
-  const initialRedirectOk = !redirectStatus || redirectStatus.ok !== false;
-  const initialRedirectRuleCount = Array.isArray(redirectStatus && redirectStatus.rules) ? redirectStatus.rules.length : 0;
-  const initialRedirectMbps = Math.max(0, Number(redirectStatus && redirectStatus.systemNetwork && redirectStatus.systemNetwork.totalMbps || 0));
-  const initialRedirectSummary = initialRedirectRuleCount
-    ? `${initialRedirectRuleCount} прав. · ${initialRedirectMbps.toFixed(2)} Мбит/с`
-    : (redirectStatus && redirectStatus.message ? humanizeError(redirectStatus.message) : 'Активных правил нет');
 %>
 
 <% if (message) { %><div class="alert ok"><%= message %></div><% } %>
@@ -99,7 +93,7 @@
   <%- include('coreui_overview', { stats, expiringSevenCount }) %>
 <section class="card coreui-inline-online" id="coreuiOnline" aria-labelledby="onlineClientsTitle">
   <header class="coreui-card-header">
-    <div><h2 id="onlineClientsTitle">Клиенты в сети</h2><span class="muted">Недавняя активность на узлах</span></div>
+    <div><h2 id="onlineClientsTitle">Клиенты в сети</h2><span class="muted">Здесь видна недавняя активность. Короткие проверки автовыбора тоже могут появляться в списке.</span></div>
   </header>
     <%- include('dashboard_online_list', { inline: true, withNodeFilter: true }) %>
 </section>
@@ -130,16 +124,15 @@
     <div class="dashboard-health-item" id="dashboardNodesHealth" data-state="<%= initialNodeProblemCount ? 'error' : 'ok' %>">
       <a href="/nodes" class="dashboard-health-link">
         <span class="dashboard-health-icon" aria-hidden="true">◫</span>
-        <span><b>Узлы</b><small id="dashboardNodesHealthSummary"><%= initialNodeProblemCount ? `Проблем: ${initialNodeProblemCount}` : 'Все доступные узлы отвечают' %></small></span>
+        <span><b>API узлов</b><small id="dashboardNodesHealthSummary"><%= initialNodeProblemCount ? `Проблем: ${initialNodeProblemCount}` : 'API включённых узлов отвечает' %></small></span>
         <strong id="dashboardNodesHealthLabel"><%= initialNodeProblemCount ? 'Ошибка' : 'Работают' %></strong>
       </a>
       <div class="dashboard-health-issues" id="dashboardNodeIssues" <%= initialNodeProblemCount ? '' : 'hidden' %>></div>
     </div>
-    <div class="dashboard-health-item" id="dashboardRedirectHealth" data-state="<%= initialRedirectOk ? 'ok' : 'error' %>">
-      <a href="/redirects" class="dashboard-health-link">
-        <span class="dashboard-health-icon" aria-hidden="true">⇄</span>
-        <span><b>Перенаправление</b><small id="dashboardRedirectHealthSummary"><%= initialRedirectSummary %></small></span>
-        <strong id="dashboardRedirectHealthLabel"><%= initialRedirectOk ? 'Работает' : 'Ошибка' %></strong>
+    <div class="dashboard-health-item">
+      <a href="/diagnostics" class="dashboard-health-link">
+        <span class="dashboard-health-icon" aria-hidden="true">⌁</span>
+        <span><b>Диагностика</b><small>Клиентские порты, API и трафик</small></span>
       </a>
     </div>
   </section>
@@ -807,7 +800,7 @@ function renderOnlineClients(data) {
           <div><strong>${escapeHtml(login)}</strong>${comment ? `<small class="muted">${escapeHtml(comment)}</small>` : ''}
           ${coreui ? '' : '<small class="muted">' + (until === '∞' ? expiry : 'До ' + expiry) + '</small>'}</div>
         </div>
-        <div class="dashboard-online-nodes" aria-label="Активные узлы">${onlineNodePreviewHtml(client, key, expanded.has(key))}</div>
+        <div class="dashboard-online-nodes" aria-label="Узлы недавней активности">${onlineNodePreviewHtml(client, key, expanded.has(key))}</div>
         ${coreui ? '<div class="coreui-online-expiry"><span>Доступ до</span>' + expiry + '</div>' : ''}
         <button type="button" class="btn-secondary dashboard-online-action" ${key ? `data-open-online-client="${escapeHtml(key)}" data-online-focus="${escapeHtml(key)}"` : `data-online-client-detail="${escapeAttrJson(client)}"`}>Подробнее</button>
       </article>`;
@@ -974,17 +967,7 @@ function renderDashboardHealth(data){
     }).join('');
   }
 
-  const redirect = data.redirect || {};
-  const redirectHealth = document.getElementById('dashboardRedirectHealth');
-  const redirectLabel = document.getElementById('dashboardRedirectHealthLabel');
-  const redirectSummary = document.getElementById('dashboardRedirectHealthSummary');
-  const redirectError = redirect.configured && redirect.ok === false;
-  if (redirectHealth) redirectHealth.dataset.state = redirectError ? 'error' : (redirect.configured ? 'ok' : 'idle');
-  if (redirectLabel) redirectLabel.textContent = redirect.statusLabel || (redirectError ? 'Ошибка' : 'Работает');
-  if (redirectSummary) redirectSummary.textContent = redirect.message || 'Активных правил нет';
-
   const noticeParts = failed.map(item => `${item.title}: ${item.error || 'узел не отвечает'}`);
-  if (redirectError) noticeParts.push(`Перенаправление: ${redirect.message || 'helper не подтвердил правила'}`);
   if (noticeParts.length) notifyDashboardHealthOnce(noticeParts.join(' · '));
   else dashboardLastHealthNotice = '';
 }

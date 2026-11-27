@@ -9,7 +9,6 @@
     [/^\/nodes/, 'views/nodes.ejs'],
     [/^\/vpn/, 'views/vpn.ejs'],
     [/^\/routing/, 'views/routing.ejs'],
-    [/^\/redirects/, 'views/redirects.ejs'],
     [/^\/diagnostics/, 'views/diagnostics.ejs'],
     [/^\/telegram-bot/, 'views/telegram_bot.ejs'],
     [/^\/settings/, 'views/settings.ejs'],

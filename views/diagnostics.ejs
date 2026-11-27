@@ -15,7 +15,7 @@
     <div class="section-title-row">
       <div>
         <h2>Health Check</h2>
-        <p class="muted">Быстрая проверка состояния агрегатора, узлов, клиентов и helper перенаправления.</p>
+        <p class="muted">Состояние базы, узлов, назначений клиентов и учёта трафика.</p>
       </div>
       <span class="status <%= health.ok ? 'ok' : 'off' %>"><%= health.ok ? 'OK' : 'Нужна проверка' %></span>
     </div>
@@ -31,14 +31,14 @@
     <div class="actions">
       <button type="button" class="secondary" onclick="runPanelCheck(this)">Запустить глубокую проверку</button>
     </div>
-    <pre id="panelCheckResult" class="diagnostic-pre hidden"></pre>
+    <div id="panelCheckResult" class="diagnostic-cards hidden" aria-live="polite"></div>
   </section>
 
   <section class="card span-12 tab-panel" data-tab-panel="probe">
     <div class="section-title-row">
       <div>
-        <h2>Проверка узла: напрямую / через редирект</h2>
-        <p class="muted">Проверяет TCP-доступность оригинального узла, активного redirect IP и TLS/SNI. Это не заменяет полноценный VPN-тест, но быстро показывает, где ломается входная точка.</p>
+        <h2>Клиентский адрес узла</h2>
+        <p class="muted">Проверяет TCP-порт, указанный в подписке, и доступность TLS-имени для REALITY. Поток внутри VPN проверяется клиентом.</p>
       </div>
     </div>
     <form method="get" action="/diagnostics" class="probe-form compact-probe-form">
@@ -59,17 +59,10 @@
     <% if (nodeProbeResult) { %>
       <div class="diagnostic-cards one-col">
         <div class="diagnostic-card <%= nodeProbeResult.direct && nodeProbeResult.direct.ok ? 'ok' : 'warn' %>">
-          <strong>Напрямую к узлу</strong>
-          <span><%= nodeProbeResult.direct && nodeProbeResult.direct.ok ? 'OK' : 'Проблема' %></span>
+          <strong>Клиентский порт</strong>
+          <span><%= nodeProbeResult.direct?.ok == null ? 'Не проверен' : nodeProbeResult.direct.ok ? 'OK' : 'Проблема' %></span>
           <small><%= nodeProbeResult.direct ? ((nodeProbeResult.direct.host || '-') + ':' + (nodeProbeResult.direct.port || '-') + ' · ' + (nodeProbeResult.direct.message || '')) : 'нет данных' %></small>
         </div>
-        <% if (nodeProbeResult.redirect) { %>
-          <div class="diagnostic-card <%= nodeProbeResult.redirect.ok ? 'ok' : 'warn' %>">
-            <strong>Через redirect IP</strong>
-            <span><%= nodeProbeResult.redirect.ok ? 'OK' : 'Проблема' %></span>
-            <small><%= (nodeProbeResult.redirect.host || '-') + ':' + (nodeProbeResult.redirect.port || '-') + ' · ' + (nodeProbeResult.redirect.message || '') %></small>
-          </div>
-        <% } %>
         <% if (nodeProbeResult.sniCheck) { %>
           <div class="diagnostic-card <%= nodeProbeResult.sniCheck.ok ? 'ok' : 'warn' %>">
             <strong>TLS/SNI</strong>
@@ -82,7 +75,7 @@
         <div class="alert warn"><%= nodeProbeResult.warnings.join(' · ') %></div>
       <% } %>
     <% } else { %>
-      <p class="muted">Выбери узел и нажми «Проверить», чтобы увидеть доступность напрямую, через redirect и TLS/SNI.</p>
+      <p class="muted">Выберите узел для проверки клиентского порта.</p>
     <% } %>
   </section>
 
@@ -186,7 +179,22 @@ async function runPanelCheck(btn) {
   try {
     const res = await fetch('/dashboard/panel-check.json', { headers: { Accept: 'application/json' } });
     const data = await res.json();
-    box.textContent = JSON.stringify(data, null, 2);
+    if (!res.ok || !Array.isArray(data.checks)) throw new Error(data.error || 'Не удалось выполнить проверку.');
+    const cards = data.checks.map(check => {
+      const card = document.createElement('div');
+      card.className = 'diagnostic-card ' + (check.ok ? 'ok' : 'warn');
+      for (const [tag, value] of [
+        ['strong', check.name],
+        ['span', check.details?.skipped ? 'Пропущено' : check.ok ? 'OK' : 'Проверьте'],
+        ['small', check.message]
+      ]) {
+        const element = document.createElement(tag);
+        element.textContent = value;
+        card.append(element);
+      }
+      return card;
+    });
+    box.replaceChildren(...cards);
   } catch (err) {
     box.textContent = String(err.message || err);
   } finally {

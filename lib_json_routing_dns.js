@@ -80,8 +80,16 @@ function applyJsonRoutingDns(config, routing, { active = false, mode = '', direc
   for (const inbound of config.inbounds || []) {
     if (inbound?.sniffing?.enabled === true) inbound.sniffing.routeOnly = options.sniffingRouteOnly;
   }
-  if (!options.directDnsEnabled || !config.routing) return config;
-  if (mode === 'node-selective' && listProxyDomains.length) {
+  if (!config.routing) return config;
+  if (mode === 'node-selective') {
+    // Resolve ordinary domains directly even when the main resolver IP also
+    // matches a GeoIP rule in the VPN list. Separate list DNS is tagged below.
+    const tag = config.dns?.tag;
+    if (tag) {
+      const rules = (config.routing.rules || []).filter(rule => !(rule.inboundTag?.length === 1 && rule.inboundTag[0] === tag));
+      config.routing.rules = [{ type: 'field', inboundTag: [tag], outboundTag: 'direct' }, ...rules];
+    }
+    if (!options.directDnsEnabled || !listProxyDomains.length) return config;
     let servers;
     try { servers = parseDirectDnsServers(options.directDnsPreset, options.directDnsCustom); }
     catch (_) { return config; }
@@ -97,7 +105,7 @@ function applyJsonRoutingDns(config, routing, { active = false, mode = '', direc
     ];
     return config;
   }
-  if (mode !== 'proxy-except' || !directDomains.length) return config;
+  if (mode !== 'proxy-except' || !options.directDnsEnabled || !directDomains.length) return config;
   let direct;
   try { direct = parseDirectDnsServers(options.directDnsPreset, options.directDnsCustom); }
   catch (_) { return config; } // A damaged imported setting must not turn JSON issuance into HTTP 500.
