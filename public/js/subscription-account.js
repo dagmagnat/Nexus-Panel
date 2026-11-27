@@ -11,7 +11,8 @@ const apps = {
 };
 function appLink(app) { return document.getElementById(app + '-link'); }
 function copyValue(app) { const link = appLink(app); return link.dataset.importUrl || link.getAttribute('href'); }
-let selectedApp = appLink(preference('app')) ? preference('app') : 'happ';
+const preferredApp = location.hash === '#karing' ? 'karing' : preference('app');
+let selectedApp = appLink(preferredApp) ? preferredApp : 'happ';
 const platforms={ios:'iPhone / iPad',android:'Android',windows:'Windows',mac:'macOS',linux:'Linux'};
 const ua=navigator.userAgent,automatic=/Android/i.test(ua)?'android':/iPhone|iPad/i.test(ua)||(/Macintosh/i.test(ua)&&navigator.maxTouchPoints>1)?'ios':/Mac/i.test(ua)?'mac':/Linux/i.test(ua)?'linux':'windows';
 let selectedPlatform=platforms[preference('platform')]?preference('platform'):automatic;
@@ -38,7 +39,7 @@ function updateApp(value) {
   const src = '/account/connection-qr?app=' + value;
   if (qr.getAttribute('src') !== src) { qr.hidden = false; qrError.hidden = true; qr.src = src; }
   $('#connection-qr-hint').textContent = value === 'karing'
-    ? 'Сканируйте в Karing и включите X-HWID при импорте.'
+    ? 'Наведите камеру телефона на QR-код и нажмите «Подключиться в Karing».'
     : 'Отсканируйте QR-код или отправьте ключ';
   qr.alt = 'QR-код подписки ' + app.label + ' для другого устройства';
   preference('app', value);

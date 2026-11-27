@@ -1358,7 +1358,7 @@
 
 <%- include('client_app_links') %>
 <script src="/js/client-usage.js?v=273"></script>
-<script src="/js/client-workflows.js?v=20261126-3" defer></script>
+<script src="/js/client-workflows.js?v=20261127-1" defer></script>
 <script>
 const clientDirectoryMode = <%= clientType === 'xray' ? 'true' : 'false' %>;
 const clientUsageById = new Map(<%- JSON.stringify(clients.map(c => [String(c.id), { id: c.id, limitGb: c.traffic_gb || 0, nodes: (c.node_limits || []).filter(n => n.client_node_id).map(n => ({ id: n.node_id, name: n.country_name_ru || n.name, limitGb: n.traffic_gb || 0, usedBytes: n.used_bytes || 0 })) }])).replace(/</g, '\\u003c') %>);

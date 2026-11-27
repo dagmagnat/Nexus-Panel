@@ -20,7 +20,12 @@ function createPortalAccess({db,secret,baseUrl}){
    return client && timingSafeEqual(Buffer.from(match[2]), Buffer.from(shortSignature(client))) ? client : null;
  }
  function decode(token){try{if(!/^[A-Za-z0-9_-]{40,600}$/.test(token))return null;const p=JSON.parse(decrypt(Buffer.from(token,'base64url').toString(),secret));if(p.purpose!=='portal-v1'||!Number.isSafeInteger(p.id))return null;const c=byId.get(p.id);return c&&p.stamp===stamp(c)?c:null;}catch{return null;}}
- function enter(req,res,c){req.session.portalIdentity={id:c.id,stamp:stamp(c)};if(req.query?.notice)req.session.portalNotice=String(req.query.notice).slice(0,500);req.session.save(e=>e?res.status(503).send('Не удалось открыть кабинет. Повторите вход.'):res.redirect(303,'/account'));}
+ function enter(req,res,c){
+  req.session.portalIdentity={id:c.id,stamp:stamp(c)};
+  if(req.query?.notice)req.session.portalNotice=String(req.query.notice).slice(0,500);
+  const destination=req.query?.app==='karing'?'/account#karing':'/account';
+  req.session.save(e=>e?res.status(503).send('Не удалось открыть кабинет. Повторите вход.'):res.redirect(303,destination));
+ }
  function middleware(req,res,next){
   const p=req.path;
   if(p==='/account'||p.startsWith('/account/')||p.startsWith('/cabinet/')||p.startsWith('/open/')){res.setHeader('Cache-Control','private, no-store, max-age=0');res.setHeader('Referrer-Policy','no-referrer');}

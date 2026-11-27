@@ -684,7 +684,6 @@ test('client actions target the whole directory and app links serve a protected 
   assert.equal(protectedLink.status, 200, protectedLink.text);
   const { link, qr, importUrl } = JSON.parse(protectedLink.text);
   assert.match(qr, /^data:image\/png;base64,/);
-  assert.equal(qr, await require('qrcode').toDataURL(importUrl, { width: 420, margin: 4, errorCorrectionLevel: 'L' }));
   assert.equal(new URL(link).searchParams.get('url'), importUrl);
   assert.equal(new URL(link).searchParams.get('x-hwid'), 'true');
   assert.ok(!importUrl.includes(client.sub_slug));
@@ -692,6 +691,20 @@ test('client actions target the whole directory and app links serve a protected 
   const portal = await fetchAccount(base + '/open/' + client.sub_slug);
   assert.match(await portal.text(), /data-app="karing"/);
   const shortPortal = JSON.parse((await request(appLinks, { app: 'portal' })).text).link;
+  const karingPortal = shortPortal + '?app=karing';
+  const QRCode = require('qrcode');
+  assert.equal(qr, await QRCode.toDataURL(karingPortal, { width: 420, margin: 4, errorCorrectionLevel: 'L' }));
+  const karingEntry = await fetch(karingPortal, { redirect: 'manual' });
+  assert.equal(karingEntry.status, 303);
+  assert.equal(karingEntry.headers.get('location'), '/account#karing');
+  const karingHeaders = { cookie: karingEntry.headers.getSetCookie().map(value => value.split(';')[0]).join('; ') };
+  const karingCabinet = await fetch(base + '/account', { headers: karingHeaders });
+  assert.ok((await karingCabinet.text()).includes(link.replaceAll('&', '&amp;')));
+  const portalQr = await fetch(base + '/account/connection-qr?app=karing', { headers: karingHeaders });
+  assert.equal(portalQr.status, 200);
+  assert.deepEqual(Buffer.from(await portalQr.arrayBuffer()), await QRCode.toBuffer(karingPortal, {
+    type: 'png', width: 360, margin: 4, errorCorrectionLevel: 'L'
+  }));
   const shortPortalPath = new URL(shortPortal).pathname;
   assert.match(shortPortalPath, /^\/cabinet\/p[0-9a-z]+-[A-Za-z0-9_-]{24}$/);
   assert.equal(JSON.parse((await request(appLinks, { app: 'portal' })).text).link, shortPortal);
@@ -747,6 +760,9 @@ test('client actions target the whole directory and app links serve a protected 
       await Promise.all([page.waitForURL('**/dashboard'), page.locator('button[type=submit]').click()]);
       for (const width of [1440, 390]) {
         await page.setViewportSize({ width, height: 900 });
+        await page.goto(base + '/open/new-token?app=karing');
+        assert.equal(await page.locator('[data-app="karing"]').getAttribute('aria-pressed'), 'true');
+        assert.match(await page.locator('#connect-app').getAttribute('href'), /^karing:\/\/install-config\?/);
         await page.goto(base + '/clients?q=portal-user');
         await page.locator('#openClientBulkDialog').click();
         const dialog = page.locator('#clientBulkDialog');
