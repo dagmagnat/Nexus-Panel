@@ -1,0 +1,33 @@
+body.page-routing .spectrum-page-content { max-width:none; }
+.routing-workspace { display:grid; grid-template-columns:minmax(170px,205px) minmax(0,1fr); gap:16px; align-items:start; width:100%; }
+.routing-workspace-content { min-width:0; }
+.routing-section-nav { display:flex; flex-direction:column; gap:4px; padding:5px; border:1px solid var(--line); border-radius:12px; background:var(--surface); position:sticky; top:80px; }
+.routing-section-nav > button { width:100%; min-height:42px; padding:10px 12px; border:0; border-radius:8px; box-shadow:none; background:transparent; color:var(--muted-strong); text-align:start; font-size:13px; font-weight:650; }
+.routing-section-nav > button:hover { background:var(--surface-strong); color:var(--text); }
+.routing-section-nav > button.is-active { color:#fff; background:var(--blue,#4f46e5); }
+.routing-workspace-content > .card { width:100%; min-width:0; margin:0 0 14px; }
+.routing-workspace [data-routing-panel][hidden] { display:none !important; }
+.routing-form > [data-routing-panel] { display:flex; flex-direction:column; min-width:0; gap:12px; }
+.routing-form > [data-routing-panel] > h3 { margin:0; }
+.routing-explanation { margin:0 0 12px; color:var(--muted); font-size:12px; }
+.routing-explanation > summary { cursor:pointer; color:var(--muted-strong); }
+.routing-explanation p { margin:8px 0 0; }
+.routing-form { gap:14px !important; }
+.routing-form .routing-save-actions { margin:0; padding-top:12px; border-top:1px solid var(--line); }
+.routing-workspace .routing-node-checkboxes { grid-template-columns:repeat(auto-fit,minmax(245px,1fr)); }
+.routing-workspace .geodata-catalog-card { margin-top:0; }
+@media(min-width:1041px) {
+  .routing-editor-card { padding:18px !important; }
+  .routing-form textarea { min-height:110px; }
+  .routing-form .switch-row { padding:10px 12px; }
+  .routing-form [data-routing-mode-card] { margin-block:0; }
+}
+@media(max-width:1040px) {
+  .routing-workspace { grid-template-columns:minmax(0,1fr); gap:10px; }
+  .routing-section-nav { flex-direction:row; overflow-x:auto; overscroll-behavior-inline:contain; top:58px; z-index:45; max-width:100%; }
+  .routing-section-nav > button { flex:0 0 auto; width:auto; min-height:44px; white-space:nowrap; }
+}
+@media(max-width:600px) {
+  .routing-workspace .routing-node-checkboxes { grid-template-columns:minmax(0,1fr); }
+  .routing-workspace-content > .card { padding:12px !important; }
+}

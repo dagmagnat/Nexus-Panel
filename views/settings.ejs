@@ -1,4 +1,5 @@
 <%- include('partials_header', { pageTitle: 'Настройки', pageSubtitle: 'Параметры подписки, админки, безопасности и резервных копий', activePage: 'settings' }) %>
+<link rel="stylesheet" href="/css/settings-compact.css?v=2.7.46" />
 
 <% if (message) { %><div class="alert ok"><%= message %></div><% } %>
 <% if (error) { %><div class="alert err"><%= error %></div><% } %>
@@ -11,7 +12,7 @@
     <h2><span class="section-icon" aria-hidden="true">🎛️</span>Настройка панели</h2>
     <p class="muted">Оформление панели, размер интерфейса и мобильная навигация.</p>
     <form method="post" action="/settings/panel-ui" class="form-grid">
-      <div class="field">
+      <div class="field half">
         <label for="panel-interface-theme">Вид интерфейса панели</label>
         <select name="panel_interface_theme" id="panel-interface-theme">
           <option value="classic" <%= defaultPanelInterfaceTheme === 'classic' ? 'selected' : '' %>>Классический</option>
@@ -19,16 +20,16 @@
           <option value="graphite_blue" <%= defaultPanelInterfaceTheme === 'graphite_blue' ? 'selected' : '' %>>Графит и синий</option>
           <option value="coreui" <%= defaultPanelInterfaceTheme === 'coreui' ? 'selected' : '' %>>CoreUI</option>
         </select>
-        <small class="hint">Значение применяется по умолчанию. <a href="/preferences/appearance">Настроить оформление своего аккаунта</a></small>
+        <details class="settings-field-help"><summary>Подсказка</summary><small class="hint">Значение применяется по умолчанию. <a href="/preferences/appearance">Настроить оформление своего аккаунта</a></small></details>
       </div>
 
-      <div class="field">
+      <div class="field half">
         <label>Вид списка клиентов</label>
         <select name="clients_view_mode">
           <option value="modern" <%= clientsViewMode === 'modern' ? 'selected' : '' %>>Новый — таблица как в 3x-ui</option>
           <option value="classic" <%= clientsViewMode === 'classic' ? 'selected' : '' %>>Старый — карточки Aggregator</option>
         </select>
-        <small class="hint">Новый вид включён по умолчанию. На телефоне в обоих режимах остаются удобные адаптивные карточки.</small>
+        <details class="settings-field-help"><summary>Подсказка</summary><small class="hint">Новый вид включён по умолчанию. На телефоне в обоих режимах остаются удобные адаптивные карточки.</small></details>
       </div>
 
       <div class="field half">
@@ -38,7 +39,7 @@
           <option value="normal" <%= panelMobileUiScale === 'normal' ? 'selected' : '' %>>Обычный</option>
           <option value="large" <%= panelMobileUiScale === 'large' ? 'selected' : '' %>>Крупный</option>
         </select>
-        <small class="hint">Компактный размер вмещает больше информации на экран телефона.</small>
+        <details class="settings-field-help"><summary>Подсказка</summary><small class="hint">Компактный размер вмещает больше информации на экран телефона.</small></details>
       </div>
 
       <div class="field half">
@@ -47,7 +48,7 @@
           <option value="bottom" <%= panelMobileNavMode === 'bottom' ? 'selected' : '' %>>Нижнее меню</option>
           <option value="side" <%= panelMobileNavMode === 'side' ? 'selected' : '' %>>Боковое меню</option>
         </select>
-        <small class="hint">Если выбрано нижнее меню, боковая панель на телефоне скрывается.</small>
+        <details class="settings-field-help"><summary>Подсказка</summary><small class="hint">Если выбрано нижнее меню, боковая панель на телефоне скрывается.</small></details>
       </div>
 
       <div class="field half">
@@ -56,7 +57,7 @@
           <option value="pages" <%= typeof nodesListMode === 'undefined' || nodesListMode !== 'scroll' ? 'selected' : '' %>>Страницы</option>
           <option value="scroll" <%= typeof nodesListMode !== 'undefined' && nodesListMode === 'scroll' ? 'selected' : '' %>>Прокрутка — все узлы</option>
         </select>
-        <small class="hint">В режиме прокрутки весь список доступен сразу. Узлы можно перемещать стрелками или перетаскивать.</small>
+        <details class="settings-field-help"><summary>Подсказка</summary><small class="hint">В режиме прокрутки весь список доступен сразу. Узлы можно перемещать стрелками или перетаскивать.</small></details>
       </div>
 
       <div class="field half">
@@ -66,7 +67,7 @@
           <option value="<%= size %>" <%= Number(nodesPageSize ?? 10) === size ? 'selected' : '' %>><%= size || 'Все узлы' %></option>
           <% } %>
         </select>
-        <small class="hint">Применяется в режиме «Страницы». При перемещении стрелками узел может переходить между страницами.</small>
+        <details class="settings-field-help"><summary>Подсказка</summary><small class="hint">Применяется в режиме «Страницы». При перемещении стрелками узел может переходить между страницами.</small></details>
       </div>
 
       <div class="field half">
@@ -77,7 +78,7 @@
           <option value="60" <%= Number(nodeAutoRefreshSeconds) === 60 ? 'selected' : '' %>>Каждые 60 секунд</option>
           <option value="0" <%= Number(nodeAutoRefreshSeconds) === 0 ? 'selected' : '' %>>Выключить</option>
         </select>
-        <small class="hint">Обновляет состояние узлов на странице «Узлы» и на главной.</small>
+        <details class="settings-field-help"><summary>Подсказка</summary><small class="hint">Обновляет состояние узлов на странице «Узлы» и на главной.</small></details>
       </div>
 
       <div class="field half">
@@ -88,7 +89,7 @@
           <option value="60" <%= Number(clientAutoRefreshSeconds) === 60 ? 'selected' : '' %>>Каждые 60 секунд</option>
           <option value="0" <%= Number(clientAutoRefreshSeconds) === 0 ? 'selected' : '' %>>Только вручную</option>
         </select>
-        <small class="hint">Интервал списка онлайн-клиентов на дашборде.</small>
+        <details class="settings-field-help"><summary>Подсказка</summary><small class="hint">Интервал списка онлайн-клиентов на дашборде.</small></details>
       </div>
 
       <div class="field half">
@@ -98,8 +99,8 @@
         </label>
       </div>
 
-      <div class="field panel-extra-links">
-        <strong>Дополнительные разделы для нижнего меню</strong>
+      <div class="field half panel-extra-links">
+        <details class="panel-extra-details"><summary>Дополнительные разделы</summary>
         <small class="hint">Когда выбрано нижнее меню, эти разделы доступны здесь.</small>
         <div class="panel-extra-link-grid">
           <a class="link-btn secondary" href="/access">Пользователи и доступ</a>
@@ -107,6 +108,7 @@
           <a class="link-btn secondary" href="/diagnostics">🩺 Диагностика</a>
           <a class="link-btn secondary" href="/telegram-bot">✈️ TG-бот</a>
         </div>
+        </details>
       </div>
 
       <div class="actions">
@@ -651,7 +653,7 @@
       <div class="kv-item">
         <strong>Команды на сервере</strong>
         <div class="command-row">
-          <code>agg</code>
+          <code>agg update</code>
           <button type="button" class="secondary" onclick="copyText('agg update', this)">Копировать</button>
         </div>
         <div class="command-row">

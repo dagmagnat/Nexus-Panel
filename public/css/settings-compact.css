@@ -1,0 +1,37 @@
+.panel-extra-details { border:1px solid var(--line); border-radius:9px; background:var(--surface-raised); padding:10px 12px; }
+.panel-extra-details > summary { cursor:pointer; font-weight:650; }
+.panel-extra-details .hint { display:block; margin:8px 0; }
+.panel-extra-details .panel-extra-link-grid { margin-top:8px; }
+.settings-field-help > summary { cursor:pointer; font-size:11px; color:var(--muted); }
+.settings-field-help .hint { display:block; margin-top:4px; }
+@media(min-width:1041px) {
+  body.page-settings .spectrum-page-content { max-width:none; padding-bottom:20px; }
+  .page-settings :is(.panel-settings-card,.settings-server-card) { padding:16px 18px; }
+  .page-settings :is(.panel-settings-card,.settings-server-card) > h2 { margin:0 0 8px; font-size:17px; }
+  .page-settings .panel-settings-card > .muted { margin:0 0 12px; }
+  .page-settings .panel-settings-card > .form-grid { display:grid !important; grid-template-columns:repeat(2,minmax(0,1fr)) !important; gap:10px 16px; align-items:start; }
+  .page-settings .panel-settings-card .field { min-width:0; margin:0; gap:4px; }
+  .page-settings .panel-settings-card .field.half { grid-column:span 1 !important; width:100%; }
+  .page-settings .panel-settings-card .field > label { margin:0 0 3px; }
+  .page-settings .panel-settings-card select { min-height:36px; padding-block:6px; }
+  .page-settings .panel-settings-card .hint { margin-top:4px; font-size:11px; line-height:1.4; }
+  .page-settings .panel-settings-card .switch-row { padding:10px; margin:0; }
+  .page-settings .panel-settings-card .panel-extra-links { grid-column:span 1; }
+  .page-settings .panel-settings-card form > .actions { display:flex !important; grid-column:1 / -1; justify-content:flex-end; margin:0; }
+  .page-settings .panel-settings-card form > .actions > button { width:auto; min-height:36px; padding:8px 14px; }
+  .page-settings .settings-server-card > .kv-list { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.15fr); gap:10px; align-items:start; }
+  .page-settings .settings-server-card > .kv-list > .kv-item { gap:6px; padding:11px 12px; }
+  .page-settings .settings-server-card > .kv-list > .kv-item:last-child { grid-column:2; grid-row:1 / span 2; }
+  .page-settings .settings-server-card .kv-item .muted { font-size:12px; line-height:1.45; overflow-wrap:anywhere; }
+  .page-settings .settings-server-card .hint { font-size:11px; line-height:1.4; margin:2px 0 0; }
+  .page-settings .settings-server-card .command-row { gap:8px; margin:0; }
+  .page-settings .settings-server-card .command-row button { min-height:34px; padding:6px 9px; font-size:11px; }
+}
+@media(min-width:1600px) {
+  .page-settings .settings-server-card > .kv-list { grid-template-columns:repeat(3,minmax(0,1fr)); }
+  .page-settings .settings-server-card > .kv-list > .kv-item:last-child { grid-column:auto; grid-row:auto; }
+}
+@media(min-width:1041px) and (max-height:800px) {
+  body.page-settings .spectrum-page-content { padding-top:14px; padding-bottom:10px; }
+  .page-settings .coreui-page-title { margin-bottom:10px; }
+}
