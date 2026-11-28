@@ -77,6 +77,27 @@ function prepareIncyAutoSelectDns(dns) {
     const { port, ...settings } = server;
     return { ...settings, address: googleDoh[server.address] };
   });
+  const unique = [];
+  const resolvers = new Map();
+  for (const server of dns.servers) {
+    if (!server || typeof server !== 'object' || server.tag !== LIST_DNS_TAG) {
+      unique.push(server);
+      continue;
+    }
+    const { timeoutMs, ...settings } = server;
+    const key = JSON.stringify(Object.keys(settings).sort().map(name => [name, settings[name]]));
+    const previous = resolvers.get(key);
+    if (previous) {
+      // Generated timeouts can differ for identical resolvers. Retain the
+      // longer allowance, including the default timeout of a final resolver.
+      if (previous.timeoutMs == null || timeoutMs == null) delete previous.timeoutMs;
+      else previous.timeoutMs = Math.max(previous.timeoutMs, timeoutMs);
+      continue;
+    }
+    resolvers.set(key, server);
+    unique.push(server);
+  }
+  dns.servers = unique;
   prepareJsonDns(dns);
 }
 

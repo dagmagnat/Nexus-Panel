@@ -6,7 +6,7 @@
 
 Nexus Panel объединяет узлы **3x-ui** и **Remnawave** в одной панели: клиенты, подписки, лимиты, трафик, маршрутизация, перенаправление, Telegram и резервные копии.
 
-[![Version](https://img.shields.io/badge/version-2.7.43-blue)](https://github.com/dagmagnat/Nexus-Panel)
+[![Version](https://img.shields.io/badge/version-2.7.44-blue)](https://github.com/dagmagnat/Nexus-Panel)
 
 В 2.7.33 можно скрыть отдельный узел из списка JSON-подписки прямо из его карточки. Узел продолжает участвовать в профилях автовыбора, в которые его включили. Для новой установки используйте `bootstrap.sh` или `install.sh`, для существующей панели — `agg update`. [История изменений](CHANGELOG.md)
 

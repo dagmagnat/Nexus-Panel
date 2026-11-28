@@ -137,3 +137,25 @@ test('personal DNS labels identify the host and invalid manual DNS identifies it
   assert.throws(()=>parseDirectDnsServers('manual','192.0.2.53\ndns.example.test'),/строка 2/);
   assert.equal(parseDirectDnsServers('manual','5.230.173.140\n8.8.8.8\n8.8.4.4\n1.1.1.1\n1.0.0.1').length,5);
 });
+
+test('INCY conversion removes duplicate Google DoH within a scope and retains fallback timeout', () => {
+  const {prepareIncyAutoSelectDns}=require('../lib_json_routing_dns');
+  const scope={tag:'nexus-dns-list',domains:['geosite:youtube'],skipFallback:true};
+  const other={tag:'other-scope',domains:['geosite:youtube'],address:'https://dns.google/dns-query'};
+  const dns={servers:[
+    {...scope,address:'https://dns.example.test/dns-query',timeoutMs:2000},
+    {...scope,address:'8.8.8.8',port:53,timeoutMs:2000},
+    {...scope,address:'https://dns.google/dns-query'},
+    other
+  ]};
+  prepareIncyAutoSelectDns(dns);
+  assert.equal(dns.servers.length,3);
+  assert.equal(dns.servers[1].address,'https://dns.google/dns-query');
+  assert.equal(dns.servers[1].timeoutMs,undefined);
+  assert.deepEqual(dns.servers[1].domains,['geosite:youtube']);
+  assert.equal(dns.servers[2],other);
+  assert.equal(dns.hosts['dns.google'],'8.8.8.8');
+  const serialized=JSON.stringify(dns);
+  prepareIncyAutoSelectDns(dns);
+  assert.equal(JSON.stringify(dns),serialized);
+});
