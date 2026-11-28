@@ -159,3 +159,47 @@ test('INCY conversion removes duplicate Google DoH within a scope and retains fa
   prepareIncyAutoSelectDns(dns);
   assert.equal(JSON.stringify(dns),serialized);
 });
+
+test('multiple DNS presets preserve selection order, deduplicate endpoints and reject unknown choices', () => {
+  const own={address:'192.0.2.53',dohUrl:'https://dns.example.test/dns-query',secondary:{address:'198.51.100.53',dohUrl:'https://dns1.example.test/dns-query'}};
+  const presets=['doh_personal_secondary','doh_google','personal'];
+  assert.deepEqual(directDnsSettings({directDnsPreset:presets}).directDnsPreset,presets);
+  assert.deepEqual(parseDirectDnsServers(presets,'https://dns.google/dns-query',own).map(x=>x.address),[
+    'https+local://dns1.example.test/dns-query','https+local://dns.google/dns-query','192.0.2.53'
+  ]);
+  assert.throws(()=>parseDirectDnsServers(['google','unknown'],'',own),/Неизвестный/);
+  assert.throws(()=>parseDirectDnsServers(['doh_personal_secondary'],'',{}),/Сначала/);
+  assert.throws(()=>parseDirectDnsServers([],''),/хотя бы один/);
+  assert.equal(parseDirectDnsServers([],'1.1.1.1')[0].address,'1.1.1.1');
+});
+
+test('second personal DNS is independently named, scoped and bootstrapped', () => {
+  const {personalDnsGroups,personalDnsSettings}=require('../lib_json_routing_dns');
+  const own=personalDnsSettings({address:'192.0.2.53',dohUrl:'https://dns.example.test/dns-query',secondary:{address:'198.51.100.53',dohUrl:'https://dns1.example.test/dns-query'}});
+  assert.equal(personalDnsGroups(own)[1].label,'dns1.example.test');
+  const cfg=applyJsonRoutingDns(config(),{...settings,personalDns:own,directDnsPreset:['doh_personal_secondary','doh_google']},{
+    active:true,mode:'node-selective',listProxyDomains:['geosite:youtube']
+  });
+  prepareJsonDns(cfg.dns,{personalDns:own});
+  assert.deepEqual(cfg.dns.servers.filter(x=>x.tag==='nexus-dns-list').map(x=>x.address),['https://dns1.example.test/dns-query','https://dns.google/dns-query']);
+  assert.equal(cfg.dns.hosts['dns1.example.test'],'198.51.100.53');
+  assert.equal(cfg.dns.hosts['dns.google'],'8.8.8.8');
+  assert.equal(cfg.routing.rules[0].outboundTag,'proxy');
+  assert.throws(()=>personalDnsSettings({secondary:{address:'broken'}}),/IPv4/);
+});
+
+test('common JSON DNS combines selected presets without losing legacy settings or manual addresses', () => {
+  const {RULE_DNS_GROUPS,personalDnsGroups}=require('../lib_json_routing_dns');
+  const source=require('node:fs').readFileSync(require('node:path').join(__dirname,'../app.js'),'utf8');
+  const start=source.indexOf('function buildDnsServerEntry(');
+  const end=source.indexOf('\nfunction relabelNativeJsonConfig(',start);
+  let cfg={dnsPreset:'google',dnsCustom:''};
+  const build=new Function('getRoutingConfig','personalDnsGroups','RULE_DNS_GROUPS','uniqueList','parsePlainLines',source.slice(start,end)+';return getJsonDnsServers;')(
+    ()=>cfg,personalDnsGroups,RULE_DNS_GROUPS,values=>[...new Set(values)],value=>value.split('\n').filter(Boolean)
+  );
+  assert.deepEqual(build().map(server=>server.address),['8.8.8.8','8.8.4.4']);
+  cfg={dnsPreset:'doh_personal_secondary',dnsPresets:['doh_personal_secondary','doh_google'],dnsCustom:'https://dns.google/dns-query\n1.1.1.1',personalDns:{secondary:{address:'198.51.100.53',dohUrl:'https://dns1.example.test/dns-query'}}};
+  assert.deepEqual(build().map(server=>typeof server==='string'?server:server.address),[
+    'https://dns1.example.test/dns-query','https://dns.google/dns-query','1.1.1.1'
+  ]);
+});

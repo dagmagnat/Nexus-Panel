@@ -29,6 +29,8 @@ const DIRECT_DNS_PRESETS = Object.freeze({
   ...Object.fromEntries(RULE_DNS_GROUPS.flatMap(group => group.options.map(({ value, addresses }) => [value, addresses]))),
   personal: [],
   doh_personal: [],
+  personal_secondary: [],
+  doh_personal_secondary: [],
   manual: []
 });
 
@@ -51,16 +53,22 @@ function personalDnsSettings(value = {}) {
       throw new Error('Свой DNS: укажите HTTPS-адрес DoH без логина и пароля.');
     }
   }
-  return { address, dohUrl };
+  const result = { address, dohUrl };
+  if (value.secondary?.address || value.secondary?.dohUrl) {
+    result.secondary = personalDnsSettings({ address: value.secondary.address, dohUrl: value.secondary.dohUrl });
+  }
+  return result;
 }
 
 function personalDnsGroups(value = {}) {
   const dns = personalDnsSettings(value);
-  const options = [];
-  const title = dns.dohUrl ? new URL(dns.dohUrl).hostname : dns.address;
-  if (dns.address) options.push({ value: 'personal', label: title + ' · UDP/53', addresses: [dns.address] });
-  if (dns.dohUrl) options.push({ value: 'doh_personal', label: title + ' · DoH', addresses: [dns.dohUrl] });
-  return options.length ? [{ label: title, options }] : [];
+  return [{ dns, suffix: '' }, { dns: dns.secondary || {}, suffix: '_secondary' }].flatMap(({ dns: item, suffix }) => {
+    const options = [];
+    const title = item.dohUrl ? new URL(item.dohUrl).hostname : item.address;
+    if (item.address) options.push({ value: 'personal' + suffix, label: title + ' · UDP/53', addresses: [item.address] });
+    if (item.dohUrl) options.push({ value: 'doh_personal' + suffix, label: title + ' · DoH', addresses: [item.dohUrl] });
+    return options.length ? [{ label: title, options }] : [];
+  });
 }
 
 function prepareIncyAutoSelectDns(dns) {
@@ -104,8 +112,9 @@ function prepareIncyAutoSelectDns(dns) {
 function prepareJsonDns(dns, { fastFallback = false, personalDns = {} } = {}) {
   if (!Array.isArray(dns?.servers)) return;
   const bootstrap = { ...DOH_BOOTSTRAP_IPS };
-  if (personalDns.address && personalDns.dohUrl) {
-    try { bootstrap[new URL(personalDns.dohUrl).hostname] = personalDns.address; } catch (_) {}
+  for (const item of [personalDns, personalDns.secondary || {}]) {
+    if (!item.address || !item.dohUrl) continue;
+    try { bootstrap[new URL(item.dohUrl).hostname] = item.address; } catch (_) {}
   }
   for (const server of dns.servers) {
     const address = typeof server === 'string' ? server : server?.address;
@@ -136,20 +145,30 @@ function directDnsSettings(value = {}) {
   return {
     directDnsEnabled: value.directDnsEnabled === true,
     directDnsMode: ['system-all', 'system-default'].includes(value.directDnsMode) ? value.directDnsMode : 'custom',
-    directDnsPreset: Object.hasOwn(DIRECT_DNS_PRESETS, value.directDnsPreset) ? value.directDnsPreset : 'doh_yandex',
+    directDnsPreset: Array.isArray(value.directDnsPreset)
+      ? [...new Set(value.directDnsPreset.map(String))]
+      : (Object.hasOwn(DIRECT_DNS_PRESETS, value.directDnsPreset) ? value.directDnsPreset : 'doh_yandex'),
     directDnsCustom: typeof value.directDnsCustom === 'string' ? value.directDnsCustom : '',
     sniffingRouteOnly: value.sniffingRouteOnly === true
   };
 }
 
 function parseDirectDnsServers(preset, custom, personalDns = {}) {
-  if (!Object.hasOwn(DIRECT_DNS_PRESETS, preset)) throw new Error('Неизвестный набор DNS для direct.');
+  const presets = Array.isArray(preset) ? [...new Set(preset)] : [preset];
+  if (!presets.length) presets.push('manual');
+  if (presets.length > 20 || presets.some(key => typeof key !== 'string' || !Object.hasOwn(DIRECT_DNS_PRESETS, key))) {
+    throw new Error('Неизвестный набор DNS для direct.');
+  }
   if (String(custom || '').length > 4096) throw new Error('Список DNS для direct слишком большой.');
   const lines = String(custom || '').split(/[\n,;]+/).map(x => x.trim()).filter(Boolean);
   if (lines.length > 8) throw new Error('Укажи не более 8 ручных DNS для direct.');
-  const own = personalDnsGroups(personalDns).flatMap(group => group.options).find(option => option.value === preset);
-  if (['personal', 'doh_personal'].includes(preset) && !own) throw new Error('Сначала заполните адрес своего DNS.');
-  const values = [...new Set([...(own?.addresses || DIRECT_DNS_PRESETS[preset]), ...lines])];
+  const ownOptions = personalDnsGroups(personalDns).flatMap(group => group.options);
+  const selected = presets.flatMap(key => {
+    const own = ownOptions.find(option => option.value === key);
+    if (/^(doh_)?personal/.test(key) && !own) throw new Error('Сначала заполните адрес своего DNS.');
+    return own?.addresses || DIRECT_DNS_PRESETS[key];
+  });
+  const values = [...new Set([...selected, ...lines])];
   if (!values.length) throw new Error('Для ручного DNS direct укажи хотя бы один IP или HTTPS DoH URL.');
   return values.map(value => {
     if (isIP(value)) return { address: value, port: 53 };

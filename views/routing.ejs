@@ -162,6 +162,18 @@
     .routing-preview { max-width:100%; overflow:auto; font-size:10.5px; }
     .routing-summary-card .kv-item { grid-template-columns:1fr; gap:5px; padding:10px 0; }
   }
+  .routing-dns-picker { min-width:0; width:100%; }
+  .routing-dns-picker details { border:1px solid var(--line,#cbd5e1); border-radius:10px; background:var(--surface,#fff); overflow:hidden; }
+  .routing-dns-picker summary { cursor:pointer; padding:10px 12px; min-height:42px; box-sizing:border-box; color:var(--text); }
+  .routing-dns-picker summary span { overflow-wrap:anywhere; }
+  .routing-dns-options { max-height:340px; overflow-y:auto; padding:6px 10px 10px; border-top:1px solid var(--line,#cbd5e1); }
+  .routing-dns-group > strong { display:block; font-size:12px; padding:10px 4px 5px; color:var(--muted); }
+  .routing-dns-picker .routing-dns-option { display:flex; align-items:center; gap:9px; margin:3px 0; padding:9px 7px; border-radius:7px; cursor:pointer; line-height:1.35; }
+  .routing-dns-option:hover,.routing-dns-option:has(input:checked) { background:var(--surface-strong,#f1f5f9); }
+  .routing-dns-picker .routing-dns-option input { width:17px; height:17px; flex:0 0 17px; margin:0; }
+  .routing-dns-option > span { flex:1; min-width:0; overflow-wrap:anywhere; color:var(--text); }
+  .routing-dns-option > small:not(:empty) { min-width:22px; text-align:center; border-radius:6px; background:var(--accent,#4f46e5); color:#fff; padding:2px 4px; }
+  .routing-dns-picker > .hint { display:block; margin-top:8px; }
 </style>
 
 <% if (message) { %><div class="alert ok"><%= message %></div><% } %>
@@ -239,19 +251,10 @@
                   </select>
                   <small class="hint" data-rule-dns-mode-help></small>
                 </label>
-                <label class="field half" data-rule-dns-resolver><span>Набор DNS для списка</span>
-                  <select data-rule-dns-preset>
-                    <% ruleDnsGroups.forEach(group => { %>
-                      <optgroup label="<%= group.label %>">
-                        <% group.options.forEach(option => { %>
-                          <option value="<%= option.value %>" <%= rule.directDnsPreset === option.value ? 'selected' : '' %>><%= option.label %></option>
-                        <% }) %>
-                      </optgroup>
-                    <% }) %>
-                    <option value="manual" <%= rule.directDnsPreset === 'manual' ? 'selected' : '' %>>Только вручную</option>
-                  </select>
+                <div class="field half" data-rule-dns-resolver><span>Набор DNS для списка</span>
+                  <%- include('partials_dns_picker', { groups: ruleDnsGroups, selected: rule.directDnsPreset || 'doh_yandex', fieldName: '' }) %>
                   <small class="hint">Для автовыбора INCY используйте DoH. Доступность DNS зависит от сети, через которую идут запросы.</small>
-                </label>
+                </div>
                 <label class="field half" data-rule-dns-resolver><span>Ручные DNS</span><textarea data-rule-dns-custom rows="3" placeholder="77.88.8.8&#10;https://common.dot.dns.yandex.net/dns-query"><%= rule.directDnsCustom %></textarea></label>
               </div>
             </div>
@@ -321,10 +324,15 @@
       </div>
 
       <details class="routing-personal-dns">
-        <summary><%= personalDnsTitle %></summary>
+        <summary>DNS-серверы: <%= ruleDnsGroups.filter(group => group.options.some(option => /personal/.test(option.value))).map(group => group.label).join(', ') || personalDnsTitle %></summary>
         <div class="form-grid" style="margin-top:12px">
           <label class="field half"><span>IP DNS-сервера</span><input name="personal_dns_address" value="<%= personalDns.address %>" placeholder="IPv4 или IPv6" /></label>
           <label class="field half"><span>Адрес DoH</span><input type="url" name="personal_dns_doh" value="<%= personalDns.dohUrl %>" placeholder="https://dns.example.com/dns-query" /></label>
+        </div>
+        <h4>Второй DNS-сервер</h4>
+        <div class="form-grid">
+          <label class="field half"><span>IP DNS-сервера</span><input name="personal_dns_secondary_address" value="<%= personalDns.secondary?.address || '' %>" placeholder="IPv4 или IPv6" /></label>
+          <label class="field half"><span>Адрес DoH</span><input type="url" name="personal_dns_secondary_doh" value="<%= personalDns.secondary?.dohUrl || '' %>" placeholder="https://dns1.example.com/dns-query" /></label>
         </div>
         <p class="hint">После сохранения сервер появится в основном выборе DNS и в каждом правиле. DNS правила имеет приоритет для доменов его списка.</p>
       </details>
@@ -345,22 +353,8 @@
       <p class="hint">Используется для доменов без отдельного DNS в правиле. Включённый DNS списка имеет приоритет для совпавших доменов. Эти настройки применяются к DNS-запросам, которые обрабатывает клиент.</p>
       <div class="form-grid">
         <div class="field half">
-          <label>Готовый набор DNS</label>
-          <select name="dns_preset">
-            <% ruleDnsGroups.filter(group => group.options.some(option => option.value === 'personal' || option.value === 'doh_personal')).forEach(group => { %>
-              <optgroup label="<%= group.label %>">
-                <% group.options.forEach(option => { %><option value="<%= option.value %>" <%= dnsPreset === option.value ? 'selected' : '' %>><%= option.label %></option><% }) %>
-              </optgroup>
-            <% }) %>
-            <option value="cloudflare-google" <%= dnsPreset === 'cloudflare-google' ? 'selected' : '' %>>Cloudflare + Google</option>
-            <option value="cloudflare" <%= dnsPreset === 'cloudflare' ? 'selected' : '' %>>Cloudflare</option>
-            <option value="google" <%= dnsPreset === 'google' ? 'selected' : '' %>>Google</option>
-            <option value="quad9" <%= dnsPreset === 'quad9' ? 'selected' : '' %>>Quad9</option>
-            <option value="yandex" <%= dnsPreset === 'yandex' ? 'selected' : '' %>>Yandex DNS</option>
-            <option value="doh_cloudflare" <%= dnsPreset === 'doh_cloudflare' ? 'selected' : '' %>>Cloudflare DoH</option>
-            <option value="doh_google" <%= dnsPreset === 'doh_google' ? 'selected' : '' %>>Google DoH</option>
-            <option value="manual" <%= dnsPreset === 'manual' ? 'selected' : '' %>>Только вручную</option>
-          </select>
+          <label>Готовые наборы DNS</label>
+          <%- include('partials_dns_picker', { groups: [{ label: 'Комбинированный набор', options: [{ value: 'cloudflare-google', label: 'Cloudflare + Google · UDP/53' }] }, ...ruleDnsGroups], selected: dnsPresets, fieldName: 'dns_presets' }) %>
         </div>
         <div class="field half">
           <label>Ручные DNS / DoH</label>
@@ -446,6 +440,7 @@
   </section>
 </div>
 
+<script src="/js/routing-dns-picker.js?v=2.7.45"></script>
 <script>
 let geodataCatalog = { geosite: [], geoip: [], notes: [] };
 const LOYAL_GEOSITE_URL = 'https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat';
@@ -457,6 +452,7 @@ function routingRuleCards() {
   return [...document.querySelectorAll('#routing-rule-list [data-routing-mode-card]')];
 }
 function syncRoutingModeAssignments() {
+  window.initRoutingDnsPickers();
   const cards = routingRuleCards();
   const owners = new Map();
   const catalog = document.getElementById('routing-catalog-target');
@@ -538,7 +534,7 @@ function initRoutingModeAssignments() {
       ips: card.querySelector('[data-rule-ips]').value,
       directDnsEnabled: card.querySelector('[data-rule-dns-enabled]').checked,
       directDnsMode: card.querySelector('[data-rule-dns-mode]').value,
-      directDnsPreset: card.querySelector('[data-rule-dns-preset]').value,
+      directDnsPreset: JSON.parse(card.querySelector('[data-dns-picker]').dataset.dnsOrder),
       directDnsCustom: card.querySelector('[data-rule-dns-custom]').value
     }));
     const invalid = rules.findIndex(rule => !rule.nodeIds.length);

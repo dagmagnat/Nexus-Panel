@@ -1,0 +1,23 @@
+<% const selectedDns = (Array.isArray(selected) ? selected : [selected]).filter(key => key && key !== 'manual');
+   const dnsOptions = groups.flatMap(group => group.options);
+   const selectedLabels = selectedDns.map(key => dnsOptions.find(option => option.value === key)?.label).filter(Boolean); %>
+<div class="routing-dns-picker" data-dns-picker data-dns-order="<%= JSON.stringify(selectedDns) %>">
+  <% if (fieldName) { %><input type="hidden" name="<%= fieldName %>" value="<%= JSON.stringify(selectedDns) %>" data-dns-picker-value /><% } %>
+  <details>
+    <summary><span data-dns-picker-summary><%= selectedLabels.join(', ') || 'Выбрать DNS' %></span></summary>
+    <div class="routing-dns-options">
+      <% groups.forEach(group => { %>
+        <div class="routing-dns-group" role="group" aria-label="<%= group.label %>">
+          <strong><%= group.label %></strong>
+          <% group.options.forEach(option => { %>
+            <label class="routing-dns-option">
+              <input type="checkbox" value="<%= option.value %>" data-dns-option data-dns-label="<%= option.label %>" <%= selectedDns.includes(option.value) ? 'checked' : '' %> />
+              <span><%= option.label %></span><small data-dns-priority><%= selectedDns.includes(option.value) ? selectedDns.indexOf(option.value) + 1 : '' %></small>
+            </label>
+          <% }) %>
+        </div>
+      <% }) %>
+    </div>
+  </details>
+  <small class="hint">Можно выбрать несколько. Цифры показывают порядок выбора DNS. Чтобы перенести DNS в конец, снимите галочку и выберите снова. Без галочек используются только ручные адреса.</small>
+</div>

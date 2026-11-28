@@ -14667,6 +14667,7 @@ app.get('/routing', requireAuth, (req, res) => {
     happRoutingForceUpdate: cfg.happRoutingForceUpdate !== false,
     happRoutingJsonExample: `${getPublicSubBaseUrl()}/happ-routing-json/<slug>`,
     dnsPreset: cfg.dnsPreset || 'cloudflare',
+    dnsPresets: cfg.dnsPresets || [cfg.dnsPreset || 'cloudflare'],
     dnsCustomText: cfg.dnsCustom || '',
     directDnsEnabled: cfg.directDnsEnabled === true,
     directDnsPreset: cfg.directDnsPreset || 'doh_yandex',
@@ -14716,10 +14717,20 @@ app.post('/routing', requireAuth, (req, res) => {
       : (geodataSource === 'russia' ? RUNETFREEDOM_GEOIP_URL : (geodataSource === 'custom' ? geoipUrl : ''));
     const geodataUrls = uniqueList([effectiveGeositeUrl, effectiveGeoipUrl, ...parsePlainLines(req.body.geodata_urls || '')].filter(v => /^https?:\/\//i.test(v))); 
     const personalDns = Object.hasOwn(req.body, 'personal_dns_address') ? personalDnsSettings({
-      address: req.body.personal_dns_address, dohUrl: req.body.personal_dns_doh
+      address: req.body.personal_dns_address, dohUrl: req.body.personal_dns_doh,
+      secondary: Object.hasOwn(req.body, 'personal_dns_secondary_address')
+        ? { address: req.body.personal_dns_secondary_address, dohUrl: req.body.personal_dns_secondary_doh }
+        : previousRoutingCfg.personalDns.secondary
     }) : previousRoutingCfg.personalDns;
-    const dnsPreset = String(req.body.dns_preset || 'cloudflare').trim();
-    if (['personal', 'doh_personal'].includes(dnsPreset)) parseDirectDnsServers(dnsPreset, '', personalDns);
+    let dnsPresets;
+    if (Object.hasOwn(req.body, 'dns_presets')) {
+      try { dnsPresets = JSON.parse(req.body.dns_presets); } catch (_) { throw new Error('Не удалось прочитать выбранные DNS. Обновите страницу.'); }
+      if (!Array.isArray(dnsPresets) || dnsPresets.length > 20) throw new Error('Проверьте выбранные наборы DNS.');
+      dnsPresets = uniqueList(dnsPresets.map(String));
+    } else dnsPresets = [String(req.body.dns_preset || 'cloudflare').trim()];
+    const availableDns = new Set(['manual', 'cloudflare-google', ...RULE_DNS_GROUPS.flatMap(group => group.options.map(option => option.value)), ...personalDnsGroups(personalDns).flatMap(group => group.options.map(option => option.value))]);
+    if (dnsPresets.some(key => !availableDns.has(key))) throw new Error('Выбран неизвестный или незаполненный DNS-сервер.');
+    const dnsPreset = dnsPresets[0] || 'manual';
     const dnsCustom = parsePlainLines(req.body.dns_custom || '').join('\n');
     // Old forms do not carry these fields. Preserve the saved opt-ins instead
     // of resetting them when an older tab/integration posts routing settings.
@@ -14783,6 +14794,7 @@ app.post('/routing', requireAuth, (req, res) => {
       geositeUrl: /^https?:\/\//i.test(effectiveGeositeUrl) ? effectiveGeositeUrl : '',
       geoipUrl: /^https?:\/\//i.test(effectiveGeoipUrl) ? effectiveGeoipUrl : '',
       dnsPreset,
+      dnsPresets,
       dnsCustom,
       personalDns,
       ...(ruleGroups ? { ...directDnsSettings(previousRoutingCfg), sniffingRouteOnly: directOptions.sniffingRouteOnly } : directOptions),
@@ -18711,15 +18723,15 @@ function getHappRoutingLastUpdated() {
 function getHappRoutingDnsPresetFields() {
   const cfg = getRoutingConfig();
   const preset = String(cfg.dnsPreset || 'cloudflare');
-  if (['personal', 'doh_personal'].includes(preset) && cfg.personalDns?.address) {
-    const dns = cfg.personalDns;
+  if (/^(doh_)?personal(?:_secondary)?$/.test(preset) && (preset.endsWith('_secondary') ? cfg.personalDns?.secondary?.address : cfg.personalDns?.address)) {
+    const dns = preset.endsWith('_secondary') ? cfg.personalDns.secondary : cfg.personalDns;
     const hostname = dns.dohUrl ? new URL(dns.dohUrl).hostname : '';
     return {
-      RemoteDNSType: preset === 'doh_personal' ? 'DoH' : 'UDP',
-      RemoteDNSDomain: preset === 'doh_personal' ? dns.dohUrl : '',
+      RemoteDNSType: preset.startsWith('doh_personal') ? 'DoH' : 'UDP',
+      RemoteDNSDomain: preset.startsWith('doh_personal') ? dns.dohUrl : '',
       RemoteDNSIP: dns.address,
-      DomesticDNSType: preset === 'doh_personal' ? 'DoH' : 'UDP',
-      DomesticDNSDomain: preset === 'doh_personal' ? dns.dohUrl : '',
+      DomesticDNSType: preset.startsWith('doh_personal') ? 'DoH' : 'UDP',
+      DomesticDNSDomain: preset.startsWith('doh_personal') ? dns.dohUrl : '',
       DomesticDNSIP: dns.address,
       DnsHosts: hostname ? { [hostname]: dns.address } : {}
     };
@@ -19081,6 +19093,7 @@ function getRoutingConfig() {
       geositeUrl: (typeof parsed.geositeUrl === 'string' && parsed.geositeUrl.trim()) ? parsed.geositeUrl : (Array.isArray(parsed.geodataUrls) ? (parsed.geodataUrls.find(v => /geosite/i.test(v)) || fallback.geositeUrl) : fallback.geositeUrl),
       geoipUrl: (typeof parsed.geoipUrl === 'string' && parsed.geoipUrl.trim()) ? parsed.geoipUrl : (Array.isArray(parsed.geodataUrls) ? (parsed.geodataUrls.find(v => /geoip/i.test(v)) || fallback.geoipUrl) : fallback.geoipUrl),
       dnsPreset: typeof parsed.dnsPreset === 'string' ? parsed.dnsPreset : fallback.dnsPreset,
+      dnsPresets: Array.isArray(parsed.dnsPresets) ? parsed.dnsPresets : [parsed.dnsPreset || fallback.dnsPreset],
       dnsCustom: typeof parsed.dnsCustom === 'string' ? parsed.dnsCustom : fallback.dnsCustom,
       personalDns: personalDnsSettings(parsed.personalDns),
       ...directDnsSettings(parsed),
@@ -19299,7 +19312,8 @@ function getJsonDnsServers() {
     'cloudflare-google': ['1.1.1.1', '8.8.8.8'],
     manual: []
   };
-  const base = presets[preset] || presets.cloudflare;
+  const selected = Array.isArray(cfg.dnsPresets) ? cfg.dnsPresets : [preset];
+  const base = selected.flatMap(key => presets[key] || []);
   const custom = parsePlainLines(cfg.dnsCustom || '');
   const servers = uniqueList([...base, ...custom]).map(buildDnsServerEntry).filter(Boolean);
   return servers.length ? servers : presets.cloudflare.map(buildDnsServerEntry);

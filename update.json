@@ -1,11 +1,13 @@
 {
-  "version": "2.7.44",
-  "name": "Nexus Panel 2.7.44 — резервные DNS INCY",
+  "version": "2.7.45",
+  "name": "Nexus Panel 2.7.45 — выбор нескольких DNS",
   "repository": "https://github.com/dagmagnat/Nexus-Panel",
   "archive_url": "https://github.com/dagmagnat/Nexus-Panel/archive/refs/heads/main.zip",
   "archive": "Nexus-Panel-main.zip",
   "filename": "Nexus-Panel-main.zip",
   "notes": [
+    "Выбор нескольких DNS галочками в основном наборе и каждом правиле. Сохраняются порядок выбора, ручные адреса и настройки прежних версий.",
+    "Второй DNS-сервер доступен по IP и DoH независимо от первого, с отдельной привязкой домена к IP.",
     "После преобразования DNS для INCY одинаковые DoH-резолверы в одном правиле выдаются один раз. Сохранены области DNS и тайм-аут последнего резолвера.",
     "Свой DNS отображается по имени хоста. Ошибки ручного DNS указывают правило и строку.",
     "Свой DNS-сервер по IP или DoH доступен в основном DNS и в каждом правиле. Сохранены режимы системного DNS и совместимость DNS INCY.",
