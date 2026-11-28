@@ -281,8 +281,10 @@
     <form method="get" action="/clients" class="search-form compact-search" data-live-client-search data-client-directory-search>
       <input type="hidden" name="type" value="<%= clientType %>" />
       <input name="q" value="<%= q || '' %>" placeholder="Поиск: имя, логин, UUID или сервис" autocomplete="off" />
-      <button type="submit" class="secondary">Найти</button>
-      <% if (q) { %><a class="link-btn secondary" href="/clients<%= clientTypeQuery %>">Сбросить</a><% } %>
+      <div class="client-search-actions">
+        <button type="submit" class="secondary">Найти</button>
+        <a class="link-btn secondary client-search-reset" href="/clients<%= clientTypeQuery %>">Сбросить поиск</a>
+      </div>
     </form>
   </div>
 
@@ -426,7 +428,7 @@
           <span><%= isActivationPending(client) ? 'Срок начнётся: ' : 'Действует до: ' %><strong><%= isActivationPending(client) ? 'после активации' : expiryDateTime(client.expiry_time) %></strong></span>
           <div class="mobile-client-primary-actions">
             <button type="button" class="btn-secondary" data-client-app-links="<%= client.id %>" data-client-title="<%= client.login %>" aria-label="Ссылка и QR-код подписки"><%- clientActionIcon('qr') %></button>
-            <button type="button" class="mobile-client-edit-link" onclick="openClientEditor(<%= client.id %>)">Изменить ›</button>
+            <button type="button" class="mobile-client-edit-link" onclick="openClientEditor(<%= client.id %>)">Изменить</button>
           </div>
         </div>
       </article>
@@ -1598,7 +1600,13 @@ function setupClientDirectory() {
     input.addEventListener('input', () => {
       clientDirectoryState.query = input.value;
       clearTimeout(searchTimer);
-      if (clientPaginationInfo) searchTimer = setTimeout(() => applyClientDirectoryFilters({ sourceInput: input }), 600);
+      if (clientPaginationInfo) {
+        // On a phone a full-page search closes the keyboard and interrupts typing.
+        // Search the whole directory only after Find/Enter; desktop keeps debounce.
+        if (!window.matchMedia('(max-width: 900px)').matches) {
+          searchTimer = setTimeout(() => applyClientDirectoryFilters({ sourceInput: input }), 600);
+        }
+      }
       else applyClientDirectoryFilters({ sourceInput: input });
     });
     form.addEventListener('submit', event => {
@@ -2014,6 +2022,7 @@ document.addEventListener('DOMContentLoaded', () => {
       let lastSubmitted = String(input.value || '');
       input.addEventListener('input', () => {
         clearTimeout(timer);
+        if (window.matchMedia('(max-width: 900px)').matches) return;
         timer = setTimeout(() => {
           const value = String(input.value || '');
           if (value === lastSubmitted) return;

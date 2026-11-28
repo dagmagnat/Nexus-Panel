@@ -12,6 +12,10 @@ const icon=(name,cls='')=>'<svg class="icon '+cls+'" aria-hidden="true"><use hre
 <!doctype html><html lang="ru"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="referrer" content="no-referrer"><meta name="robots" content="noindex,nofollow"><meta name="theme-color" content="#080e1b">
 <title><%= subscriptionName %> — личный кабинет</title>
+<link rel="icon" type="image/png" href="/img/nexus-panel-tab-32.png?v=3">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=3">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Личный кабинет">
 <link rel="stylesheet" href="/css/subscription-account.css?v=20261126-1">
 <script src="/js/subscription-account.js?v=20261127-1" defer></script>
 </head><body data-expired="<%= expired?'1':'0' %>" style="--accent:<%= cfg.activeColor %>;--accent-text:<%= cfg.activeTextColor %>;--danger:<%= cfg.expiredColor %>;--danger-text:<%= cfg.expiredTextColor %>">

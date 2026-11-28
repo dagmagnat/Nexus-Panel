@@ -11,6 +11,12 @@
     padding: 0 10px 8px !important;
     transform: none !important;
   }
+  body.page-nodes .nodes-modern-list .node-list-row:not(.is-expanded) .node-order-buttons {
+    position: absolute !important;
+    inset: auto 10px 8px auto !important;
+    width: auto !important;
+    padding: 0 !important;
+  }
   body.page-nodes .nodes-modern-list .node-order-buttons .mobile-order-btn {
     display: inline-flex !important;
     align-items: center !important;

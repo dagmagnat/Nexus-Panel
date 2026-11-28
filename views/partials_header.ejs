@@ -14,7 +14,7 @@
   <title><%= typeof pageTitle !== 'undefined' ? pageTitle : 'Nexus Panel' %> — Nexus Panel</title>
   <link rel="icon" type="image/png" sizes="16x16" href="/img/nexus-panel-tab-16.png">
   <link rel="icon" type="image/png" sizes="32x32" href="/img/nexus-panel-tab-32.png">
-  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=2">
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=3">
   <link rel="manifest" href="/site.webmanifest?v=272">
   <script>
   (function(){
@@ -47,6 +47,7 @@
   <script src="/js/security.js?v=3"></script>
   <% if (graphiteTheme) { %><link rel="stylesheet" href="/css/graphite-blue.css?v=1" /><% } %>
   <% if (coreuiTheme) { %><link rel="stylesheet" href="/css/coreui.css?v=7" /><script src="/js/coreui-layout.js?v=1" defer></script><% } %>
+  <link rel="stylesheet" href="/css/mobile-refinements.css?v=2.7.47" />
   <% if (typeof isDevelopment !== 'undefined' && isDevelopment) { %><script src="/js/dev-inspector.js?v=1" defer></script><% } %>
 </head>
 <%
@@ -79,7 +80,7 @@
     settings: 'Система', access: 'Система', preferences: 'Система', nexus_nodes: 'Инфраструктура', more: 'Nexus Panel'
   };
 %>
-<body class="nexus-spectrum theme-classic page-<%= currentPath || 'app' %> clients-view-<%= typeof clientsViewMode !== 'undefined' ? clientsViewMode : 'modern' %> mobile-nav-<%= typeof panelMobileNavMode !== 'undefined' ? panelMobileNavMode : 'bottom' %> mobile-size-<%= typeof panelMobileUiScale !== 'undefined' ? panelMobileUiScale : 'compact' %>">
+<body class="nexus-spectrum theme-classic<%= typeof panelMobileClientCompact !== 'undefined' && panelMobileClientCompact ? ' mobile-client-compact' : '' %> page-<%= currentPath || 'app' %> clients-view-<%= typeof clientsViewMode !== 'undefined' ? clientsViewMode : 'modern' %> mobile-nav-<%= typeof panelMobileNavMode !== 'undefined' ? panelMobileNavMode : 'bottom' %> mobile-size-<%= typeof panelMobileUiScale !== 'undefined' ? panelMobileUiScale : 'compact' %>">
   <div class="spectrum-mobilebar">
     <button class="mobile-menu-toggle spectrum-icon-button" type="button" aria-label="Открыть меню" aria-controls="panelSidebar" aria-expanded="false"><%- nexusIcon('menu') %></button>
     <a class="spectrum-mobile-brand" href="/dashboard"><img src="/img/nexus-panel-mark.png" alt=""><span style="display:flex;flex-direction:column;min-width:0">Nexus</span></a>

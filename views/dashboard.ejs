@@ -80,7 +80,7 @@
   }
   const expiringSevenCount = (expiringClients || []).filter(client => {
     const remaining = daysLeftExact(client.expiry_time);
-    return remaining !== null && remaining <= 7;
+    return remaining !== null && remaining > 0 && remaining <= 7;
   }).length;
   const initialNodeProblemCount = (pulseNodes || []).filter(node => Number(node.enabled) === 1 && String(node.last_status || '') === 'offline').length;
 %>
@@ -336,12 +336,12 @@
               <small><%= client.comment || client.display_name || '-' %></small>
             </div>
             <div class="dashboard-client-meta">
-              <span>Осталось: <%= termText(client) %></span>
-              <span>Истекает: <%= dateText(client.expiry_time) %></span>
+              <span><small>Осталось</small><strong><%= termText(client) %></strong></span>
+              <span><small>Истекает</small><strong><%= dateText(client.expiry_time) %></strong></span>
             </div>
             <button type="button" class="dashboard-expiry-devices" data-client-quick="<%= client.id %>" title="Показать устройства клиента"><span>Устройства</span><strong><%= Number(client.device_count || 0) %>/<%= Number(client.device_limit || 0) > 0 ? Number(client.device_limit) : '∞' %></strong></button>
             <form method="post" action="/clients/<%= client.id %>/extend" class="mini-extend-form js-long-action" data-loading-title="Продлеваю клиента" data-loading-text="Применяю новый срок на узлах клиента.">
-              <input name="days" type="number" min="1" value="30" />
+              <input name="days" type="number" min="1" value="30" aria-label="На сколько дней продлить клиента" />
               <button type="submit" class="btn-secondary">Продлить</button>
             </form>
           </div>
@@ -802,7 +802,7 @@ function renderOnlineClients(data) {
         </div>
         <div class="dashboard-online-nodes" aria-label="Узлы недавней активности">${onlineNodePreviewHtml(client, key, expanded.has(key))}</div>
         ${coreui ? '<div class="coreui-online-expiry"><span>Доступ до</span>' + expiry + '</div>' : ''}
-        <button type="button" class="btn-secondary dashboard-online-action" ${key ? `data-open-online-client="${escapeHtml(key)}" data-online-focus="${escapeHtml(key)}"` : `data-online-client-detail="${escapeAttrJson(client)}"`}>Подробнее</button>
+        <button type="button" class="btn-secondary dashboard-online-action" ${key ? `data-open-online-client="${escapeHtml(key)}" data-online-focus="${escapeHtml(key)}"` : `data-online-client-detail="${escapeAttrJson(client)}"`} aria-label="Открыть клиента ${escapeHtml(login)}">Открыть</button>
       </article>`;
   }).join('') || '<div class="empty-state">По текущему фильтру нет клиентов с активностью.</div>';
   list.scrollTop = scroll;
@@ -1236,7 +1236,7 @@ function normalizeDashboardSearchText(value) {
   const rangeTitle = document.getElementById('expiryRangeTitle');
   if (!btn || !list) return;
   const modes = ['soon', 'late', 'expired'];
-  const labels = { soon: 'Сначала меньше дней', late: 'Сначала больше дней', expired: 'Сначала истёкшие' };
+  const labels = { soon: 'Сначала меньше дней', late: 'Сначала больше дней', expired: 'Истёкшие за период' };
   let idx = 0;
   function exactDays(row){
     // data-days-exact со знаком: <=0 — просрочен/истекает сегодня, >0 — сколько дней осталось.
@@ -1250,7 +1250,8 @@ function normalizeDashboardSearchText(value) {
     const rows = Array.from(list.children).filter(el => el.classList && el.classList.contains('dashboard-client-card'));
     rows.forEach(row => {
       const dayValue = exactDays(row);
-      const searchMatches = (!query || normalizeDashboardSearchText(row.dataset.searchText || '').includes(query)) && dayValue >= 0 && dayValue <= rangeDays;
+      const withinRange = mode === 'expired' ? dayValue <= 0 && dayValue >= -rangeDays : dayValue > 0 && dayValue <= rangeDays;
+      const searchMatches = (!query || normalizeDashboardSearchText(row.dataset.searchText || '').includes(query)) && withinRange;
       // У старых слоёв CSS у карточки есть display с !important, поэтому одного
       // inline-style недостаточно: используем отдельный класс и hidden.
       row.classList.toggle('is-expiry-search-hidden', !searchMatches);
@@ -1275,7 +1276,7 @@ function normalizeDashboardSearchText(value) {
     btn.textContent = '↕ ' + labels[mode];
     if (count) count.textContent = String(shown);
     if (clear) clear.hidden = !query;
-    if (rangeTitle) rangeTitle.textContent = `Сроки заканчиваются в ближайшие ${rangeDays} дней`;
+    if (rangeTitle) rangeTitle.textContent = mode === 'expired' ? `Сроки истекли за последние ${rangeDays} дней` : `Сроки заканчиваются в ближайшие ${rangeDays} дней`;
     try { localStorage.setItem('nexus.dashboard.expiryRange', String(rangeDays)); } catch (_) {}
   }
   try {
@@ -1455,7 +1456,8 @@ function normalizeDashboardSearchText(value) {
     } catch (_) { /* never let search break the page */ }
   }
   function init() {
-    wire('expiryClientSearch', 'expiryClientSearchClear', '#expiryList [data-dashboard-search-item]', 'expiryVisibleCount');
+    // Expiry search has its own range-aware filter above. A second generic
+    // handler must not unhide rows or overwrite its initial count.
     wire('limitClientSearch', 'limitClientSearchClear', '[data-limit-search-item]', null);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
