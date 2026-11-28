@@ -74,7 +74,8 @@
   @media (max-width:640px) {
     #routing-rule-list > .routing-mode-assignment > .routing-rule-heading > button { min-height:44px; }
   }
-  [data-rule-dns-fields][hidden] { display:none !important; }
+  #routing-rule-list [data-rule-dns-fields][hidden],
+  #routing-rule-list [data-rule-dns-resolver][hidden] { display:none !important; }
   .routing-page-grid { display:grid !important; grid-template-columns:minmax(0,3fr) minmax(360px,2fr) !important; align-items:start; }
   .routing-page-grid > .routing-editor-card,
   .routing-page-grid > .routing-summary-card { grid-column:auto !important; min-width:0; }
@@ -227,17 +228,31 @@
               </div>
               <label class="switch-row routing-rule-dns-toggle">
                 <input type="checkbox" data-rule-dns-enabled <%= rule.directDnsEnabled ? 'checked' : '' %> />
-                <span><strong>Отдельный DNS для доменов списка</strong><small>У доменов и GeoSite из этого списка приоритет над основным DNS. Записи IP и GeoIP влияют на маршрут.</small></span>
+                <span><strong>Настроить DNS для правила</strong><small>Применяется к JSON выбранных узлов. Записи IP и GeoIP влияют на маршрут, а не на выбор DNS.</small></span>
               </label>
               <div class="form-grid" data-rule-dns-fields <%= rule.directDnsEnabled ? '' : 'hidden' %>>
-                <label class="field half"><span>Набор DNS</span>
-                  <select data-rule-dns-preset>
-                    <% [['doh_yandex','Яндекс DoH'], ['yandex','Яндекс · UDP/53'], ['cloudflare','Cloudflare · UDP/53'], ['google','Google · UDP/53'], ['manual','Только вручную']].forEach(([value,label]) => { %>
-                      <option value="<%= value %>" <%= rule.directDnsPreset === value ? 'selected' : '' %>><%= label %></option>
-                    <% }) %>
+                <label class="field full"><span>Режим DNS</span>
+                  <select data-rule-dns-mode>
+                    <option value="custom" <%= !rule.directDnsMode || rule.directDnsMode === 'custom' ? 'selected' : '' %>>Основной DNS + отдельный DNS списка</option>
+                    <option value="system-all" <%= rule.directDnsMode === 'system-all' ? 'selected' : '' %>>Системный DNS для всех доменов · тест</option>
+                    <option value="system-default" <%= rule.directDnsMode === 'system-default' ? 'selected' : '' %>>Системный DNS для остальных + отдельный DNS списка · тест</option>
                   </select>
+                  <small class="hint" data-rule-dns-mode-help></small>
                 </label>
-                <label class="field half"><span>Ручные DNS</span><textarea data-rule-dns-custom rows="3" placeholder="77.88.8.8&#10;https://common.dot.dns.yandex.net/dns-query"><%= rule.directDnsCustom %></textarea></label>
+                <label class="field half" data-rule-dns-resolver><span>Набор DNS для списка</span>
+                  <select data-rule-dns-preset>
+                    <% ruleDnsGroups.forEach(group => { %>
+                      <optgroup label="<%= group.label %>">
+                        <% group.options.forEach(option => { %>
+                          <option value="<%= option.value %>" <%= rule.directDnsPreset === option.value ? 'selected' : '' %>><%= option.label %></option>
+                        <% }) %>
+                      </optgroup>
+                    <% }) %>
+                    <option value="manual" <%= rule.directDnsPreset === 'manual' ? 'selected' : '' %>>Только вручную</option>
+                  </select>
+                  <small class="hint">Для автовыбора INCY используйте DoH. Доступность DNS зависит от сети, через которую идут запросы.</small>
+                </label>
+                <label class="field half" data-rule-dns-resolver><span>Ручные DNS</span><textarea data-rule-dns-custom rows="3" placeholder="77.88.8.8&#10;https://common.dot.dns.yandex.net/dns-query"><%= rule.directDnsCustom %></textarea></label>
               </div>
             </div>
           </div>
@@ -305,6 +320,14 @@
         <strong>Обычный JSON работает независимо от Happ routing.</strong> Текущий отдельный Happ-профиль: <%= happRoutingProfileEnabled ? 'включён' : 'выключен' %>. Изменить его можно в <a href="/settings#happ-control-app">«Настройки → Подписки и приложения»</a>.
       </div>
 
+      <details class="routing-personal-dns">
+        <summary>Свой DNS-сервер</summary>
+        <div class="form-grid" style="margin-top:12px">
+          <label class="field half"><span>IP DNS-сервера</span><input name="personal_dns_address" value="<%= personalDns.address %>" placeholder="IPv4 или IPv6" /></label>
+          <label class="field half"><span>Адрес DoH</span><input type="url" name="personal_dns_doh" value="<%= personalDns.dohUrl %>" placeholder="https://dns.example.com/dns-query" /></label>
+        </div>
+        <p class="hint">После сохранения сервер появится в основном выборе DNS и в каждом правиле. DNS правила имеет приоритет для доменов его списка.</p>
+      </details>
       <div class="preset-grid dns-preset-grid">
         <button type="button" class="btn-secondary" onclick="setGeoPreset('loyal')">Loyalsoldier / Happ</button>
         <button type="button" class="btn-secondary" onclick="setGeoPreset('ru')">Russia rules</button>
@@ -324,6 +347,11 @@
         <div class="field half">
           <label>Готовый набор DNS</label>
           <select name="dns_preset">
+            <% ruleDnsGroups.filter(group => group.label === 'Свой DNS').forEach(group => { %>
+              <optgroup label="<%= group.label %>">
+                <% group.options.forEach(option => { %><option value="<%= option.value %>" <%= dnsPreset === option.value ? 'selected' : '' %>><%= option.label %></option><% }) %>
+              </optgroup>
+            <% }) %>
             <option value="cloudflare-google" <%= dnsPreset === 'cloudflare-google' ? 'selected' : '' %>>Cloudflare + Google</option>
             <option value="cloudflare" <%= dnsPreset === 'cloudflare' ? 'selected' : '' %>>Cloudflare</option>
             <option value="google" <%= dnsPreset === 'google' ? 'selected' : '' %>>Google</option>
@@ -335,8 +363,8 @@
           </select>
         </div>
         <div class="field half">
-          <label>Ручные DNS / DoH / DoT</label>
-          <textarea name="dns_custom" rows="4" placeholder="1.1.1.1&#10;https://cloudflare-dns.com/dns-query&#10;tls://dns.google"><%= dnsCustomText || '' %></textarea>
+          <label>Ручные DNS / DoH</label>
+          <textarea name="dns_custom" rows="4" placeholder="1.1.1.1&#10;https://cloudflare-dns.com/dns-query"><%= dnsCustomText || '' %></textarea>
         </div>
       </div>
 
@@ -359,7 +387,7 @@
         <% routingGroups.forEach((rule, index) => { %>
           <div class="muted"><b><%= index + 1 %>. <%= rule.mode === 'proxy-except' ? 'Всё, кроме списка' : 'Только по списку' %></b>
             <div><%= nodes.filter(node => rule.nodeIds.includes(Number(node.id))).map(node => node.name).join(', ') || 'Нет доступных узлов' %></div>
-            <div>Позиций в списке: <%= rule.domains.length + rule.ips.length %> · DNS: <%= rule.directDnsEnabled ? 'отдельный' : 'основной' %></div>
+            <div>Позиций в списке: <%= rule.domains.length + rule.ips.length %> · DNS: <%= !rule.directDnsEnabled ? 'основной' : rule.directDnsMode === 'system-all' ? 'системный для всех' : rule.directDnsMode === 'system-default' ? 'системный + DNS списка' : 'отдельный для списка' %></div>
           </div>
         <% }) %>
       </div>
@@ -442,10 +470,18 @@ function syncRoutingModeAssignments() {
     catalog?.add(new Option(title, String(index + 1)));
     const except = card.querySelector('input[type="radio"]:checked')?.value === 'proxy-except';
     const customDns = card.querySelector('[data-rule-dns-enabled]').checked;
+    const dnsMode = card.querySelector('[data-rule-dns-mode]').value;
     const routeHelp = except ? 'Список идёт напрямую, остальной трафик — через VPN.' : 'Список идёт через VPN, остальной трафик — напрямую.';
-    const dnsHelp = customDns ? (except ? 'DNS списка тоже идёт напрямую.' : 'DNS списка тоже идёт через VPN.') : 'Используется основной DNS.';
+    const dnsHelp = !customDns ? 'Используется основной DNS.' : dnsMode === 'system-all' ? 'Для всех доменов используется системный DNS устройства.' : (except ? 'DNS списка тоже идёт напрямую.' : 'DNS списка тоже идёт через VPN.');
     card.querySelector('[data-routing-mode-help]').textContent = `${routeHelp} ${dnsHelp}`;
     card.querySelector('[data-rule-dns-fields]').hidden = !customDns;
+    card.querySelectorAll('[data-rule-dns-resolver]').forEach(field => { field.hidden = dnsMode === 'system-all'; });
+    card.querySelector('[data-rule-dns-mode-help]').textContent = dnsMode === 'custom'
+      ? 'У доменов и GeoSite списка приоритет над основным DNS.'
+      : (dnsMode === 'system-all'
+        ? 'Ядро использует localhost — системный DNS устройства. Основной и отдельный DNS списка в этом режиме не применяются.'
+        : 'Домены списка используют выбранный ниже DNS, остальные — системный. При отказе DNS списка запрос не переключается на системный DNS.')
+        + ' В VPN-режиме фактический DNS зависит от INCY/Happ и ОС; это не всегда DNS провайдера. DNS не скрывает подключение к VPN.';
     card.querySelectorAll('[data-routing-node-option] input:checked').forEach(input => owners.set(input.value, card));
   });
   if (catalog && Number(selected) <= cards.length) catalog.value = selected;
@@ -501,6 +537,7 @@ function initRoutingModeAssignments() {
       domains: card.querySelector('[data-rule-domains]').value,
       ips: card.querySelector('[data-rule-ips]').value,
       directDnsEnabled: card.querySelector('[data-rule-dns-enabled]').checked,
+      directDnsMode: card.querySelector('[data-rule-dns-mode]').value,
       directDnsPreset: card.querySelector('[data-rule-dns-preset]').value,
       directDnsCustom: card.querySelector('[data-rule-dns-custom]').value
     }));

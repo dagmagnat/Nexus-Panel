@@ -1,11 +1,12 @@
 {
-  "version": "2.7.41",
-  "name": "Nexus Panel 2.7.41 — диагностика узлов и сброс трафика",
+  "version": "2.7.42",
+  "name": "Nexus Panel 2.7.42 — свой DNS",
   "repository": "https://github.com/dagmagnat/Nexus-Panel",
   "archive_url": "https://github.com/dagmagnat/Nexus-Panel/archive/refs/heads/main.zip",
   "archive": "Nexus-Panel-main.zip",
   "filename": "Nexus-Panel-main.zip",
   "notes": [
+    "Свой DNS-сервер по IP или DoH доступен в основном DNS и в каждом правиле. Сохранены режимы системного DNS и совместимость DNS INCY.",
     "Диагностика проверяет API и клиентский TCP-порт узлов отдельно, показывает проблемы назначений и учёта трафика.",
     "Сброс счётчика по узлу сохраняет историю и отдельно сообщает об ограничениях общего сквада Remnawave.",
     "В режиме «Только по списку» основной DNS идёт напрямую, DNS списка — через выбранный узел.",

@@ -12,7 +12,7 @@ function config() {
     routing: { domainStrategy: 'IPOnDemand', rules: [{ domain: ['domain:mail.ru'], outboundTag: 'proxy' }, { domain: options.directDomains, outboundTag: 'direct' }, { network: 'tcp,udp', outboundTag: 'proxy' }] } };
 }
 test('new routing opt-ins default off, including legacy settings', () => {
-  assert.deepEqual(directDnsSettings({}), { directDnsEnabled: false, directDnsPreset: 'doh_yandex', directDnsCustom: '', sniffingRouteOnly: false });
+  assert.deepEqual(directDnsSettings({}), { directDnsEnabled: false, directDnsMode: 'custom', directDnsPreset: 'doh_yandex', directDnsCustom: '', sniffingRouteOnly: false });
   const cfg = config(); const before = structuredClone(cfg);
   applyJsonRoutingDns(cfg, {}, options);
   assert.deepEqual(cfg.dns, before.dns); assert.deepEqual(cfg.routing, before.routing);
@@ -111,4 +111,20 @@ test('list DNS uses the selected VPN while the main DNS stays direct', () => {
     ['nexus-dns-list', 'proxy'],
     ['dns_out', 'direct']
   ]);
+});
+
+test('personal resolver is validated, scoped and bootstrapped without a public DNS substitute', () => {
+  const personalDns = {address:'192.0.2.53',dohUrl:'https://dns.example.test/dns-query'};
+  assert.deepEqual(parseDirectDnsServers('personal','',personalDns),[{address:'192.0.2.53',port:53}]);
+  assert.throws(()=>parseDirectDnsServers('doh_personal','',{}),/Сначала/);
+  const cfg=config();
+  applyJsonRoutingDns(cfg,{...settings,personalDns,directDnsPreset:'doh_personal'},{
+    active:true,mode:'node-selective',listProxyDomains:['geosite:youtube']
+  });
+  prepareJsonDns(cfg.dns,{personalDns});
+  const list=cfg.dns.servers.find(s=>s.tag==='nexus-dns-list');
+  assert.equal(list.address,personalDns.dohUrl);
+  assert.equal(cfg.dns.hosts['dns.example.test'],personalDns.address);
+  assert.equal(cfg.routing.rules[0].outboundTag,'proxy');
+  assert.throws(()=>parseDirectDnsServers('personal','',{address:'not-an-ip'}),/IPv4/);
 });

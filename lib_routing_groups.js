@@ -5,7 +5,7 @@ const { directDnsSettings, parseDirectDnsServers } = require('./lib_json_routing
 const MODES = ['node-selective', 'proxy-except'];
 const MAX_GROUPS = 30;
 
-function parseRoutingGroups(raw, allowedNodeIds, parseLines) {
+function parseRoutingGroups(raw, allowedNodeIds, parseLines, personalDns) {
   let input;
   try { input = JSON.parse(raw); }
   catch (_) { throw new Error('Не удалось прочитать правила маршрутизации. Обновите страницу и повторите.'); }
@@ -24,9 +24,9 @@ function parseRoutingGroups(raw, allowedNodeIds, parseLines) {
     const ips = parseLines(String(value.ips || ''), 'ip');
     if (domains.errors.length || ips.errors.length) throw new Error(`${label}: ${[...domains.errors, ...ips.errors].join(' | ')}`);
     const dns = directDnsSettings(value);
-    if (dns.directDnsEnabled) {
+    if (dns.directDnsEnabled && dns.directDnsMode !== 'system-all') {
       if (!domains.values.length) throw new Error(`${label}: для отдельного DNS добавьте домен или GeoSite.`);
-      parseDirectDnsServers(dns.directDnsPreset, dns.directDnsCustom);
+      parseDirectDnsServers(dns.directDnsPreset, dns.directDnsCustom, personalDns);
     }
     delete dns.sniffingRouteOnly;
     return { mode: value.mode, nodeIds, domains: domains.values, ips: ips.values, ...dns };
@@ -46,6 +46,7 @@ function policyForGroup(config, rule) {
     listProxyDomains: rule.mode === 'node-selective' ? rule.domains : [],
     listProxyIps: rule.mode === 'node-selective' ? rule.ips : [],
     directDnsEnabled: rule.directDnsEnabled,
+    directDnsMode: rule.directDnsMode,
     directDnsPreset: rule.directDnsPreset,
     directDnsCustom: rule.directDnsCustom
   };

@@ -30,7 +30,7 @@ const { initClientDirectory, queryClientDirectory } = require('./lib_client_dire
 const { deviceRefreshPolicy, applyDeviceRefreshPolicy } = require('./lib_device_refresh');
 const { createAsyncReadCache, cooperativeMap, yieldToRequests } = require('./lib_performance');
 const { supportAccess, supportReasonText, parseSupportDays, initSupportSchema } = require('./lib_expired_support');
-const { directDnsSettings, parseDirectDnsServers, applyJsonRoutingDns, prepareJsonDns } = require('./lib_json_routing_dns');
+const { RULE_DNS_GROUPS, personalDnsSettings, personalDnsGroups, directDnsSettings, parseDirectDnsServers, applyJsonRoutingDns, prepareJsonDns, prepareIncyAutoSelectDns } = require('./lib_json_routing_dns');
 const { parseRoutingGroups, assignmentsFromGroups, policyForGroup } = require('./lib_routing_groups');
 const { udp443FormValue, nodeVisionFlow, applyNodeUdp443 } = require('./lib_node_udp443');
 const { mlkemFormValue, appendRealityHint } = require('./lib_reality_compat');
@@ -14638,7 +14638,7 @@ app.get('/routing', requireAuth, (req, res) => {
   const cfg = getRoutingConfig();
   let directDnsError = '';
   if (cfg.directDnsEnabled) {
-    try { parseDirectDnsServers(cfg.directDnsPreset, cfg.directDnsCustom); }
+    try { parseDirectDnsServers(cfg.directDnsPreset, cfg.directDnsCustom, cfg.personalDns); }
     catch (err) { directDnsError = String(err.message || err); }
   }
   const savedRuleNodes = new Set(cfg.assignmentExplicit ? Object.values(getRoutingModeAssignments(cfg)).flat() : []);
@@ -14647,6 +14647,8 @@ app.get('/routing', requireAuth, (req, res) => {
     .map(enrichNodeWithCachedTransport);
   render(res, 'routing', {
     routingPresets: ROUTING_PRESETS,
+    ruleDnsGroups: [...personalDnsGroups(cfg.personalDns), ...RULE_DNS_GROUPS],
+    personalDns: cfg.personalDns,
     selectedPresets: cfg.presets,
     customDomainsText: (cfg.customDomains || []).join('\n'),
     customIpsText: (cfg.customIps || []).join('\n'),
@@ -14712,7 +14714,11 @@ app.post('/routing', requireAuth, (req, res) => {
       ? LOYALSOLDIER_GEOIP_URL
       : (geodataSource === 'russia' ? RUNETFREEDOM_GEOIP_URL : (geodataSource === 'custom' ? geoipUrl : ''));
     const geodataUrls = uniqueList([effectiveGeositeUrl, effectiveGeoipUrl, ...parsePlainLines(req.body.geodata_urls || '')].filter(v => /^https?:\/\//i.test(v))); 
+    const personalDns = Object.hasOwn(req.body, 'personal_dns_address') ? personalDnsSettings({
+      address: req.body.personal_dns_address, dohUrl: req.body.personal_dns_doh
+    }) : previousRoutingCfg.personalDns;
     const dnsPreset = String(req.body.dns_preset || 'cloudflare').trim();
+    if (['personal', 'doh_personal'].includes(dnsPreset)) parseDirectDnsServers(dnsPreset, '', personalDns);
     const dnsCustom = parsePlainLines(req.body.dns_custom || '').join('\n');
     // Old forms do not carry these fields. Preserve the saved opt-ins instead
     // of resetting them when an older tab/integration posts routing settings.
@@ -14723,14 +14729,14 @@ app.post('/routing', requireAuth, (req, res) => {
       directDnsCustom: String(req.body.direct_dns_custom || '').trim(),
       sniffingRouteOnly: req.body.sniffing_route_only === '1'
     } : directDnsSettings(previousRoutingCfg);
-    if (directOptions.directDnsEnabled) parseDirectDnsServers(directOptions.directDnsPreset, directOptions.directDnsCustom);
+    if (directOptions.directDnsEnabled) parseDirectDnsServers(directOptions.directDnsPreset, directOptions.directDnsCustom, personalDns);
     const savedRuleNodes = new Set(previousRoutingCfg.assignmentExplicit ? Object.values(getRoutingModeAssignments(previousRoutingCfg)).flat() : []);
     const routableNodeIds = new Set(db.prepare('SELECT * FROM nodes WHERE node_type != ?').all(NODE_TYPE_H1CLOUD)
       .filter(node => (Number(node.enabled) === 1 || savedRuleNodes.has(Number(node.id))) && isClientManagedNode(node))
       .filter(node => !require('./lib_amneziawg').isAmneziaWG(getCachedInbound(node))).map(row => Number(row.id)));
     const groupsPosted = typeof req.body.routing_groups === 'string' && req.body.routing_groups !== '';
     const ruleGroups = groupsPosted
-      ? parseRoutingGroups(req.body.routing_groups, routableNodeIds, parseRoutingLines)
+      ? parseRoutingGroups(req.body.routing_groups, routableNodeIds, parseRoutingLines, personalDns)
       : previousRoutingCfg.ruleGroups;
     if (ruleGroups && !groupsPosted) throw new Error('Форма устарела. Обновите страницу маршрутизации перед сохранением.');
     const allowedModes = ['proxy-except', 'node-selective'];
@@ -14777,6 +14783,7 @@ app.post('/routing', requireAuth, (req, res) => {
       geoipUrl: /^https?:\/\//i.test(effectiveGeoipUrl) ? effectiveGeoipUrl : '',
       dnsPreset,
       dnsCustom,
+      personalDns,
       ...(ruleGroups ? { ...directDnsSettings(previousRoutingCfg), sniffingRouteOnly: directOptions.sniffingRouteOnly } : directOptions),
       allNodes: false,
       excludedNodeIds: [],
@@ -18703,6 +18710,19 @@ function getHappRoutingLastUpdated() {
 function getHappRoutingDnsPresetFields() {
   const cfg = getRoutingConfig();
   const preset = String(cfg.dnsPreset || 'cloudflare');
+  if (['personal', 'doh_personal'].includes(preset) && cfg.personalDns?.address) {
+    const dns = cfg.personalDns;
+    const hostname = dns.dohUrl ? new URL(dns.dohUrl).hostname : '';
+    return {
+      RemoteDNSType: preset === 'doh_personal' ? 'DoH' : 'UDP',
+      RemoteDNSDomain: preset === 'doh_personal' ? dns.dohUrl : '',
+      RemoteDNSIP: dns.address,
+      DomesticDNSType: preset === 'doh_personal' ? 'DoH' : 'UDP',
+      DomesticDNSDomain: preset === 'doh_personal' ? dns.dohUrl : '',
+      DomesticDNSIP: dns.address,
+      DnsHosts: hostname ? { [hostname]: dns.address } : {}
+    };
+  }
   if (preset === 'google' || preset === 'doh_google') {
     return {
       RemoteDNSType: 'DoH', RemoteDNSDomain: 'https://dns.google/dns-query', RemoteDNSIP: '8.8.8.8',
@@ -18993,6 +19013,7 @@ function getDefaultRoutingConfig() {
     geoipUrl: LOYALSOLDIER_GEOIP_URL,
     dnsPreset: 'cloudflare',
     dnsCustom: '',
+    personalDns: { address: '', dohUrl: '' },
     ...directDnsSettings(),
     allNodes: true,
     excludedNodeIds: [],
@@ -19060,6 +19081,7 @@ function getRoutingConfig() {
       geoipUrl: (typeof parsed.geoipUrl === 'string' && parsed.geoipUrl.trim()) ? parsed.geoipUrl : (Array.isArray(parsed.geodataUrls) ? (parsed.geodataUrls.find(v => /geoip/i.test(v)) || fallback.geoipUrl) : fallback.geoipUrl),
       dnsPreset: typeof parsed.dnsPreset === 'string' ? parsed.dnsPreset : fallback.dnsPreset,
       dnsCustom: typeof parsed.dnsCustom === 'string' ? parsed.dnsCustom : fallback.dnsCustom,
+      personalDns: personalDnsSettings(parsed.personalDns),
       ...directDnsSettings(parsed),
       allNodes: parsed.allNodes !== false,
       excludedNodeIds: Array.isArray(parsed.excludedNodeIds) ? parsed.excludedNodeIds.map(Number).filter(Boolean) : fallback.excludedNodeIds,
@@ -19271,13 +19293,9 @@ function getJsonDnsServers() {
   const cfg = getRoutingConfig();
   const preset = String(cfg.dnsPreset || 'cloudflare');
   const presets = {
+    ...Object.fromEntries([...personalDnsGroups(cfg.personalDns), ...RULE_DNS_GROUPS]
+      .flatMap(group => group.options.map(option => [option.value, option.addresses]))),
     'cloudflare-google': ['1.1.1.1', '8.8.8.8'],
-    cloudflare: ['1.1.1.1', '1.0.0.1'],
-    google: ['8.8.8.8', '8.8.4.4'],
-    quad9: ['9.9.9.9', '149.112.112.112'],
-    yandex: ['77.88.8.8', '77.88.8.1'],
-    doh_cloudflare: ['https://cloudflare-dns.com/dns-query'],
-    doh_google: ['https://dns.google/dns-query'],
     manual: []
   };
   const base = presets[preset] || presets.cloudflare;
@@ -19849,7 +19867,7 @@ function buildHappJsonConfig(client, lines, subscriptionName, routingEnabledForT
     directDomains: getRoutingDirectDomains(routingCfg), proxyDomains: getRoutingProxyDomains(routingCfg),
     listProxyDomains: routingCfg.listProxyDomains || []
   });
-  prepareJsonDns(normalized.dns, { fastFallback: options.fastDnsFallback });
+  prepareJsonDns(normalized.dns, { fastFallback: options.fastDnsFallback, personalDns: routingCfg.personalDns });
   return normalized;
 }
 
@@ -19911,6 +19929,9 @@ app.get('/json/:slug', async (req, res) => {
   const { configs: resultConfigs, hiddenNodeIds } = vlessEntries.length && !isClientExpired(client)
     ? buildAutoSelectJsonConfigs(client, vlessEntries, subscriptionName)
     : { configs: [], hiddenNodeIds: new Set() };
+  if (incyJson) {
+    for (const config of resultConfigs) prepareIncyAutoSelectDns(config.dns);
+  }
   for (const row of db.prepare('SELECT id FROM nodes WHERE hide_standalone_json = 1').all()) {
     hiddenNodeIds.add(row.id);
   }
