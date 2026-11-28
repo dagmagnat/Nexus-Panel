@@ -57,9 +57,10 @@ function personalDnsSettings(value = {}) {
 function personalDnsGroups(value = {}) {
   const dns = personalDnsSettings(value);
   const options = [];
-  if (dns.address) options.push({ value: 'personal', label: 'Свой DNS · ' + dns.address, addresses: [dns.address] });
-  if (dns.dohUrl) options.push({ value: 'doh_personal', label: 'Свой DNS · DoH', addresses: [dns.dohUrl] });
-  return options.length ? [{ label: 'Свой DNS', options }] : [];
+  const title = dns.dohUrl ? new URL(dns.dohUrl).hostname : dns.address;
+  if (dns.address) options.push({ value: 'personal', label: title + ' · UDP/53', addresses: [dns.address] });
+  if (dns.dohUrl) options.push({ value: 'doh_personal', label: title + ' · DoH', addresses: [dns.dohUrl] });
+  return options.length ? [{ label: title, options }] : [];
 }
 
 function prepareIncyAutoSelectDns(dns) {
@@ -134,7 +135,9 @@ function parseDirectDnsServers(preset, custom, personalDns = {}) {
     let url;
     try { url = new URL(value.replace(/^https\+local:/i, 'https:')); } catch (_) { /* invalid below */ }
     if (!url || url.protocol !== 'https:' || !url.hostname || url.username || url.password || url.hash) {
-      throw new Error('DNS для direct: нужен IPv4/IPv6 без порта или HTTPS DoH URL без логина/пароля.');
+      const line = lines.indexOf(value) + 1;
+      throw new Error((line ? 'Ручные DNS, строка ' + line : 'Набор DNS') +
+        ': укажите IP без порта или полный HTTPS-адрес DoH, например https://dns.example.com/dns-query.');
     }
     // Local DoH does not re-enter Xray routing. Its hostname is bootstrapped
     // by the device OS resolver, avoiding a recursive built-in DNS lookup.

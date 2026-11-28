@@ -321,7 +321,7 @@
       </div>
 
       <details class="routing-personal-dns">
-        <summary>Свой DNS-сервер</summary>
+        <summary><%= personalDnsTitle %></summary>
         <div class="form-grid" style="margin-top:12px">
           <label class="field half"><span>IP DNS-сервера</span><input name="personal_dns_address" value="<%= personalDns.address %>" placeholder="IPv4 или IPv6" /></label>
           <label class="field half"><span>Адрес DoH</span><input type="url" name="personal_dns_doh" value="<%= personalDns.dohUrl %>" placeholder="https://dns.example.com/dns-query" /></label>
@@ -347,7 +347,7 @@
         <div class="field half">
           <label>Готовый набор DNS</label>
           <select name="dns_preset">
-            <% ruleDnsGroups.filter(group => group.label === 'Свой DNS').forEach(group => { %>
+            <% ruleDnsGroups.filter(group => group.options.some(option => option.value === 'personal' || option.value === 'doh_personal')).forEach(group => { %>
               <optgroup label="<%= group.label %>">
                 <% group.options.forEach(option => { %><option value="<%= option.value %>" <%= dnsPreset === option.value ? 'selected' : '' %>><%= option.label %></option><% }) %>
               </optgroup>

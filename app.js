@@ -14649,6 +14649,7 @@ app.get('/routing', requireAuth, (req, res) => {
     routingPresets: ROUTING_PRESETS,
     ruleDnsGroups: [...personalDnsGroups(cfg.personalDns), ...RULE_DNS_GROUPS],
     personalDns: cfg.personalDns,
+    personalDnsTitle: personalDnsGroups(cfg.personalDns)[0]?.label || 'DNS-сервер',
     selectedPresets: cfg.presets,
     customDomainsText: (cfg.customDomains || []).join('\n'),
     customIpsText: (cfg.customIps || []).join('\n'),

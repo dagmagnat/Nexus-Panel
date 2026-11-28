@@ -128,3 +128,12 @@ test('personal resolver is validated, scoped and bootstrapped without a public D
   assert.equal(cfg.routing.rules[0].outboundTag,'proxy');
   assert.throws(()=>parseDirectDnsServers('personal','',{address:'not-an-ip'}),/IPv4/);
 });
+
+test('personal DNS labels identify the host and invalid manual DNS identifies its line', () => {
+  const {personalDnsGroups}=require('../lib_json_routing_dns');
+  const groups=personalDnsGroups({address:'192.0.2.53',dohUrl:'https://dns.example.test/dns-query'});
+  assert.equal(groups[0].label,'dns.example.test');
+  assert.deepEqual(groups[0].options.map(option=>option.label),['dns.example.test · UDP/53','dns.example.test · DoH']);
+  assert.throws(()=>parseDirectDnsServers('manual','192.0.2.53\ndns.example.test'),/строка 2/);
+  assert.equal(parseDirectDnsServers('manual','5.230.173.140\n8.8.8.8\n8.8.4.4\n1.1.1.1\n1.0.0.1').length,5);
+});

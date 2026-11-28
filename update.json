@@ -1,11 +1,12 @@
 {
-  "version": "2.7.42",
-  "name": "Nexus Panel 2.7.42 — свой DNS",
+  "version": "2.7.43",
+  "name": "Nexus Panel 2.7.43 — названия и проверка DNS",
   "repository": "https://github.com/dagmagnat/Nexus-Panel",
   "archive_url": "https://github.com/dagmagnat/Nexus-Panel/archive/refs/heads/main.zip",
   "archive": "Nexus-Panel-main.zip",
   "filename": "Nexus-Panel-main.zip",
   "notes": [
+    "Свой DNS отображается по имени хоста. Ошибки ручного DNS указывают правило и строку.",
     "Свой DNS-сервер по IP или DoH доступен в основном DNS и в каждом правиле. Сохранены режимы системного DNS и совместимость DNS INCY.",
     "Диагностика проверяет API и клиентский TCP-порт узлов отдельно, показывает проблемы назначений и учёта трафика.",
     "Сброс счётчика по узлу сохраняет историю и отдельно сообщает об ограничениях общего сквада Remnawave.",

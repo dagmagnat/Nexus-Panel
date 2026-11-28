@@ -26,7 +26,8 @@ function parseRoutingGroups(raw, allowedNodeIds, parseLines, personalDns) {
     const dns = directDnsSettings(value);
     if (dns.directDnsEnabled && dns.directDnsMode !== 'system-all') {
       if (!domains.values.length) throw new Error(`${label}: для отдельного DNS добавьте домен или GeoSite.`);
-      parseDirectDnsServers(dns.directDnsPreset, dns.directDnsCustom, personalDns);
+      try { parseDirectDnsServers(dns.directDnsPreset, dns.directDnsCustom, personalDns); }
+      catch (error) { throw new Error(label + ': ' + error.message); }
     }
     delete dns.sniffingRouteOnly;
     return { mode: value.mode, nodeIds, domains: domains.values, ips: ips.values, ...dns };
